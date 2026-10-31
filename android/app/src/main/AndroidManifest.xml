@@ -1,38 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Kept for v1 -->
     <uses-permission android:name="android.permission.INTERNET" />
-    
-    <!-- SMS -->
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    
-    <!-- Contacts -->
-    <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
-    
-    <!-- Calendar -->
-    <uses-permission android:name="android.permission.READ_CALENDAR" />
-    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
-    
-    <!-- Location -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    
-    <!-- Alarms -->
-    <uses-permission android:name="android.permission.SET_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    
-    <!-- Foreground Service -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    
-    <!-- Audio -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    
-    <!-- App Usage -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    
-    <!-- Wake Lock -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    
+
+    <!-- Removed for v1 (held until testing is done):
+         SEND_SMS, READ_CONTACTS, WRITE_CONTACTS, READ_CALENDAR, WRITE_CALENDAR,
+         ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, SET_ALARM, USE_EXACT_ALARM,
+         FOREGROUND_SERVICE, POST_NOTIFICATIONS, QUERY_ALL_PACKAGES, WAKE_LOCK -->
     <application
         android:label="LocalMind"
         android:icon="@mipmap/ic_launcher"
@@ -57,10 +31,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        
-        <!-- Foreground service is declared by the flutter_foreground_task
-             plugin's own manifest; declaring it again here would pin us to an
-             internal class name. -->
+
+        <!-- NOTE (carried over from the original): the foreground service is
+             declared by the flutter_foreground_task plugin's own manifest.
+             A build-time merged-manifest check is still needed: plugins can
+             re-add permissions this draft removes. -->
 
         <meta-data
             android:name="flutterEmbedding"
