@@ -39,6 +39,7 @@ import 'package:native_llama/native_llama.dart';
 
 import '../../core/utils/log.dart';
 import '../../domain/models/local_model.dart';
+import 'model_preflight.dart';
 
 /// How long a generation may go without producing a single token before it is
 /// treated as wedged.
@@ -183,11 +184,26 @@ class LlmService {
   /// model — just slower. [GpuCapability] decides what to ask for.
   ///
   /// On success, [activeBackend] is updated to reflect what actually ran.
+  ///
+  /// [totalRamMb] is total device RAM in MB (0 = unknown, RAM gate
+  /// skipped). See [ModelPreflight].
   Future<bool> loadModel(
     String modelPath, {
     int nCtx = 2048,
     int gpuLayers = 0,
+    int totalRamMb = 0,
   }) async {
+    // Safe loader (Clawzilla v1): refuse bad files BEFORE any native
+    // call. A native crash below Dart cannot be caught, so pre-flight is
+    // the defence. A pre-flight failure leaves any currently loaded model
+    // untouched and reports through the normal error path.
+    final preflightError = await ModelPreflight.verify(modelPath) ??
+        await ModelPreflight.checkFits(modelPath, totalRamMb);
+    if (preflightError != null) {
+      _lastLoadError = preflightError;
+      _notifyError(preflightError);
+      return false;
+    }
     try {
       await release();
       _nCtx = nCtx;

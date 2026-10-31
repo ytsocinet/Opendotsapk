@@ -26,6 +26,7 @@ import '../../data/services/document_service.dart';
 import '../../data/services/gpu_service.dart';
 import '../../data/services/cloud_service.dart';
 import '../../data/services/model_manager.dart';
+import '../../data/services/model_preflight.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/router_service.dart';
 import '../widgets/biometric_gate.dart';
@@ -1243,9 +1244,18 @@ class ModelSelectorDialog extends ConsumerWidget {
     var message = 'Failed to load model';
 
     try {
-      final layers = await GpuService.layersForMode(
+      // Safe loader (Clawzilla v1): CPU by default. An explicit GPU
+      // choice is honoured only after a CPU load has succeeded once;
+      // until then the request is deferred to CPU and the message says so.
+      var layers = await GpuService.layersForMode(
         '${ref.read(settingsProvider)['gpu_offload'] ?? 'auto'}',
       );
+      final cpuSucceeded = ref.read(settingsProvider)['cpu_load_succeeded'];
+      final gpuDeferred =
+          layers > 0 && cpuSucceeded != true && cpuSucceeded != 'true';
+      if (gpuDeferred) {
+        layers = 0;
+      }
       // Read thread count from settings; default to 4 if missing.
       final threads =
           int.tryParse('${ref.read(settingsProvider)['cpu_threads']}') ?? 4;
@@ -1253,6 +1263,7 @@ class ModelSelectorDialog extends ConsumerWidget {
       ok = await llmService.loadModel(
         await manager.weightPath(chat),
         gpuLayers: layers,
+        totalRamMb: (await GpuService.detect()).totalRamMb,
       );
 
       // Vision is optional — a missing projector must not fail the chat model.
@@ -1290,6 +1301,11 @@ class ModelSelectorDialog extends ConsumerWidget {
         await ref
             .read(settingsProvider.notifier)
             .updateSetting('model_path', await manager.weightPath(chat));
+        if (llmService.activeBackend == 'cpu') {
+          await ref
+              .read(settingsProvider.notifier)
+              .updateSetting('cpu_load_succeeded', 'true');
+        }
       }
       if (ok && message == 'Failed to load model') {
         final backend = llmService.activeBackend;
@@ -1309,6 +1325,9 @@ class ModelSelectorDialog extends ConsumerWidget {
         message =
             '${chat.displayName} failed to load. '
             '${llmService.lastLoadError ?? 'Free up RAM and try again.'}';
+      }
+      if (ok && gpuDeferred) {
+        message += ' · GPU deferred until a CPU load succeeds';
       }
     } catch (e) {
       ok = false;
@@ -1363,12 +1382,15 @@ class ModelSelectorDialog extends ConsumerWidget {
       // failure underneath it — the app looks stuck rather than failed.
       final nav = Navigator.of(context);
       try {
-        final ok = await ref
-            .read(llmServiceProvider)
-            .loadModel(
-              path,
-              gpuLayers: (await GpuService.detect()).recommendedGpuLayers,
-            );
+        // Safe loader (Clawzilla v1): storage loads get the same
+        // pre-flight checks as catalog loads, on CPU by default.
+        final gpu = await GpuService.detect();
+        final llm = ref.read(llmServiceProvider);
+        final ok = await llm.loadModel(
+          path,
+          gpuLayers: 0,
+          totalRamMb: gpu.totalRamMb,
+        );
         if (nav.canPop()) nav.pop();
         if (!context.mounted) return;
 
@@ -1377,7 +1399,8 @@ class ModelSelectorDialog extends ConsumerWidget {
             content: Text(
               ok
                   ? 'Loaded ${path.split('/').last}'
-                  : 'Failed to load that GGUF',
+                  : 'Failed to load that GGUF'
+                      '${llm.lastLoadError == null ? '' : ': ${llm.lastLoadError}'}',
             ),
           ),
         );
