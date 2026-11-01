@@ -10,6 +10,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:localmind/core/utils/json_extract.dart';
+import 'package:localmind/data/tools/tool_permission_store.dart';
 import 'package:localmind/data/tools/tool_registry.dart';
 import 'package:localmind/domain/models/tool_result.dart';
 
@@ -100,7 +101,6 @@ void main() {
       final offered = registry.toolsForModel.map((t) => t.name).toSet();
 
       // These have real implementations and must be offered.
-      expect(offered, contains('get_location'));
       expect(offered, contains('analyze_image'));
       expect(offered, contains('web_search'));
 
@@ -109,10 +109,15 @@ void main() {
       expect(offered, isNot(contains('add_contact')));
       expect(offered, isNot(contains('open_app')));
 
-      expect(
-        offered.length,
-        registry.tools.values.where((t) => t.implemented).length,
-      );
+      // Implemented, but blocked in v1, so the model must not see it.
+      expect(offered, isNot(contains('get_location')));
+
+      // v1 gate: implemented tools blocked for v1 are also not offered.
+      final expectedOffered = registry.tools.values
+          .where((t) =>
+              t.implemented && !ToolPermissionStore.isV1Gated(t.name))
+          .length;
+      expect(offered.length, expectedOffered);
     });
 
     test('no unimplemented tool can ever report success', () async {
