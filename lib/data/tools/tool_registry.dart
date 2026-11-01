@@ -23,10 +23,12 @@ import 'dart:io';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../domain/models/tool_result.dart';
 import '../services/llm_service.dart';
 import 'tool_permission_store.dart';
+import '../database/database_helper.dart';
 
 class ToolRegistry {
   static final ToolRegistry _instance = ToolRegistry._internal();
@@ -151,8 +153,7 @@ class ToolRegistry {
           'content': {'type': 'string', 'description': 'Note content'},
         },
         required: ['title', 'content'],
-        implemented: false,
-        unimplementedReason: 'Needs the notes table; not yet wired.',
+        implemented: true,
       ),
     );
 
@@ -164,8 +165,7 @@ class ToolRegistry {
           'query': {'type': 'string', 'description': 'Search query'},
         },
         required: const [],
-        implemented: false,
-        unimplementedReason: 'Needs the notes table; not yet wired.',
+        implemented: true,
       ),
     );
 
@@ -231,6 +231,10 @@ class ToolRegistry {
     switch (toolName) {
       case 'web_search':
         return _executeWebSearch(params);
+      case 'create_note':
+        return _executeCreateNote(params);
+      case 'read_notes':
+        return _executeReadNotes(params);
       case 'get_location':
         return _executeGetLocation(params);
       case 'analyze_image':
@@ -278,6 +282,57 @@ class ToolRegistry {
       );
     } catch (e) {
       return ToolResult.failed('Search failed: $e');
+    }
+  }
+
+  Future<ToolResult> _executeCreateNote(Map<String, dynamic> params) async {
+    final title = (params['title'] as String?)?.trim();
+    final content = (params['content'] as String?)?.trim();
+    if (title == null || title.isEmpty) {
+      return ToolResult.failed('create_note requires a non-empty "title".');
+    }
+    if (content == null || content.isEmpty) {
+      return ToolResult.failed('create_note requires a non-empty "content".');
+    }
+    try {
+      final id = Uuid().v4();
+      await DatabaseHelper.instance.insertNote(
+        id: id,
+        title: title,
+        content: content,
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+      );
+      return ToolResult.success(
+        'Note saved.',
+        data: {'id': id, 'title': title},
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to save note: $e');
+    }
+  }
+
+  Future<ToolResult> _executeReadNotes(Map<String, dynamic> params) async {
+    final query = (params['query'] as String?)?.trim();
+    try {
+      final notes = await DatabaseHelper.instance.getNotes(
+        query: query == null || query.isEmpty ? null : query,
+      );
+      final shown = notes.take(10).toList();
+      return ToolResult.success(
+        'Found ${shown.length} note(s).',
+        data: {
+          'notes': [
+            for (final n in shown)
+              {
+                'id': n['id'],
+                'title': n['title'],
+                'content': n['content'],
+              },
+          ],
+        },
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to read notes: $e');
     }
   }
 
