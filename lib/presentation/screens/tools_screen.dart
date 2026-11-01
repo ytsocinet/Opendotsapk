@@ -23,6 +23,7 @@ import '../../data/services/mcp_service.dart';
 import '../../data/services/secure_store.dart';
 import '../../presentation/screens/prompt_lab_screen.dart';
 import '../providers/providers.dart';
+import '../../data/tools/tool_permission_store.dart';
 import '../widgets/screen_empty_state.dart';
 import '../widgets/screen_section_card.dart';
 
@@ -140,6 +141,7 @@ class _ToolCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final isGated = ToolPermissionStore.isV1Gated(tool);
 
     // The permission word is the point of this screen, so it owns the colour:
     // green runs freely, amber asks first, red is refused outright.
@@ -148,11 +150,13 @@ class _ToolCard extends ConsumerWidget {
       AppConstants.permissionBlock => AppColors.danger,
       _ => AppColors.warning,
     };
-    final statusText = switch (level) {
-      AppConstants.permissionAllow => 'Runs freely',
-      AppConstants.permissionBlock => 'Blocked',
-      _ => 'Asks first',
-    };
+    final statusText = isGated
+        ? 'Blocked in v1'
+        : switch (level) {
+            AppConstants.permissionAllow => 'Runs freely',
+            AppConstants.permissionBlock => 'Blocked',
+            _ => 'Asks first',
+          };
 
     return Card(
       margin: EdgeInsets.zero,
@@ -218,12 +222,14 @@ class _ToolCard extends ConsumerWidget {
                           child: Text('Block'),
                         ),
                       ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        ref
-                            .read(toolPermissionsProvider.notifier)
-                            .setPermission(tool, v);
-                      },
+                      onChanged: isGated
+                          ? null
+                          : (v) {
+                              if (v == null) return;
+                              ref
+                                  .read(toolPermissionsProvider.notifier)
+                                  .setPermission(tool, v);
+                            },
                     ),
                   ),
                 ),

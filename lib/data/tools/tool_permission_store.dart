@@ -30,6 +30,19 @@ enum ToolPermission {
 class ToolPermissionStore {
   static const _prefix = 'tool_permission.';
 
+  /// Tools whose Android permissions were removed in Clawzilla v1.
+  /// These are always Block, regardless of stored or requested values.
+  static const Set<String> v1GatedTools = {
+    'get_location',
+    'send_sms',
+    'create_calendar_event',
+    'add_contact',
+    'set_alarm',
+    'open_app',
+  };
+
+  static bool isV1Gated(String toolName) => v1GatedTools.contains(toolName);
+
   final Map<String, ToolPermission> _cache = {};
 
   /// Every tool starts at [ToolPermission.ask].
@@ -38,7 +51,8 @@ class ToolPermissionStore {
   /// whatever the model decides to call. `ask` costs one tap and is the only
   /// honest default when the action leaves the device (SMS, contacts) or
   /// reveals where the user is.
-  static ToolPermission defaultFor(String toolName) => ToolPermission.ask;
+  static ToolPermission defaultFor(String toolName) =>
+      isV1Gated(toolName) ? ToolPermission.block : ToolPermission.ask;
 
   /// Reads persisted permissions. Unknown tools keep the default.
   Future<void> load(Iterable<String> toolNames) async {
@@ -49,6 +63,8 @@ class ToolPermissionStore {
         _cache[name] = raw == null
             ? defaultFor(name)
             : ToolPermission.parse(raw);
+        // A permission granted before the v1 trim must not survive it.
+        if (isV1Gated(name)) _cache[name] = ToolPermission.block;
       }
     } catch (e) {
       // A read failure must not leave a tool unrestricted. Falling back to the
@@ -67,10 +83,12 @@ class ToolPermissionStore {
   Map<String, ToolPermission> get all => Map.unmodifiable(_cache);
 
   Future<void> set(String toolName, ToolPermission permission) async {
-    _cache[toolName] = permission;
+    final effective =
+        isV1Gated(toolName) ? ToolPermission.block : permission;
+    _cache[toolName] = effective;
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('$_prefix$toolName', permission.wire);
+      await prefs.setString('$_prefix$toolName', effective.wire);
     } catch (e) {
       // Keep the in-memory value: the session should honour the change even if
       // persistence failed, and the caller is told via the return of the UI.
@@ -78,7 +96,7 @@ class ToolPermissionStore {
       // is a support question with no other visible cause.
       Log.w(
         'ToolPermissionStore: could not persist "$toolName" → '
-        '${permission.wire}; it applies to this session only: $e',
+        '${effective.wire}; it applies to this session only: $e',
       );
     }
   }

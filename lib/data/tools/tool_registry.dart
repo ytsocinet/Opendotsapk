@@ -26,6 +26,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../domain/models/tool_result.dart';
 import '../services/llm_service.dart';
+import 'tool_permission_store.dart';
 
 class ToolRegistry {
   static final ToolRegistry _instance = ToolRegistry._internal();
@@ -194,8 +195,9 @@ class ToolRegistry {
   ///
   /// Hiding unimplemented tools is the point: a tool the model can call but
   /// that cannot work produces a confident lie in the final answer.
-  List<ToolDefinition> get toolsForModel =>
-      _tools.values.where((t) => t.implemented).toList(growable: false);
+  List<ToolDefinition> get toolsForModel => _tools.values
+      .where((t) => t.implemented && !ToolPermissionStore.isV1Gated(t.name))
+      .toList(growable: false);
 
   bool isImplemented(String toolName) => _tools[toolName]?.implemented ?? false;
 
@@ -212,6 +214,12 @@ class ToolRegistry {
     final def = _tools[toolName];
     if (def == null) {
       return ToolResult.failed('Unknown tool: $toolName');
+    }
+    if (ToolPermissionStore.isV1Gated(toolName)) {
+      return ToolResult.unsupported(
+        '"$toolName" is disabled in Clawzilla v1 (its Android permission '
+        'was removed). The tool was not run.',
+      );
     }
     if (!def.implemented) {
       return ToolResult.unsupported(
