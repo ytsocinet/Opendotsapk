@@ -42,8 +42,9 @@ is actually available.
     the app builds CPU-only instead of failing to link.
 
 Usage:
-    python3 scripts/patch_native_llama.py            # auto-detect
-    python3 scripts/patch_native_llama.py --cpu      # force CPU-only
+    python3 scripts/patch_native_llama.py            # CPU-only (Clawzilla default)
+    python3 scripts/patch_native_llama.py --gpu      # re-enable Vulkan if glslc is present
+    python3 scripts/patch_native_llama.py --cpu      # force CPU-only (same as default)
     python3 scripts/patch_native_llama.py --require-gpu  # fail if glslc absent
 """
 
@@ -162,8 +163,11 @@ def patch_gradle(path: Path, enable_gpu: bool) -> bool:
 
 def main() -> int:
     args = set(sys.argv[1:])
-    force_cpu = "--cpu" in args
     require_gpu = "--require-gpu" in args
+    # Clawzilla default: CPU-only builds. The Vulkan backend's registration
+    # crashes model load on the S23 FE, so GPU offload is opt-in (--gpu)
+    # instead of auto-detect. --cpu is accepted but redundant.
+    force_cpu = "--cpu" in args or ("--gpu" not in args and not require_gpu)
 
     glslc = None if force_cpu else glslc_path()
     enable_gpu = glslc is not None
