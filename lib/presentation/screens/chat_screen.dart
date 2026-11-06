@@ -29,6 +29,7 @@ import '../../data/services/model_manager.dart';
 import '../../data/services/model_preflight.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/router_service.dart';
+import '../../data/services/wake_service.dart';
 import '../widgets/biometric_gate.dart';
 import '../../domain/models/local_model.dart';
 import '../../domain/models/models.dart';
@@ -40,7 +41,8 @@ class ChatScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends ConsumerState<ChatScreen> {
+class _ChatScreenState extends ConsumerState<ChatScreen>
+    with WidgetsBindingObserver {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
@@ -70,6 +72,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// partial text** rather than throwing away a half-finished reply.
   bool _stopRequested = false;
 
+  /// True while the current exchange started by voice. Drives Cypher's
+  /// auto-listen: after a spoken reply it listens again, but never after
+  /// a typed message.
+  bool _voiceExchange = false;
+
+  /// Wake service handle, kept so dispose can unregister without ref.
+  WakeService? _wake;
+
   /// Tokens waiting to be shown.
   ///
   /// `setState` used to run once per token, rebuilding this entire screen
@@ -83,7 +93,104 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   int _streamStartMs = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _wake = ref.read(wakeServiceProvider);
+    WidgetsBinding.instance.addObserver(this);
+    // Runs after the first frame so settings are loaded and the context
+    // is usable.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _restoreLastModel();
+      _restoreWakeListening();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final wake = _wake;
+      if (wake != null && wake.wakePending) {
+        wake.wakePending = false;
+        _startVoiceInput();
+      }
+    }
+  }
+
+  /// Load the remembered model on startup, if one was saved and the file
+  /// is still there. Same pre-flight checks as a manual load, on CPU.
+  /// A missing or bad file shows an error instead of crashing or silently
+  /// doing nothing; a success shows on the "Loaded model" card.
+  Future<void> _restoreLastModel() async {
+    if (!mounted) return;
+    final llm = ref.read(llmServiceProvider);
+    if (llm.isLoaded) return;
+    final path = ref.read(settingsProvider)['model_path'] as String?;
+    if (path == null || path.trim().isEmpty) return;
+    if (!await File(path).exists()) {
+      Log.w('remembered model gone: $path');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Your last model is no longer on the phone. Pick one to load.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    try {
+      final gpu = await GpuService.detect();
+      final ok = await llm.loadModel(
+        path,
+        gpuLayers: 0,
+        totalRamMb: gpu.totalRamMb,
+      );
+      if (!mounted) return;
+      if (!ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Failed to load that GGUF'
+                  '${llm.lastLoadError == null ? '' : ': ${llm.lastLoadError}'}',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      Log.w('remembered model failed to load: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load your last model: $e')),
+      );
+    }
+  }
+
+  /// Restart always-listening if the toggle is on, and wire this screen
+  /// as the wake-word target while it is alive.
+  Future<void> _restoreWakeListening() async {
+    final wake = _wake;
+    if (wake == null) return;
+    wake.onWakeWord = () {
+      if (!mounted) return;
+      wake.markListening();
+      _startVoiceInput();
+    };
+    final enabled =
+        ref.read(settingsProvider)['always_listening'] as bool? ?? false;
+    if (!enabled || wake.isRunning) return;
+    final problem = await wake.start();
+    if (problem != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Always-listening is off: $problem')),
+      );
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _wake?.onWakeWord = null;
     _flushTimer?.cancel();
     _cloudSub?.cancel();
     _controller.dispose();
@@ -437,6 +544,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // ------------------------------------------------------------------- send
 
   Future<void> _sendMessage([String? text]) async {
+    // Only the mic passes text; the composer sends with no argument.
+    // This is what gates auto-listen after the reply.
+    _voiceExchange = text != null;
     final messageText = text ?? _controller.text.trim();
     final hasImages = _attachedImages.isNotEmpty;
     if (messageText.isEmpty && !hasImages && _attachedDocs.isEmpty) return;
@@ -691,13 +801,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (ttsEnabled) {
       await ref.read(textToSpeechProvider.notifier).speak(_currentResponse);
     }
+
+    // Cypher voice conversation: after a spoken reply, listen again so
+    // the user can keep talking without tapping. Only after a voice
+    // exchange — never after typed messages — and only while results
+    // keep coming back; silence ends the loop in _startVoiceInput.
+    if (_voiceExchange && mounted) {
+      _startVoiceInput();
+    } else {
+      _wake?.markIdle();
+    }
   }
 
   Future<void> _exportChat() async {
     final messages = ref.read(chatMessagesProvider);
     if (messages.isEmpty) return;
 
-    final buf = StringBuffer('# LocalMind chat export\n\n');
+    final buf = StringBuffer('# Clawzilla chat export\n\n');
     for (final m in messages) {
       buf.writeln('**${m.role}** (${m.timestamp})');
       buf.writeln(m.content);
@@ -708,7 +828,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/localmind-chat.md');
       await file.writeAsString(buf.toString());
-      await Share.shareXFiles([XFile(file.path)], text: 'LocalMind chat');
+      await Share.shareXFiles([XFile(file.path)], text: 'Clawzilla chat');
     } catch (e) {
       Log.w('export failed: $e');
     }
@@ -867,7 +987,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     if (!isAvailable) {
       await speechNotifier.init();
-      if (!ref.read(speechToTextProvider)) return;
+      if (!ref.read(speechToTextProvider)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "Speech recognition isn't available on this phone.",
+              ),
+            ),
+          );
+        }
+        _wake?.markIdle();
+        return;
+      }
     }
 
     final speech = ref.read(speechToTextProvider.notifier);
@@ -875,6 +1007,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     if (result != null && result.isNotEmpty && mounted) {
       _sendMessage(result);
+    } else {
+      _wake?.markIdle();
     }
   }
 
@@ -1025,7 +1159,7 @@ class _ChatHeaderState extends State<_ChatHeader>
                           ),
                         ),
                         child: Text(
-                          'LocalMind',
+                          'Clawzilla',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ),
@@ -1427,13 +1561,15 @@ class ModelSelectorDialog extends ConsumerWidget {
             ),
           ),
         );
-        // Clear model_path so the chip does not keep showing the external path
-        // after a storage load. The picker will read "Nothing loaded" until the
-        // user taps Load again with a catalog model selected.
-        if (context.mounted) {
+        // Keep model_path so the "Loaded model" card shows the file name
+        // instead of "Nothing loaded", and so the model is remembered and
+        // reloaded on the next launch. Only on success: a failed load
+        // must not overwrite the saved model. active_llm_id stays
+        // cleared — no catalog model is selected.
+        if (ok && context.mounted) {
           await ref
               .read(settingsProvider.notifier)
-              .updateSetting('model_path', null);
+              .updateSetting('model_path', loadPath);
           await ref
               .read(settingsProvider.notifier)
               .updateSetting('active_llm_id', null);

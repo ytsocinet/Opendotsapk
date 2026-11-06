@@ -3,12 +3,21 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Cypher always-listening (added back after v1): foreground service
+         (microphone type) so Porcupine can listen with the app closed, and
+         the notification permission for its persistent notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Removed for v1 (held until testing is done):
          SEND_SMS, READ_CONTACTS, WRITE_CONTACTS, READ_CALENDAR, WRITE_CALENDAR,
          ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, SET_ALARM, USE_EXACT_ALARM,
-         FOREGROUND_SERVICE, POST_NOTIFICATIONS, QUERY_ALL_PACKAGES, WAKE_LOCK -->
+         QUERY_ALL_PACKAGES, WAKE_LOCK
+         (FOREGROUND_SERVICE, FOREGROUND_SERVICE_MICROPHONE and POST_NOTIFICATIONS
+         came back for Cypher always-listening.) -->
     <application
-        android:label="LocalMind"
+        android:label="Clawzilla"
         android:icon="@mipmap/ic_launcher"
         android:networkSecurityConfig="@xml/network_security_config"
         android:allowBackup="false"

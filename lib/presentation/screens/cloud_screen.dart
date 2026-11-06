@@ -206,7 +206,7 @@ class _CloudModelsScreenState extends ConsumerState<CloudModelsScreen> {
             Text(
               'You supply your own API key. It is stored in this device\'s '
               'hardware keystore and sent only to the provider you chose.\n\n'
-              'There is no LocalMind server. Your key is never uploaded, and '
+              'There is no Clawzilla server. Your key is never uploaded, and '
               'the on-device model stays the default — cloud is used only when '
               'you ask for it or when the router decides a turn needs it.',
               style: Theme.of(context).textTheme.bodySmall,

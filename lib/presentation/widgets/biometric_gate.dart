@@ -229,7 +229,7 @@ class _BiometricGateState extends State<BiometricGate>
       }
 
       final ok = await _auth.authenticate(
-        localizedReason: 'Unlock LocalMind',
+        localizedReason: 'Unlock Clawzilla',
         // local_auth 3.x flattened these: `options:`/`stickyAuth` are gone.
         // biometricOnly: false lets a PIN/pattern/password stand in — which is
         // the whole point of the isDeviceSupported gate above.
@@ -289,7 +289,7 @@ class _BiometricGateState extends State<BiometricGate>
         Icon(Icons.lock_outline, size: 56, color: Colors.grey[500]),
         const SizedBox(height: 16),
         const Text(
-          'LocalMind is locked',
+          'Clawzilla is locked',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
@@ -326,14 +326,14 @@ class _BiometricGateState extends State<BiometricGate>
           Icon(Icons.lock_outline, size: 56, color: Colors.grey[500]),
           const SizedBox(height: 16),
           const Text(
-            'LocalMind can’t lock',
+            'Clawzilla can’t lock',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
             'This device has no screen lock — no PIN, pattern, password or '
-            'biometrics. LocalMind keeps your notes shut rather than opening '
+            'biometrics. Clawzilla keeps your notes shut rather than opening '
             'them without one.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 12, color: Colors.grey[500]),

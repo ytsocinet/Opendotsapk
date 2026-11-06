@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:workmanager/workmanager.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import 'app.dart';
 import 'core/security/crypto_box.dart';
@@ -104,6 +105,14 @@ Future<void> main() async {
     await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
   } catch (e) {
     Log.w('WorkManager init failed: $e');
+  }
+
+  // Cypher always-listening needs the foreground-task port open before any
+  // service starts. Same rule as WorkManager above: never block startup.
+  try {
+    FlutterForegroundTask.initCommunicationPort();
+  } catch (e) {
+    Log.w('foreground-task port init failed: $e');
   }
 
   Log.i('startup completed in ${startupWatch.elapsedMilliseconds}ms');

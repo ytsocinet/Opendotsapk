@@ -16,30 +16,29 @@ import '../constants/app_constants.dart';
 class AppColors {
   AppColors._();
 
-  /// The brand indigo the app has used since v1.0 — kept so existing installs
-  /// still look like the same product.
+  /// Matrix green brand — Clawzilla retheme (was indigo before).
   static const Color brand = AppConstants.primaryColor;
 
-  /// Secondary accent for AI-authored surfaces and progress: a cool cyan that
-  /// reads as "machine" against the indigo without competing with it.
-  static const Color accent = Color(0xFF22D3EE);
+  /// Secondary accent for AI-authored surfaces and progress: a light Matrix
+  /// green that reads as "machine" against the brand green without competing.
+  static const Color accent = Color(0xFF4ADE80);
 
   static const Color success = Color(0xFF34D399);
   static const Color warning = Color(0xFFFBBF24);
   static const Color danger = Color(0xFFF87171);
 
   /// Page background — darker than the cards so elevation reads even at 0dp.
-  static const Color background = Color(0xFF0B0C11);
+  static const Color background = Color(0xFF070B08);
 
   /// Card / sheet surface.
-  static const Color surface = Color(0xFF14161D);
+  static const Color surface = Color(0xFF0E1510);
 
   /// Raised surface (dialogs, expanded cards, the input bar).
-  static const Color surfaceHigh = Color(0xFF1C1F28);
+  static const Color surfaceHigh = Color(0xFF141D15);
 
-  /// The model's own bubble; the user's is the brand indigo.
-  static const Color aiBubble = Color(0xFF1B1E27);
-  static const Color userBubble = Color(0xFF4F46E5);
+  /// The model's own bubble; the user's is a solid Matrix green.
+  static const Color aiBubble = Color(0xFF122015);
+  static const Color userBubble = Color(0xFF16A34A);
 }
 
 class AppTheme {
@@ -70,12 +69,12 @@ class AppTheme {
           secondary: AppColors.accent,
           surface: AppColors.surface,
           surfaceContainerLowest: AppColors.background,
-          surfaceContainerLow: Color(0xFF10121A),
+          surfaceContainerLow: Color(0xFF0A0F0B),
           surfaceContainer: AppColors.surface,
           surfaceContainerHigh: AppColors.surfaceHigh,
-          surfaceContainerHighest: Color(0xFF242833),
+          surfaceContainerHighest: Color(0xFF1B261C),
           error: AppColors.danger,
-          outline: const Color(0xFF2E3341),
+          outline: const Color(0xFF223526),
         );
 
     final text = _textTheme(scheme);

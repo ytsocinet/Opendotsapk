@@ -162,7 +162,7 @@ class McpService {
         'tools': <String, dynamic>{},
         'roots': {'listChanged': false},
       },
-      'clientInfo': {'name': 'LocalMind', 'version': '1.1.0'},
+      'clientInfo': {'name': 'Clawzilla', 'version': '1.1.0'},
     }, authToken: authToken);
 
     final sessionId = init['_sessionId'] as String?;

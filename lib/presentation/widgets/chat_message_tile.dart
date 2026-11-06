@@ -132,7 +132,7 @@ class _ChatMessageTileState extends State<ChatMessageTile>
             Row(
               children: [
                 Text(
-                  'LocalMind',
+                  'Cypher',
                   style: text.labelMedium?.copyWith(
                     color: AppColors.accent,
                     fontWeight: FontWeight.w600,

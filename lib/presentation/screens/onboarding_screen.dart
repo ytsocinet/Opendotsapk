@@ -51,7 +51,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       icon: Icons.memory,
       title: 'Download a model to begin',
       body:
-          'LocalMind is the engine; the model is the brain. You pick one and '
+          'Clawzilla is the engine; the model is the brain. You pick one and '
           'the app downloads it.\n\n'
           'Start with Qwen2.5 0.5B (~397 MB) on a mid-range phone, or '
           'SmolLM2 360M if storage is tight.',

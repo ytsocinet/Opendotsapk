@@ -12,6 +12,7 @@ import '../../data/services/cloud_service.dart';
 import '../../data/services/mcp_service.dart';
 import '../../data/services/router_service.dart';
 import '../../data/services/secure_store.dart';
+import '../../data/services/wake_service.dart';
 import '../../data/tools/tool_registry.dart';
 import '../../data/tools/tool_permission_store.dart';
 import '../../data/database/database_helper.dart';
@@ -140,15 +141,46 @@ class TtsNotifier extends StateNotifier<bool> {
     state = true;
   }
 
+  /// Speak [text] aloud, waiting until the utterance actually finishes.
+  ///
+  /// Two fixes in one: `init()` was never called anywhere, so `_isReady`
+  /// stayed false and every reply was silently skipped; and awaiting
+  /// `speak()` alone returns when synthesis *starts*, so an auto-listen
+  /// chained after it would hear Cypher's own voice. The completion
+  /// handler marks the real end, with a duration estimate as a safety net
+  /// if the engine never reports back.
   Future<void> speak(String text) async {
-    if (!_isReady) return;
+    if (!_isReady) await init();
+    if (text.trim().isEmpty) return;
+    final done = Completer<void>();
+    _tts.setCompletionHandler(() {
+      if (!done.isCompleted) done.complete();
+    });
+    _tts.setErrorHandler((_) {
+      if (!done.isCompleted) done.complete();
+    });
+    _tts.setCancelHandler(() {
+      if (!done.isCompleted) done.complete();
+    });
     await _tts.speak(text);
+    // ~150 words a minute, plus a margin; never wait forever.
+    final words = text.trim().split(RegExp(r'\s+')).length;
+    final estimate = Duration(seconds: (words / 2.5).ceil() + 3);
+    final cap = estimate > const Duration(seconds: 120)
+        ? const Duration(seconds: 120)
+        : estimate;
+    await done.future.timeout(cap, onTimeout: () {});
   }
 
   Future<void> stop() async {
     await _tts.stop();
   }
 }
+
+// Wake word ("Hey Cypher") — see lib/data/services/wake_service.dart.
+final wakeServiceProvider = Provider<WakeService>((ref) {
+  return WakeService.instance;
+});
 
 // Chat Messages Provider
 final chatMessagesProvider =
@@ -355,6 +387,9 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     'personality': 'professional',
     'tts_enabled': true,
     'voice_enabled': true,
+    // Cypher always-listening ("Hey Cypher"). Off by default: it keeps
+    // the mic warm and runs a foreground service, so it is opt-in.
+    'always_listening': false,
     'model_path': null,
 
     // Cloud / privacy. Defaults are the conservative ones: auto routing,
@@ -414,6 +449,7 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'prefer_local_metered',
       'biometric_lock',
       'voice_enabled',
+      'always_listening',
       'onboarding_done',
     ]) {
       final raw = await _db.getPreference(key);

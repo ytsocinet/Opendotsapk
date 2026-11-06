@@ -73,9 +73,17 @@ dependencies:
   speech_to_text: ^7.5.0
   flutter_tts: ^4.0.2
 
+  # Wake word ("Hey Cypher"): on-device Porcupine engine. The AccessKey and
+  # the custom keyword file come from the user's Picovoice account — never
+  # committed to the repo (the fork is public).
+  porcupine_flutter: ^4.0.0
+
   # Background tasks
-  # (flutter_foreground_task removed: unused, and its 6.x Android host still
- #  used the v1 embedding that Flutter >=3.29 deleted.)
+  # Cypher always-listening runs as a foreground service (microphone type).
+  # flutter_foreground_task 6.x was removed earlier: unused, and its Android
+  # host still used the v1 embedding Flutter >=3.29 deleted. 11.x is current
+  # (Flutter 3.44+, Kotlin 2.2.20+, Gradle 8.11.1+ — all met by this project).
+  flutter_foreground_task: ^11.0.3
   workmanager: ^0.10.10
 
   # Network

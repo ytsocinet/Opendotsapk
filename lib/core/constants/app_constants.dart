@@ -6,7 +6,7 @@ class AppConstants {
   AppConstants._();
 
   // ---------------------------------------------------------------- app info
-  static const String appName = 'LocalMind';
+  static const String appName = 'Clawzilla';
 
   /// Fallback app version — used only when the real one cannot be read.
   ///
@@ -42,7 +42,8 @@ class AppConstants {
     }
   }
 
-  static const Color primaryColor = Color(0xFF6366F1);
+  // Matrix green brand (was indigo 0xFF6366F1 before the Clawzilla retheme).
+  static const Color primaryColor = Color(0xFF00FF41);
 
   // ------------------------------------------------------------ model storage
   /// Sub-directory (under the app documents dir) holding downloaded GGUFs.

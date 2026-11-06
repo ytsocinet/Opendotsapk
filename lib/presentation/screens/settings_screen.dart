@@ -671,32 +671,202 @@ class VoiceSettings extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
     final ttsEnabled = settings['tts_enabled'] as bool? ?? true;
+    final alwaysListening = settings['always_listening'] as bool? ?? false;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: SwitchListTile(
+            secondary: ScreenRowIcon(
+              icon: ttsEnabled
+                  ? Icons.record_voice_over_outlined
+                  : Icons.voice_over_off_outlined,
+              color: ttsEnabled
+                  ? scheme.primary
+                  : scheme.onSurfaceVariant.withValues(alpha: 0.5),
+              size: 38,
+            ),
+            title: const Text('Text-to-Speech'),
+            subtitle: const Text(
+              'Read assistant responses aloud using speech engine',
+            ),
+            value: ttsEnabled,
+            onChanged: (value) {
+              ref
+                  .read(settingsProvider.notifier)
+                  .updateSetting('tts_enabled', value);
+              onChanged('tts_enabled');
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: SwitchListTile(
+            secondary: ScreenRowIcon(
+              icon: alwaysListening
+                  ? Icons.hearing_outlined
+                  : Icons.hearing_disabled_outlined,
+              color: alwaysListening
+                  ? scheme.primary
+                  : scheme.onSurfaceVariant.withValues(alpha: 0.5),
+              size: 38,
+            ),
+            title: const Text('Always listening — "Hey Cypher"'),
+            subtitle: const Text(
+              'Cypher listens for its wake word even with the app closed. '
+              'All audio stays on the phone. Uses battery while on.',
+            ),
+            value: alwaysListening,
+            onChanged: (value) async {
+              ref
+                  .read(settingsProvider.notifier)
+                  .updateSetting('always_listening', value);
+              onChanged('always_listening');
+              final wake = ref.read(wakeServiceProvider);
+              if (value) {
+                final problem = await wake.start();
+                if (problem != null) {
+                  // Starting failed (no key, no keyword file, engine
+                  // error): flip the toggle back so it never lies.
+                  ref
+                      .read(settingsProvider.notifier)
+                      .updateSetting('always_listening', false);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(problem)),
+                    );
+                  }
+                }
+              } else {
+                await wake.stop();
+              }
+            },
+          ),
+        ),
+        const _PicovoiceKeyField(),
+      ],
+    );
+  }
+}
+
+/// Picovoice AccessKey for "Hey Cypher" wake mode. Stored in the Android
+/// Keystore like the cloud keys — never in settings or the repo.
+class _PicovoiceKeyField extends StatefulWidget {
+  const _PicovoiceKeyField();
+
+  @override
+  State<_PicovoiceKeyField> createState() => _PicovoiceKeyFieldState();
+}
+
+class _PicovoiceKeyFieldState extends State<_PicovoiceKeyField> {
+  final _controller = TextEditingController();
+  bool _hasKey = false;
+  bool _busy = false;
+  String? _status;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final has = await SecureStore.instance.hasApiKey('picovoice');
+    if (mounted) setState(() => _hasKey = has);
+  }
+
+  Future<void> _save() async {
+    final key = _controller.text.trim();
+    if (key.isEmpty) return;
+    setState(() {
+      _busy = true;
+      _status = null;
+    });
+    try {
+      await SecureStore.instance.setApiKey('picovoice', key);
+      _controller.clear();
+      if (!mounted) return;
+      setState(() {
+        _hasKey = true;
+        _status = 'OK — key saved to the keystore.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _status = 'Could not save the key: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _remove() async {
+    await SecureStore.instance.deleteApiKey('picovoice');
+    if (!mounted) return;
+    setState(() {
+      _hasKey = false;
+      _status = 'Key removed. Always-listening stays off until a new key is saved.';
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: SwitchListTile(
-        secondary: ScreenRowIcon(
-          icon: ttsEnabled
-              ? Icons.record_voice_over_outlined
-              : Icons.voice_over_off_outlined,
-          color: ttsEnabled
-              ? scheme.primary
-              : scheme.onSurfaceVariant.withValues(alpha: 0.5),
-          size: 38,
-        ),
-        title: const Text('Text-to-Speech'),
-        subtitle: const Text(
-          'Read assistant responses aloud using speech engine',
-        ),
-        value: ttsEnabled,
-        onChanged: (value) {
-          ref
-              .read(settingsProvider.notifier)
-              .updateSetting('tts_enabled', value);
-          onChanged('tts_enabled');
-        },
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Picovoice key — for "Hey Cypher"',
+            style: theme.textTheme.titleSmall,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _hasKey
+                ? 'A key is saved. Get yours free at console.picovoice.ai.'
+                : 'No key saved. Make a free Picovoice account, copy your AccessKey, and save it here.',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  obscureText: true,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    hintText: 'Paste AccessKey',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _busy ? null : _save,
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+          if (_hasKey)
+            TextButton(onPressed: _remove, child: const Text('Remove key')),
+          if (_status != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(_status!, style: theme.textTheme.bodySmall),
+            ),
+        ],
       ),
     );
   }
@@ -1181,7 +1351,7 @@ class _EraseDataSectionState extends ConsumerState<EraseDataSection> {
       builder: (ctx) => AlertDialog(
         title: const Text('Erase all data?'),
         content: const Text(
-          'This permanently deletes everything LocalMind stores on this '
+          'This permanently deletes everything Clawzilla stores on this '
           'device:\n\n'
           '  \u2022  all chat messages\n'
           '  \u2022  memories and notes\n'
