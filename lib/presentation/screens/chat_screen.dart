@@ -1354,11 +1354,14 @@ class ModelSelectorDialog extends ConsumerWidget {
       // Same reason as the image picker: this pause is expected, not the user
       // leaving the app.
       BiometricGate.suppressReLock();
-      final result = await FilePicker.pickFiles(type: FileType.any);
-      final path = result.isEmpty ? null : result.first.path;
-      if (path == null || !context.mounted) return;
+      final result = await FilePicker.pickFiles(
+        type: FileType.any,
+        withReadStream: true,
+      );
+      if (result.isEmpty || !context.mounted) return;
+      final picked = result.first;
 
-      if (!path.toLowerCase().endsWith('.gguf')) {
+      if (!picked.name.toLowerCase().endsWith('.gguf')) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -1382,12 +1385,44 @@ class ModelSelectorDialog extends ConsumerWidget {
       // failure underneath it — the app looks stuck rather than failed.
       final nav = Navigator.of(context);
       try {
+        // Resolve a loadable path. Some pickers hand back no direct
+        // filesystem path (cloud files, some Downloads entries); those
+        // used to fail silently here. Stream-copy such a file into app
+        // storage in chunks instead of loading it into memory at once.
+        String loadPath;
+        if (picked.path != null) {
+          loadPath = picked.path!;
+        } else if (picked.readStream != null) {
+          final docs = await getApplicationDocumentsDirectory();
+          final dir = Directory('${docs.path}/imported');
+          await dir.create(recursive: true);
+          final copy = File('${dir.path}/${picked.name}');
+          final sink = copy.openWrite();
+          try {
+            await sink.addStream(picked.readStream!);
+          } finally {
+            await sink.close();
+          }
+          loadPath = copy.path;
+        } else {
+          if (nav.canPop()) nav.pop();
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "Couldn't read that file. Try picking it from Downloads.",
+              ),
+            ),
+          );
+          return;
+        }
+
         // Safe loader (Clawzilla v1): storage loads get the same
         // pre-flight checks as catalog loads, on CPU by default.
         final gpu = await GpuService.detect();
         final llm = ref.read(llmServiceProvider);
         final ok = await llm.loadModel(
-          path,
+          loadPath,
           gpuLayers: 0,
           totalRamMb: gpu.totalRamMb,
         );
@@ -1398,7 +1433,7 @@ class ModelSelectorDialog extends ConsumerWidget {
           SnackBar(
             content: Text(
               ok
-                  ? 'Loaded ${path.split('/').last}'
+                  ? 'Loaded ${loadPath.split('/').last}'
                   : 'Failed to load that GGUF'
                       '${llm.lastLoadError == null ? '' : ': ${llm.lastLoadError}'}',
             ),
