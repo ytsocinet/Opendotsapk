@@ -1354,10 +1354,7 @@ class ModelSelectorDialog extends ConsumerWidget {
       // Same reason as the image picker: this pause is expected, not the user
       // leaving the app.
       BiometricGate.suppressReLock();
-      final result = await FilePicker.pickFiles(
-        type: FileType.any,
-        withReadStream: true,
-      );
+      final result = await FilePicker.pickFiles(type: FileType.any);
       if (result.isEmpty || !context.mounted) return;
       final picked = result.first;
 
@@ -1389,32 +1386,23 @@ class ModelSelectorDialog extends ConsumerWidget {
         // filesystem path (cloud files, some Downloads entries); those
         // used to fail silently here. Stream-copy such a file into app
         // storage in chunks instead of loading it into memory at once.
+        // file_picker v13 removed withReadStream/readStream; the current
+        // API is PlatformFile.readAsByteStream().
         String loadPath;
         if (picked.path != null) {
           loadPath = picked.path!;
-        } else if (picked.readStream != null) {
+        } else {
           final docs = await getApplicationDocumentsDirectory();
           final dir = Directory('${docs.path}/imported');
           await dir.create(recursive: true);
           final copy = File('${dir.path}/${picked.name}');
           final sink = copy.openWrite();
           try {
-            await sink.addStream(picked.readStream!);
+            await sink.addStream(picked.readAsByteStream());
           } finally {
             await sink.close();
           }
           loadPath = copy.path;
-        } else {
-          if (nav.canPop()) nav.pop();
-          if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                "Couldn't read that file. Try picking it from Downloads.",
-              ),
-            ),
-          );
-          return;
         }
 
         // Safe loader (Clawzilla v1): storage loads get the same
