@@ -229,6 +229,7 @@ class _CloudModelsScreenState extends ConsumerState<CloudModelsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SegmentedButton<String>(
+            showSelectedIcon: false,
             segments: const [
               ButtonSegment(value: 'local', label: Text('On this phone')),
               ButtonSegment(value: 'auto', label: Text('Auto')),

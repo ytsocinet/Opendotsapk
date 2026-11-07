@@ -62,9 +62,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// Documents ingested this session, available as RAG context.
   final List<IngestedDocument> _attachedDocs = [];
 
-  /// Set after a send so the UI can show where the turn actually ran.
-  String? _lastRoute;
-
   /// The in-flight cloud request, held so Stop can actually cancel it. The
   /// local path is stopped through `LlmService.stop()` instead.
   StreamSubscription<String>? _cloudSub;
@@ -269,19 +266,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     )
                   : ListView.builder(
                       controller: _scrollController,
+                      reverse: true,
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                       itemCount: messages.length + (_isThinking ? 1 : 0),
                       itemBuilder: (context, index) {
                         if (index == messages.length && _isThinking) {
                           return const ThinkingBubble();
                         }
-                        // Reversed on purpose: the newest message belongs at the
-                        // top, and with the composer pinned to the bottom this
-                        // is what makes "scroll to the latest" a no-op instead
-                        // of a jump to the far end.
-                        final message = messages[messages.length - 1 - index];
+                        // Chronological order in a reversed list: the newest
+                        // message is last and sits at the bottom, like every
+                        // chat app — offset 0 is the latest end, so "scroll
+                        // to the latest" is a no-op instead of a jump to the
+                        // far end.
+                        final message = messages[index];
                         return FadeSlideIn(
-                          // Stagger capped hard: the index runs newest-first, so
+                          // Stagger capped hard: the index runs oldest-first, so
                           // without a cap the fifth item of a long transcript
                           // would still be waiting 500 ms and the hundredth
                           // five seconds. Five steps covers every message that
@@ -298,9 +297,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             // Attachment previews
             if (_attachedImages.isNotEmpty || _attachedDocs.isNotEmpty)
               _buildAttachmentStrip(),
-
-            // Route badge: say plainly where the last turn ran.
-            if (_lastRoute != null) _buildRouteBadge(),
 
             // Mode + effort switcher, above the composer.
             _ModeBar(
@@ -331,40 +327,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  /// Badge under the composer showing the router's decision.
-  Widget _buildRouteBadge() {
-    final isCloud =
-        _lastRoute!.toLowerCase().contains('cloud') ||
-        _lastRoute!.toLowerCase().contains('sent to');
-    // Amber for anything that left the device, green for anything that did
-    // not. The distinction is the entire point of the badge, so the colours
-    // are semantic tokens rather than a pair of arbitrary Material hues.
-    final tint = isCloud ? AppColors.warning : AppColors.success;
-
-    return Container(
-      width: double.infinity,
-      color: tint.withValues(alpha: 0.12),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-      child: Row(
-        children: [
-          Icon(
-            isCloud ? Icons.cloud_outlined : Icons.phone_android,
-            size: 14,
-            color: tint,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              _lastRoute!,
-              style: Theme.of(context).textTheme.labelSmall
-                  ?.copyWith(color: tint),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -636,8 +598,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       localVisionReady: llmService.isVisionLoaded,
       localModelReady: llmService.isLoaded,
     );
-
-    if (context.mounted) setState(() => _lastRoute = decision.reason);
 
     if (decision.isCloud) {
       await _sendViaCloud(decision, '$display$docCtx', imagePath, priorHistory);
@@ -1111,7 +1071,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   void _scrollToBottom() {
+    // Offset 0 is the latest end of the reversed list (the bottom).
     Future.delayed(const Duration(milliseconds: 100), () {
+      if (!_scrollController.hasClients) return;
       _scrollController.animateTo(
         0,
         duration: const Duration(milliseconds: 300),
@@ -1129,10 +1091,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 String _modelDisplayName(String path) {
   final file = path.split('/').last;
   final stem = ModelPreflight.friendlyName(file);
-  // File names run long ("Qwen2.5-0.5B-Instruct-Q4_K_M"); the chip has room for
-  // roughly this much before it starts pushing the header actions off-screen.
-  if (stem.length <= 22) return stem;
-  return '${stem.substring(0, 21)}…';
+  // Chip label: family + size only ("Qwen 0.5B", "Llama 3.2 3B"). The
+  // full friendly name stays visible in the weights line and the Models
+  // screen; the chip has room for roughly this much before it starts
+  // pushing the header actions off-screen.
+  // Case-insensitive: some file names spell the size lowercase ("4b").
+  final sizeMatch = RegExp(
+    r'\d+(?:\.\d+)?[BM]\b',
+    caseSensitive: false,
+  ).firstMatch(stem);
+  if (sizeMatch == null) {
+    if (stem.length <= 12) return stem;
+    return '${stem.substring(0, 11).trimRight()}…';
+  }
+  final words = stem.substring(0, sizeMatch.end).split(' ');
+  // A dotted version glued to the family name ("Qwen2.5") reads as the
+  // family alone; a version standing on its own ("Llama 3.2") stays.
+  final family = words.first.replaceAll(RegExp(r'\d+\.\d+$'), '');
+  final short = ([family, ...words.sublist(1)]).join(' ');
+  if (short.length <= 12) return short;
+  return '${short.substring(0, 11).trimRight()}…';
 }
 
 /// The header above the transcript.
@@ -1216,8 +1194,8 @@ class _ChatHeaderState extends State<_ChatHeader>
                 bottom: false,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-                  // Clawziod look: the header is two rows — the title row,
-                  // then the weights line with the WAKE / AIR-GAP pills.
+                  // Clawziod look: the header is three rows — the title row,
+                  // then the weights line, then the WAKE / AIR-GAP pills.
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -1370,46 +1348,38 @@ class _ChatHeaderState extends State<_ChatHeader>
                         ],
                       ),
                       const SizedBox(height: 6),
-                      // Weights line: what is actually loaded, the wake
-                      // state, and the local-only badge. The weights text
-                      // flexes and truncates; the pills and the enclave
-                      // label never do.
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              loaded
-                                  ? 'WEIGHTS: ${_modelDisplayName(path)}'
-                                  : 'WEIGHTS: NO MODEL LOADED',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                  ),
+                      // Weights line: what is actually loaded, on its own
+                      // full-width row so it is never squeezed to "WEIG…".
+                      // Full friendly name here; the chip above shows the
+                      // short family + size form.
+                      Text(
+                        loaded
+                            ? 'WEIGHTS: ${ModelPreflight.friendlyName(path.split('/').last)}'
+                            : 'WEIGHTS: NO MODEL LOADED',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelSmall
+                            ?.copyWith(
+                              color: scheme.onSurfaceVariant,
                             ),
-                          ),
-                          const SizedBox(width: 6),
+                      ),
+                      const SizedBox(height: 4),
+                      // Pills: wake state and the local-only badge, on a
+                      // third row in a Wrap so they flow instead of
+                      // squeezing. No ZERO-CLOUD ENCLAVE text — the
+                      // AIR-GAP pill already says local-only.
+                      Wrap(
+                        spacing: 6,
+                        children: [
                           _HeaderPill(
                             label: widget.alwaysListening
                                 ? 'WAKE: ON'
                                 : 'WAKE: OFF',
                             active: widget.alwaysListening,
                           ),
-                          const SizedBox(width: 6),
                           const _HeaderPill(
                             label: 'AIR-GAP',
                             icon: Icons.shield_outlined,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'ZERO-CLOUD ENCLAVE',
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  color: AppColors.brand.withValues(
-                                    alpha: 0.75,
-                                  ),
-                                ),
                           ),
                         ],
                       ),
@@ -1425,7 +1395,7 @@ class _ChatHeaderState extends State<_ChatHeader>
   }
 }
 
-/// Small bordered pill for the chat header's second row.
+/// Small bordered pill for the chat header's third row.
 ///
 /// Display only: it reports a real state (wake listening on/off, the
 /// local-only badge), it does not change anything when tapped.
@@ -2877,6 +2847,7 @@ class _ModeBar extends StatelessWidget {
             flex: 3,
             child: SegmentedButton<String>(
               style: _compact,
+              showSelectedIcon: false,
               segments: const [
                 ButtonSegment(
                   value: 'chat',
@@ -2903,6 +2874,7 @@ class _ModeBar extends StatelessWidget {
             flex: 2,
             child: SegmentedButton<String>(
               style: _compact,
+              showSelectedIcon: false,
               segments: const [
                 ButtonSegment(
                   value: 'low',

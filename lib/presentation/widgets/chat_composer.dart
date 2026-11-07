@@ -117,7 +117,7 @@ class _ChatComposerState extends State<ChatComposer>
         final glowOpacity = _focusController.value * 0.15;
 
         return Container(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
           decoration: BoxDecoration(
             color: AppColors.surfaceHigh,
             border: Border(
@@ -187,13 +187,12 @@ class _ChatComposerState extends State<ChatComposer>
                             onSubmitted: widget.onSend,
                             style: Theme.of(context).textTheme.bodyMedium,
                             decoration: InputDecoration(
-                              hintText:
-                                  'Ask Cypher, save a note, search the web...',
+                              hintText: 'Ask Cypher…',
                               filled: false,
                               isDense: true,
                               contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 8,
-                                vertical: 10,
+                                vertical: 6,
                               ),
                               border: InputBorder.none,
                               enabledBorder: InputBorder.none,

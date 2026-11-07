@@ -80,42 +80,62 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             ),
           ),
         ),
-        child: NavigationBar(
-          selectedIndex: _currentIndex,
-          onDestinationSelected: (index) =>
-              setState(() => _currentIndex = index),
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.chat_bubble_outline),
-              selectedIcon: Icon(Icons.chat_bubble),
-              label: 'Chat',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.psychology_outlined),
-              selectedIcon: Icon(Icons.psychology),
-              label: 'Memory',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.handyman_outlined),
-              selectedIcon: Icon(Icons.handyman),
-              label: 'Tools',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.history_outlined),
-              selectedIcon: Icon(Icons.history),
-              label: 'Activity',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.settings_outlined),
-              selectedIcon: Icon(Icons.settings),
-              label: 'Settings',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.public_outlined),
-              selectedIcon: Icon(Icons.public),
-              label: 'Browser',
-            ),
-          ],
+        child: NavigationBarTheme(
+          data: NavigationBarThemeData(
+            // Selected label at 11 px so it fits the ~60 dp slot; colours
+            // match the app theme (primary when selected, muted otherwise).
+            labelTextStyle: WidgetStateProperty.resolveWith((states) {
+              final scheme = Theme.of(context).colorScheme;
+              final base = Theme.of(context).textTheme.labelMedium;
+              return base?.copyWith(
+                fontSize: states.contains(WidgetState.selected) ? 11 : null,
+                color: states.contains(WidgetState.selected)
+                    ? scheme.primary
+                    : scheme.onSurfaceVariant,
+              );
+            }),
+          ),
+          child: NavigationBar(
+            // Label on the selected tab only: six labels never fit a
+            // 360 dp bar, and the icons alone say enough for the rest.
+            labelBehavior:
+                NavigationDestinationLabelBehavior.onlyShowSelected,
+            selectedIndex: _currentIndex,
+            onDestinationSelected: (index) =>
+                setState(() => _currentIndex = index),
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.chat_bubble_outline),
+                selectedIcon: Icon(Icons.chat_bubble),
+                label: 'Chat',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.psychology_outlined),
+                selectedIcon: Icon(Icons.psychology),
+                label: 'Memory',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.handyman_outlined),
+                selectedIcon: Icon(Icons.handyman),
+                label: 'Tools',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.history_outlined),
+                selectedIcon: Icon(Icons.history),
+                label: 'Activity',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings),
+                label: 'Settings',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.public_outlined),
+                selectedIcon: Icon(Icons.public),
+                label: 'Browser',
+              ),
+            ],
+          ),
         ),
       ),
     );
