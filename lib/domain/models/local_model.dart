@@ -172,24 +172,6 @@ class ModelCatalog {
     llmArch: 'llama',
   );
 
-  static const LocalModel gemma4E4bObliterated = LocalModel(
-    id: 'gemma-4-e4b-obliterated-q4_k_m',
-    displayName: 'Gemma 4 E4B Uncensored',
-    description:
-        'Uncensored Gemma 4 E4B. Too big for this phone — shown here so '
-        'the computer lists have it in one place.',
-    kind: ModelKind.llm,
-    fileName: 'gemma-4-E4B-it-OBLITERATED.Q4_K_M.gguf',
-    url:
-        'https://huggingface.co/mradermacher/gemma-4-E4B-it-OBLITERATED-GGUF/resolve/main/gemma-4-E4B-it-OBLITERATED.Q4_K_M.gguf',
-    approxBytes: 5302272672,
-    contextSize: 4096,
-    ramHint: '~5.8 GB',
-    // Shown, not served: over the phone's RAM. The arch string is left
-    // null because this build never loads it, so nothing may assume it.
-    unsupportedReason: 'Too big for this phone — needs a computer.',
-  );
-
   // ---------------------------------------------------------- vision models
   //
   // Qwen3.5 has vision **built in**. One GGUF carries the language model and
@@ -309,7 +291,6 @@ class ModelCatalog {
     smolLm2_360m,
     qwen15b,
     llama32Uncensored,
-    gemma4E4bObliterated,
     qwen35_08b,
     smolVlm500m,
     internVl2_5_1b,
@@ -330,7 +311,6 @@ class ModelCatalog {
     smolLm2_360m,
     qwen15b,
     llama32Uncensored,
-    gemma4E4bObliterated,
     qwen35_08b,
     smolVlm500m,
     internVl2_5_1b,
