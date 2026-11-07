@@ -1533,7 +1533,7 @@ class _ModelsFolderSetting extends ConsumerWidget {
   final VoidCallback onChanged;
 
   Future<void> _pickFolder(BuildContext context, WidgetRef ref) async {
-    final path = await FilePicker.platform.getDirectoryPath(
+    final path = await FilePicker.getDirectoryPath(
       dialogTitle: 'Pick the folder with your models',
     );
     if (path == null) return;

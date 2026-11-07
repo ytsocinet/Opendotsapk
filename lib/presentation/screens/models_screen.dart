@@ -1225,7 +1225,7 @@ class _ModelsFolderSectionState
   }
 
   Future<void> _pickFolder() async {
-    final path = await FilePicker.platform.getDirectoryPath(
+    final path = await FilePicker.getDirectoryPath(
       dialogTitle: 'Pick the folder with your models',
     );
     if (path == null || !mounted) return;

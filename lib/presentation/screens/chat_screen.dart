@@ -917,9 +917,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     // The system prompt is the personality plus the mode's instruction,
     // when the mode has one. Chat mode adds nothing.
+    final modeInstruction =
+        _modeInstruction(settings['chat_mode'] as String? ?? 'chat');
     final systemParts = <String>[
       if (personality != null && personality.trim().isNotEmpty) personality,
-      ?_modeInstruction(settings['chat_mode'] as String? ?? 'chat'),
+      if (modeInstruction != null) modeInstruction,
     ];
     final systemPromptText =
         systemParts.isEmpty ? null : systemParts.join('\n\n');
