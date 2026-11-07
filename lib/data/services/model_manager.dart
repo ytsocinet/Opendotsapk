@@ -174,6 +174,17 @@ const Map<String, ModelIntegrity> modelIntegrityManifest = {
       ),
     },
   ),
+  // Llama 3.2 3B Uncensored (candor-lab) — pin read from the Hugging Face
+  // tree API at this exact commit; the LFS `oid` is the SHA-256.
+  'llama-3.2-3b-candor-uncensored-q4_k_m': ModelIntegrity(
+    commitSha: '6a5d1b26cfe78bf02f2e864fea74fcdb21cd2b4e',
+    files: {
+      'Llama-3.2-3B-Instruct-Candor-Uncensored-Q4_K_M.gguf': FileIntegrity(
+        2358722656,
+        'a778e2ae3e0eed64c3281d0e3190984cf45ce1605d7a10a6632e56f694d242b9',
+      ),
+    },
+  ),
 };
 
 /// Integrity entry for [m], or null when the model is not pinned.
