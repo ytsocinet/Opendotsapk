@@ -20,13 +20,19 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../data/services/gpu_service.dart';
+import '../../data/services/llm_service.dart';
 import '../../data/services/model_manager.dart';
+import '../../data/services/model_preflight.dart';
 import '../../domain/models/local_model.dart';
+import '../providers/providers.dart';
 import '../widgets/screen_empty_state.dart';
 
 class ModelsScreen extends ConsumerStatefulWidget {
@@ -302,6 +308,7 @@ class _ModelsScreenState extends ConsumerState<ModelsScreen> {
         padding: const EdgeInsets.only(bottom: 32),
         children: [
           _storageCard(theme, scheme),
+          _ModelsFolderSection(onLoaded: _loadStorage),
           if (!_anythingInstalled) ...[
             const SizedBox(height: 4),
             _firstRunCard(),
@@ -323,7 +330,7 @@ class _ModelsScreenState extends ConsumerState<ModelsScreen> {
           const Divider(height: 32),
           _sectionHeader(
             'Vision model',
-            'Lets the agent read pictures. Qwen3.5 has vision built in, so one download is enough — it chats and sees. Any entry greyed out is not supported by this build\'s llama.cpp.',
+            'Lets the agent read pictures. Qwen3.5 has vision built in, so one download is enough — it chats and sees. Any entry greyed out cannot run on this phone yet.',
             _multiVisionIds,
           ),
           ...ModelCatalog.visionModels.map(
@@ -896,7 +903,7 @@ class _RoleIcon extends StatelessWidget {
   }
 }
 
-/// Size / RAM / context, plus the role spelled out.
+/// Size and RAM.
 class _MetaLine extends StatelessWidget {
   const _MetaLine({required this.model});
 
@@ -908,7 +915,6 @@ class _MetaLine extends StatelessWidget {
     final muted = theme.colorScheme.onSurfaceVariant;
     final parts = <String>[
       if (model.ramHint.isNotEmpty) model.ramHint,
-      'ctx ${model.contextSize}',
     ];
 
     return Wrap(
@@ -1140,6 +1146,312 @@ class _SectionHeader extends StatelessWidget {
           Text(subtitle, style: theme.textTheme.bodySmall),
         ],
       ),
+    );
+  }
+}
+
+/// The models folder: a folder on the phone that holds model files, picked
+/// in Settings. Downloads land here too, so the folder is the one place a
+/// model file lives whether it came from the app or from elsewhere.
+///
+/// Each file shows its header line (name, kind, size) from the inspector,
+/// and a Load button that runs the same safe load the chat screen uses —
+/// header check and RAM gate first, never silent, never a crash. A file
+/// that fails the header check shows why and has no Load button.
+class _ModelsFolderSection extends ConsumerStatefulWidget {
+  const _ModelsFolderSection({required this.onLoaded});
+
+  /// Called after a folder file loads, so the storage card above refreshes.
+  final VoidCallback onLoaded;
+
+  @override
+  ConsumerState<_ModelsFolderSection> createState() =>
+      _ModelsFolderSectionState();
+}
+
+class _ModelsFolderSectionState
+    extends ConsumerState<_ModelsFolderSection> {
+  Future<List<_FolderFile>>? _filesFuture;
+  String? _folderError;
+  String? _loadingPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  void _refresh() {
+    final folder =
+        ref.read(settingsProvider)['models_folder'] as String?;
+    if (folder == null || folder.isEmpty) {
+      setState(() {
+        _filesFuture = null;
+        _folderError = null;
+      });
+      return;
+    }
+    setState(() {
+      _folderError = null;
+      _filesFuture = _listFolderFiles(folder);
+    });
+  }
+
+  Future<List<_FolderFile>> _listFolderFiles(String folder) async {
+    try {
+      final dir = Directory(folder);
+      final entries = await dir.list().toList();
+      final files = entries
+          .whereType<File>()
+          .where((f) => f.path.toLowerCase().endsWith('.gguf'))
+          .toList()
+        ..sort((a, b) => a.path.compareTo(b.path));
+      final out = <_FolderFile>[];
+      for (final f in files) {
+        final info = await ModelPreflight.inspect(f.path);
+        final error =
+            info == null ? await ModelPreflight.verify(f.path) : null;
+        out.add(_FolderFile(path: f.path, info: info, error: error));
+      }
+      return out;
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _folderError = 'Could not open that folder — pick it again.';
+        });
+      }
+      return <_FolderFile>[];
+    }
+  }
+
+  Future<void> _pickFolder() async {
+    final path = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Pick the folder with your models',
+    );
+    if (path == null || !mounted) return;
+    await ref
+        .read(settingsProvider.notifier)
+        .updateSetting('models_folder', path);
+    if (!mounted) return;
+    _refresh();
+  }
+
+  Future<void> _loadFile(_FolderFile file) async {
+    setState(() => _loadingPath = file.path);
+    try {
+      final ram = await GpuService.detect();
+      final ok = await LlmService.getInstance().loadModel(
+        file.path,
+        totalRamMb: ram.totalRamMb,
+      );
+      if (!mounted) return;
+      if (ok) {
+        await ref
+            .read(settingsProvider.notifier)
+            .updateSetting('model_path', file.path);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Loaded ${file.info?.name ?? ModelPreflight.friendlyName(file.fileName)}',
+            ),
+          ),
+        );
+        widget.onLoaded();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not load that model.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingPath = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final folderRaw =
+        ref.watch(settingsProvider)['models_folder'] as String?;
+    final folder =
+        (folderRaw == null || folderRaw.isEmpty) ? null : folderRaw;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.folder_outlined,
+                    size: 20,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Models folder',
+                      style: theme.textTheme.titleMedium,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _pickFolder,
+                    child: Text(folder == null ? 'Pick a folder' : 'Change'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                folder == null
+                    ? 'Point the app at the folder where you keep model '
+                          'files, and they show up here ready to load.'
+                    : folder,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (folder != null) ...[
+                const SizedBox(height: 8),
+                if (_folderError != null)
+                  Text(
+                    _folderError!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.error,
+                    ),
+                  )
+                else if (_filesFuture == null)
+                  const SizedBox.shrink()
+                else
+                  FutureBuilder<List<_FolderFile>>(
+                    future: _filesFuture,
+                    builder: (context, snap) {
+                      if (snap.connectionState == ConnectionState.waiting) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      }
+                      final files = snap.data ?? const <_FolderFile>[];
+                      if (files.isEmpty) {
+                        return Text(
+                          'No model files in this folder yet.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        );
+                      }
+                      return Column(
+                        children: [
+                          for (final f in files) ...[
+                            const Divider(height: 16),
+                            _FolderFileRow(
+                              file: f,
+                              loading: _loadingPath == f.path,
+                              onLoad: () => _loadFile(f),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One model file found in the models folder.
+class _FolderFile {
+  const _FolderFile({required this.path, required this.info, this.error});
+
+  final String path;
+  final ModelInfo? info;
+
+  /// The header-check error when [info] is null — shown instead of a
+  /// Load button, so a bad file is explained, not hidden.
+  final String? error;
+
+  String get fileName => path.substring(path.lastIndexOf('/') + 1);
+}
+
+class _FolderFileRow extends StatelessWidget {
+  const _FolderFileRow({
+    required this.file,
+    required this.loading,
+    required this.onLoad,
+  });
+
+  final _FolderFile file;
+  final bool loading;
+  final VoidCallback onLoad;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final bad = file.info == null;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(
+            bad ? Icons.warning_amber_outlined : Icons.description_outlined,
+            size: 18,
+            color: bad ? scheme.error : scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                file.info?.summaryLine ??
+                    ModelPreflight.friendlyName(file.fileName),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: bad ? scheme.error : null,
+                ),
+              ),
+              if (file.error != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  file.error!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.error,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        if (loading)
+          const Padding(
+            padding: EdgeInsets.all(10),
+            child: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        else if (!bad)
+          TextButton(onPressed: onLoad, child: const Text('Load')),
+      ],
     );
   }
 }

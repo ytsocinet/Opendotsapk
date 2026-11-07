@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Assistant metadata: what Android reads to list Clawzilla as a
+     Digital assistant. sessionService creates the session for each
+     assistant gesture; recognitionService is a stub (the framework
+     rejects the component without one) — real speech recognition
+     happens in the chat screen. supportsAssist is what makes the app
+     eligible for the picker at all. -->
+<voice-interaction-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.localmind.localmind.CypherVoiceInteractionSessionService"
+    android:recognitionService="com.localmind.localmind.CypherRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />

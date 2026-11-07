@@ -364,7 +364,7 @@ class LlmService {
     // model never actually received.
     if (imagePath != null && !_isVisionLoaded) {
       throw StateError(
-        'Cannot send an image: no vision projector is loaded. The picture '
+        'Cannot send an image: no vision model is loaded. The picture '
         'would be dropped and the model would answer as if it had seen '
         'nothing. Load a vision model first.',
       );

@@ -419,6 +419,22 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
 
     // First-run
     'onboarding_done': false,
+
+    // Chat mode: chat | plan | code. Chat is the plain default; Plan
+    // plans before acting, Code answers about code. See chat_screen.
+    'chat_mode': 'chat',
+
+    // Thinking effort: low | med | high. Only a reply-length and
+    // step-by-step hint, not a true reasoning budget on a local model.
+    'thinking_effort': 'med',
+
+    // Models folder: a folder on the phone that holds model files,
+    // picked in Settings. Null means "no folder picked yet".
+    'models_folder': null,
+
+    // Connected apps (opt-in, off by default): a JSON list of Android
+    // package names Cypher may open or share to. Empty means none.
+    'connected_apps': '[]',
   };
 
   final DatabaseHelper _db = DatabaseHelper.instance;
@@ -466,6 +482,10 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'gpu_offload',
       'cpu_threads',
       'cloud_consent_provider',
+      'chat_mode',
+      'thinking_effort',
+      'models_folder',
+      'connected_apps',
     ]) {
       final raw = await _db.getPreference(key);
       if (raw != null && raw.isNotEmpty) {

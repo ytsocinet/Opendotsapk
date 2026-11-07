@@ -144,6 +144,52 @@ class ModelCatalog {
     llmArch: 'qwen2',
   );
 
+  // ------------------------------------------------------- uncensored pool
+  //
+  // Aaron asked for the uncensored models back in (Nov 6, 2026, reversing
+  // the Oct 30 purge). Every entry here still goes through the
+  // bring-along-scan gates before it can load — being listed is not a
+  // safety verdict. File names and sizes were verified against the
+  // Hugging Face tree API at apply time.
+  //
+  // The mav23 alternate (Llama 3.2 3B abliterated, huihui lineage) is NOT
+  // listed: its repo would not confirm the exact Q4_K_M file name (the
+  // API check returned an auth error twice), and a catalog entry with a
+  // guessed file name downloads a 404.
+  static const LocalModel llama32Uncensored = LocalModel(
+    id: 'llama-3.2-3b-candor-uncensored-q4_k_m',
+    displayName: 'Llama 3.2 3B Uncensored',
+    description:
+        'Uncensored Llama 3.2 3B — answers without the usual refusals. '
+        'Still checked before it can load.',
+    kind: ModelKind.llm,
+    fileName: 'Llama-3.2-3B-Instruct-Candor-Uncensored-Q4_K_M.gguf',
+    url:
+        'https://huggingface.co/candor-lab/Llama-3.2-3B-Instruct-Candor-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Candor-Uncensored-Q4_K_M.gguf',
+    approxBytes: 2358722656,
+    contextSize: 4096,
+    ramHint: '~2.9 GB',
+    llmArch: 'llama',
+  );
+
+  static const LocalModel gemma4E4bObliterated = LocalModel(
+    id: 'gemma-4-e4b-obliterated-q4_k_m',
+    displayName: 'Gemma 4 E4B Uncensored',
+    description:
+        'Uncensored Gemma 4 E4B. Too big for this phone — shown here so '
+        'the computer lists have it in one place.',
+    kind: ModelKind.llm,
+    fileName: 'gemma-4-E4B-it-OBLITERATED.Q4_K_M.gguf',
+    url:
+        'https://huggingface.co/mradermacher/gemma-4-E4B-it-OBLITERATED-GGUF/resolve/main/gemma-4-E4B-it-OBLITERATED.Q4_K_M.gguf',
+    approxBytes: 5302272672,
+    contextSize: 4096,
+    ramHint: '~5.8 GB',
+    // Shown, not served: over the phone's RAM. The arch string is left
+    // null because this build never loads it, so nothing may assume it.
+    unsupportedReason: 'Too big for this phone — needs a computer.',
+  );
+
   // ---------------------------------------------------------- vision models
   //
   // Qwen3.5 has vision **built in**. One GGUF carries the language model and
@@ -262,6 +308,8 @@ class ModelCatalog {
     qwen05b,
     smolLm2_360m,
     qwen15b,
+    llama32Uncensored,
+    gemma4E4bObliterated,
     qwen35_08b,
     smolVlm500m,
     internVl2_5_1b,
@@ -281,6 +329,8 @@ class ModelCatalog {
     qwen05b,
     smolLm2_360m,
     qwen15b,
+    llama32Uncensored,
+    gemma4E4bObliterated,
     qwen35_08b,
     smolVlm500m,
     internVl2_5_1b,

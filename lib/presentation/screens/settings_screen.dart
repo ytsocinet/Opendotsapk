@@ -4,6 +4,7 @@ library;
 
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
@@ -14,6 +15,8 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/motion.dart';
 import '../../core/utils/log.dart';
 import '../../data/database/database_helper.dart';
+import '../../data/services/connected_apps_store.dart';
+import '../../data/services/model_preflight.dart';
 import '../../data/services/secure_store.dart';
 import '../../domain/models/cloud_provider.dart';
 import '../providers/providers.dart';
@@ -104,11 +107,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
           children: [
-            // Prominent Model Management entry point
+            // Prominent Models entry point
             FadeSlideIn(
               delay: Duration.zero,
               child: _ProminentModelsSection(
-                onChanged: () => _triggerFeedback('model_management'),
+                onChanged: () => _triggerFeedback('models'),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            FadeSlideIn(
+              delay: const Duration(milliseconds: 22),
+              child: ScreenSection(
+                title: 'Models folder',
+                subtitle: 'Where your model files live.',
+                padding: EdgeInsets.zero,
+                child: _ModelsFolderSetting(
+                  onChanged: () => _triggerFeedback('models_folder'),
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -118,7 +134,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
               child: ScreenSection(
                 title: 'Assistant & Behavior',
                 subtitle:
-                    'Fine-tune personality traits and memory context window.',
+                    'Fine-tune personality and how much it remembers.',
                 padding: EdgeInsets.zero,
                 child: _AssistantGroup(
                   onChanged: (key) => _triggerFeedback(key),
@@ -131,7 +147,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
               delay: const Duration(milliseconds: 90),
               child: ScreenSection(
                 title: 'Voice & Output',
-                subtitle: 'Configure speech synthesis and auditory feedback.',
+                subtitle: 'Configure voice replies and listening.',
                 padding: EdgeInsets.zero,
                 child: VoiceSettings(onChanged: (key) => _triggerFeedback(key)),
               ),
@@ -142,9 +158,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
               delay: const Duration(milliseconds: 135),
               child: ScreenSection(
                 title: 'Privacy & Security',
-                subtitle: 'Control device capabilities and tool execution permissions.',
+                subtitle: 'Control what Cypher is allowed to do.',
                 padding: EdgeInsets.zero,
                 child: PermissionList(permissions: permissions),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            FadeSlideIn(
+              delay: const Duration(milliseconds: 158),
+              child: ScreenSection(
+                title: 'Connected apps',
+                subtitle:
+                    'Apps Cypher may open or share to. Off unless you switch one on.',
+                padding: EdgeInsets.zero,
+                child: _ConnectedAppsSection(
+                  onChanged: () => _triggerFeedback('connected_apps'),
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -191,7 +221,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
   }
 }
 
-/// Prominent Model Management Card with glowing badge and clear status indicator
+/// Prominent Models Card with glowing badge and clear status indicator
 class _ProminentModelsSection extends ConsumerWidget {
   const _ProminentModelsSection({required this.onChanged});
 
@@ -273,7 +303,7 @@ class _ProminentModelsSection extends ConsumerWidget {
                       Row(
                         children: [
                           Text(
-                            'Model Management',
+                            'Models',
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.bold,
                               color: scheme.onSurface,
@@ -307,8 +337,8 @@ class _ProminentModelsSection extends ConsumerWidget {
                       const SizedBox(height: 4),
                       Text(
                         loaded && modelPath != null
-                            ? 'Path: $modelPath'
-                            : 'Tap here to download and switch GGUF models',
+                            ? 'Loaded: ${ModelPreflight.friendlyName(modelPath.substring(modelPath.lastIndexOf('/') + 1))}'
+                            : 'Tap here to download and switch models',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
@@ -407,14 +437,14 @@ class _AssistantGroup extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Context Token Window',
+                      'Memory',
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'How many tokens the model remembers in active dialog',
+                      'How much of the conversation the model remembers',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
@@ -911,7 +941,7 @@ class ContextSizeSelector extends ConsumerWidget {
               borderRadius: BorderRadius.circular(12),
             ),
             title: Text(
-              '$size tokens',
+              '$size',
               style: TextStyle(
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 color: isSelected ? scheme.secondary : scheme.onSurface,
@@ -1202,8 +1232,9 @@ class CloudPrivacySection extends ConsumerWidget {
           const SizedBox(height: 14),
           if (provider == null)
             Text(
-              'No cloud provider is selected, ensuring 100% on-device privacy. '
-              'Add a provider under Cloud Models to enable hybrid capabilities with explicit confirmation.',
+              'No cloud provider is selected, so everything stays on this '
+              'phone. Add a provider under Cloud Models to use the cloud, '
+              'with your confirmation.',
               style: theme.textTheme.bodySmall?.copyWith(height: 1.4),
             )
           else ...[
@@ -1489,5 +1520,207 @@ extension StringExtension on String {
   String capitalize() {
     if (isEmpty) return this;
     return '${this[0].toUpperCase()}${substring(1)}';
+  }
+}
+
+/// Models folder setting: the folder on the phone that holds model files.
+///
+/// Picks through the system folder picker. The Models screen lists the
+/// folder's files with their header lines and a Load button each.
+class _ModelsFolderSetting extends ConsumerWidget {
+  const _ModelsFolderSetting({required this.onChanged});
+
+  final VoidCallback onChanged;
+
+  Future<void> _pickFolder(BuildContext context, WidgetRef ref) async {
+    final path = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Pick the folder with your models',
+    );
+    if (path == null) return;
+    await ref
+        .read(settingsProvider.notifier)
+        .updateSetting('models_folder', path);
+    onChanged();
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final folderRaw =
+        ref.watch(settingsProvider)['models_folder'] as String?;
+    final folder =
+        (folderRaw == null || folderRaw.isEmpty) ? null : folderRaw;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.folder_outlined,
+                size: 20,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  folder ??
+                      'No folder picked yet — downloaded models still work '
+                          'without one.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: folder == null
+                        ? scheme.onSurfaceVariant
+                        : null,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonal(
+                onPressed: () => _pickFolder(context, ref),
+                child: Text(folder == null ? 'Pick a folder' : 'Change'),
+              ),
+            ],
+          ),
+          if (folder != null) ...[
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () async {
+                await ref
+                    .read(settingsProvider.notifier)
+                    .updateSetting('models_folder', '');
+                onChanged();
+              },
+              child: const Text('Remove folder'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Connected apps: the opt-in list of other apps Cypher may open or share
+/// to. Each app is added from the system app picker and starts switched
+/// OFF — nothing is openable until Aaron switches it on here.
+class _ConnectedAppsSection extends ConsumerStatefulWidget {
+  const _ConnectedAppsSection({required this.onChanged});
+
+  final VoidCallback onChanged;
+
+  @override
+  ConsumerState<_ConnectedAppsSection> createState() =>
+      _ConnectedAppsSectionState();
+}
+
+class _ConnectedAppsSectionState
+    extends ConsumerState<_ConnectedAppsSection> {
+  List<ConnectedAppEntry> _entries = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final entries = await ConnectedAppsStore.instance.entries();
+    if (!mounted) return;
+    setState(() {
+      _entries = entries;
+      _loading = false;
+    });
+  }
+
+  Future<void> _addApp() async {
+    final picked = await ConnectedAppsStore.pickApp();
+    if (picked == null || !mounted) return;
+    await ConnectedAppsStore.instance.add(
+      picked.packageName,
+      picked.label,
+    );
+    widget.onChanged();
+    await _reload();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${picked.label} added — switch it on to use it.'),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else if (_entries.isEmpty)
+            Text(
+              'No apps connected. Cypher cannot open or share to any app '
+              'until you add one and switch it on.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            )
+          else
+            for (final entry in _entries)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(entry.label),
+                subtitle: Text(
+                  entry.packageName,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                secondary: IconButton(
+                  tooltip: 'Remove ${entry.label}',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () async {
+                    await ConnectedAppsStore.instance.remove(
+                      entry.packageName,
+                    );
+                    widget.onChanged();
+                    await _reload();
+                  },
+                ),
+                value: entry.enabled,
+                onChanged: (v) async {
+                  await ConnectedAppsStore.instance.setEnabled(
+                    entry.packageName,
+                    v,
+                  );
+                  widget.onChanged();
+                  await _reload();
+                },
+              ),
+          const SizedBox(height: 8),
+          FilledButton.tonalIcon(
+            onPressed: _addApp,
+            icon: const Icon(Icons.add),
+            label: const Text('Add an app'),
+          ),
+        ],
+      ),
+    );
   }
 }

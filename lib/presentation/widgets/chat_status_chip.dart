@@ -12,7 +12,7 @@ import '../../core/theme/app_theme.dart';
 
 /// A tappable status pill shown on the right of the chat header.
 ///
-/// It opens Model Management rather than merely displaying status, because
+/// It opens Models rather than merely displaying status, because
 /// "which model am I on" and "change which model I am on" are the same question
 /// for most people, and the previous grey text label answered neither.
 class ChatStatusChip extends StatelessWidget {
@@ -26,7 +26,8 @@ class ChatStatusChip extends StatelessWidget {
   /// Whether a model is genuinely bound. Drives the colour.
   final bool loaded;
 
-  /// Pre-truncated display text, e.g. `Qwen3.5 · GPU` or `No model loaded`.
+  /// Pre-truncated display text, e.g. `Qwen3.5 · On this phone` or
+  /// `No model loaded`.
   final String label;
 
   final VoidCallback onTap;
@@ -43,7 +44,7 @@ class ChatStatusChip extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: 'Model status: $label. Opens Model Management.',
+      label: 'Model status: $label. Opens Models.',
       child: Material(
         color: tint.withValues(alpha: loaded ? 0.12 : 0.07),
         borderRadius: radius,

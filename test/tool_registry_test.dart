@@ -104,10 +104,15 @@ void main() {
       expect(offered, contains('analyze_image'));
       expect(offered, contains('web_search'));
 
+      // Connected apps left the v1 gate (Nov 7, 2026): open_app is
+      // implemented through the native channel and gated per-app at
+      // execution time, and share_to_app is its share/send half.
+      expect(offered, contains('open_app'));
+      expect(offered, contains('share_to_app'));
+
       // These do nothing yet, so the model must not see them.
       expect(offered, isNot(contains('send_sms')));
       expect(offered, isNot(contains('add_contact')));
-      expect(offered, isNot(contains('open_app')));
 
       // Implemented, but blocked in v1, so the model must not see it.
       expect(offered, isNot(contains('get_location')));
@@ -145,6 +150,28 @@ void main() {
       }
     });
 
+    test('an unconnected app is refused, never opened or shared to', () async {
+      // The per-app gate: a package Aaron never connected must be refused
+      // at execution time, before Android is ever asked. The store is
+      // empty in a unit test, so nothing is connected here — and the gate
+      // must fail closed rather than throw on the unreadable store.
+      for (final tool in ['open_app', 'share_to_app']) {
+        final result = await registry.executeTool(
+          toolName: tool,
+          params: {
+            'package_name': 'com.example.notconnected',
+            'text': 'hello',
+          },
+        );
+        expect(
+          result.status,
+          ToolStatus.unsupported,
+          reason: '$tool must refuse an unconnected package',
+        );
+        expect(result.isSuccess, isFalse);
+      }
+    });
+
     test('an unknown tool fails rather than silently succeeding', () async {
       final result = await registry.executeTool(
         toolName: 'does_not_exist',
@@ -156,6 +183,8 @@ void main() {
 
     test('isImplemented agrees with the registry', () {
       expect(registry.isImplemented('get_location'), isTrue);
+      expect(registry.isImplemented('open_app'), isTrue);
+      expect(registry.isImplemented('share_to_app'), isTrue);
       expect(registry.isImplemented('send_sms'), isFalse);
       expect(registry.isImplemented('nope'), isFalse);
     });

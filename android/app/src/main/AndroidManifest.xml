@@ -39,7 +39,57 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- "Talk to Cypher" deep link: clawzilla://talk opens the chat
+                 already listening. Used by the side-button assistant
+                 session and by any shortcut that wants to start talking. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="clawzilla" android:host="talk" />
+            </intent-filter>
+            <!-- Assist gesture fallback: some launchers send ACTION_ASSIST
+                 straight at the activity instead of going through the
+                 VoiceInteractionService. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
+
+        <!-- Digital assistant (side button): these are what make Clawzilla
+             appear in Settings → Advanced features → Side button →
+             Long press → Digital assistant. The service itself is an empty
+             subclass; the session opens the app on clawzilla://talk.
+             No new permission: BIND_VOICE_INTERACTION only lets the OS
+             bind to these services, it grants the app nothing. -->
+        <service
+            android:name=".CypherVoiceInteractionService"
+            android:label="Clawzilla"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+        </service>
+        <service
+            android:name=".CypherVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <!-- Stub recognition service: the framework requires one to be
+             declared for the assistant component to be valid. Clawzilla
+             does its speech recognition in the chat screen, not here. -->
+        <service
+            android:name=".CypherRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.RecognitionService" />
+            </intent-filter>
+        </service>
 
         <!-- NOTE (carried over from the original): the foreground service is
              declared by the flutter_foreground_task plugin's own manifest.

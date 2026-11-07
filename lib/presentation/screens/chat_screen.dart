@@ -22,6 +22,7 @@ import '../../core/theme/motion.dart';
 import '../../core/utils/log.dart';
 import '../../core/utils/text_utils.dart';
 import '../../core/utils/turn_builder.dart';
+import '../../data/services/assistant_launch.dart';
 import '../../data/services/document_service.dart';
 import '../../data/services/gpu_service.dart';
 import '../../data/services/cloud_service.dart';
@@ -46,7 +47,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
-  /// Held so a suggestion chip can fill the field and raise the keyboard.
+  /// The composer focus node.
   final FocusNode _composerFocus = FocusNode();
   final Uuid _uuid = const Uuid();
   bool _isThinking = false;
@@ -77,6 +78,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// a typed message.
   bool _voiceExchange = false;
 
+  /// True while the mic is listening. Lights the composer mic button up
+  /// and lets a tap on it stop the listen.
+  bool _isListening = false;
+
+  /// Set when the user taps the lit mic to stop a listen on purpose, so
+  /// the empty-result path knows not to show "Didn't catch that".
+  bool _voiceStopRequested = false;
+
   /// Wake service handle, kept so dispose can unregister without ref.
   WakeService? _wake;
 
@@ -97,12 +106,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     super.initState();
     _wake = ref.read(wakeServiceProvider);
     WidgetsBinding.instance.addObserver(this);
+    AssistantLaunch.setListenHandler(() {
+      if (mounted) _startVoiceInput();
+    });
     // Runs after the first frame so settings are loaded and the context
     // is usable.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _restoreLastModel();
       _restoreWakeListening();
+      _checkAssistantLaunch();
     });
+  }
+
+  /// The side button (or the "Talk to Cypher" deep link) opened the app
+  /// and asked for the mic straight away. Consume the flag once — a
+  /// later resume must not re-trigger listening.
+  Future<void> _checkAssistantLaunch() async {
+    if (!mounted) return;
+    if (await AssistantLaunch.consumeListenRequest()) {
+      _startVoiceInput();
+    }
   }
 
   @override
@@ -112,6 +135,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (wake != null && wake.wakePending) {
         wake.wakePending = false;
         _startVoiceInput();
+      } else {
+        _checkAssistantLaunch();
       }
     }
   }
@@ -151,7 +176,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Failed to load that GGUF'
+              'Could not load that model'
                   '${llm.lastLoadError == null ? '' : ': ${llm.lastLoadError}'}',
             ),
           ),
@@ -161,7 +186,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       Log.w('remembered model failed to load: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not load your last model: $e')),
+        const SnackBar(content: Text('Could not load your last model.')),
       );
     }
   }
@@ -190,6 +215,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    AssistantLaunch.setListenHandler(null);
     _wake?.onWakeWord = null;
     _flushTimer?.cancel();
     _cloudSub?.cancel();
@@ -238,7 +264,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   ? ChatEmptyState(
                       modelLoaded: hasModel,
                       onManageModels: _showModelSelector,
-                      onSuggestion: _fillComposer,
                     )
                   : ListView.builder(
                       controller: _scrollController,
@@ -275,15 +300,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             // Route badge: say plainly where the last turn ran.
             if (_lastRoute != null) _buildRouteBadge(),
 
+            // Mode + effort switcher, above the composer.
+            _ModeBar(
+              mode: settings['chat_mode'] as String? ?? 'chat',
+              effort: settings['thinking_effort'] as String? ?? 'med',
+              onModeChanged: (mode) => ref
+                  .read(settingsProvider.notifier)
+                  .updateSetting('chat_mode', mode),
+              onEffortChanged: (effort) => ref
+                  .read(settingsProvider.notifier)
+                  .updateSetting('thinking_effort', effort),
+            ),
+
             ChatComposer(
               controller: _controller,
               focusNode: _composerFocus,
               isGenerating: _isThinking,
+              isListening: _isListening,
               onSend: _sendMessage,
               onStop: _stopGeneration,
               onAttachImage: _pickImage,
               onAttachDocument: _pickDocument,
               onVoice: _startVoiceInput,
+              onStopVoice: _stopVoiceInput,
               imageTooltip: 'Attach an image (needs a vision model)',
               documentTooltip:
                   'Attach a document: ${DocumentService.supportedSummary}',
@@ -292,17 +331,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
       ),
     );
-  }
-
-  /// Put a suggested prompt into the composer without sending it.
-  ///
-  /// Tapping a suggestion must not fire a turn the user has not read yet, so
-  /// this only fills the field and raises the keyboard.
-  void _fillComposer(String prompt) {
-    _composerFocus.requestFocus();
-    _controller
-      ..text = prompt
-      ..selection = TextSelection.collapsed(offset: prompt.length);
   }
 
   /// Badge under the composer showing the router's decision.
@@ -437,8 +465,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Image attached. The on-device vision model is not loaded — '
-              'this turn will use a cloud model if one is configured.',
+              'Image attached. No vision model is loaded on this phone — '
+              'this turn will use a cloud model if one is set up.',
             ),
           ),
         );
@@ -448,7 +476,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Could not open the gallery: $e')));
+      ).showSnackBar(const SnackBar(content: Text('Could not open the gallery.')));
     }
   }
 
@@ -525,8 +553,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Added "${doc.name}" — ${doc.chunks.length} chunk(s), '
-              '${doc.estimatedTokens} tokens.',
+              'Added "${doc.name}".',
             ),
           ),
         );
@@ -655,7 +682,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         prompt: request.prompt,
         systemPrompt: request.systemPrompt,
         history: request.history,
-        maxTokens: _maxResponseTokens,
+        maxTokens: _responseTokens(),
         imagePath: imagePath,
       )) {
         if (_stopRequested) break;
@@ -837,8 +864,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// Tokens reserved for the reply when budgeting history.
   ///
   /// Without this the transcript can fill the whole context window and the
-  /// model has no room left to answer.
-  static const int _maxResponseTokens = 512;
+  /// model has no room left to answer. Driven by the thinking-effort
+  /// switch: Low keeps replies short, High lets them run longer. This is
+  /// a reply-length hint, not a true reasoning budget — a local model has
+  /// no reasoning knob to turn.
+  int _responseTokens() {
+    return switch (ref.read(settingsProvider)['thinking_effort']) {
+      'low' => 256,
+      'high' => 1024,
+      _ => 512,
+    };
+  }
+
+  /// The mode's instruction, added to the system prompt alongside the
+  /// personality. Chat adds nothing — it is the plain default, which is
+  /// what keeps the wire-format test green for the common case.
+  String? _modeInstruction(String mode) {
+    return switch (mode) {
+      'plan' =>
+        'Before answering, make a short plan first, then follow it step '
+            'by step. If the request needs several steps, lay out the '
+            'steps, then do them in order.',
+      'code' =>
+        'Answer as a coding helper: give working code first, then a short '
+            'explanation. Keep the code complete and ready to paste.',
+      _ => null,
+    };
+  }
 
   /// Builds the system prompt, the question, and the history to send.
   ///
@@ -861,16 +913,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final personality = settings['personality'] as String?;
     final nCtx = ref.read(llmServiceProvider).contextSize;
 
+    // The system prompt is the personality plus the mode's instruction,
+    // when the mode has one. Chat mode adds nothing.
+    final systemParts = <String>[
+      if (personality != null && personality.trim().isNotEmpty) personality,
+      ?_modeInstruction(settings['chat_mode'] as String? ?? 'chat'),
+    ];
+    final systemPromptText =
+        systemParts.isEmpty ? null : systemParts.join('\n\n');
+
     final selection = buildRecentTurns(
       history: [
         for (final m in priorHistory) Turn(m.role, m.content),
         Turn('user', message),
       ],
       tokenBudget: nCtx,
-      systemPrompt: (personality == null || personality.trim().isEmpty)
-          ? null
-          : personality,
-      reserveForResponse: _maxResponseTokens,
+      systemPrompt: systemPromptText,
+      reserveForResponse: _responseTokens(),
     );
 
     final turns = selection.turns;
@@ -969,7 +1028,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       builder: (context) => AlertDialog(
         title: const Text('Model Not Loaded'),
         content: const Text(
-          'Please download and load a model first. Go to Settings > Model Management.',
+          'Please download and load a model first. Go to Settings > Models.',
         ),
         actions: [
           TextButton(
@@ -1002,13 +1061,48 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
     }
 
+    // Light the mic up before listening starts, so the user can see the
+    // app heard the tap even while the recogniser warms up.
+    _voiceStopRequested = false;
+    if (mounted) setState(() => _isListening = true);
     final speech = ref.read(speechToTextProvider.notifier);
-    final result = await speech.listenOnce();
+    String? result;
+    try {
+      result = await speech.listenOnce();
+    } catch (e) {
+      // A failed listen is an empty listen as far as the user is
+      // concerned: nothing was heard, so the empty path below reports it.
+      Log.w('listen failed: $e');
+      result = null;
+    } finally {
+      if (mounted) setState(() => _isListening = false);
+    }
 
     if (result != null && result.isNotEmpty && mounted) {
       _sendMessage(result);
+    } else if (mounted && !_voiceStopRequested) {
+      // The listen ended with nothing heard. Say so instead of going
+      // quiet — silence used to look exactly like a broken mic.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Didn't catch that — try again.")),
+      );
+      _wake?.markIdle();
     } else {
       _wake?.markIdle();
+    }
+    _voiceStopRequested = false;
+  }
+
+  /// Stop the current listen, from a tap on the lit mic button. The
+  /// in-flight `listenOnce` resolves empty, and [_voiceStopRequested]
+  /// keeps that from showing "Didn't catch that".
+  Future<void> _stopVoiceInput() async {
+    if (!_isListening) return;
+    _voiceStopRequested = true;
+    try {
+      await ref.read(speechToTextProvider.notifier).stopListening();
+    } catch (e) {
+      Log.w('stop listening failed: $e');
     }
   }
 
@@ -1026,13 +1120,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 /// Short display name for the model in memory, taken from its file name.
 ///
 /// The previous chip said only "Loaded", which meant the user had to open
-/// Model Management to find out *which* model was live — the one piece of
+/// Models to find out *which* model was live — the one piece of
 /// information that decides whether the answers are any good.
 String _modelDisplayName(String path) {
   final file = path.split('/').last;
-  final stem = file.endsWith('.gguf')
-      ? file.substring(0, file.length - 5)
-      : file;
+  final stem = ModelPreflight.friendlyName(file);
   // File names run long ("Qwen2.5-0.5B-Instruct-Q4_K_M"); the chip has room for
   // roughly this much before it starts pushing the header actions off-screen.
   if (stem.length <= 22) return stem;
@@ -1042,7 +1134,7 @@ String _modelDisplayName(String path) {
 /// The header above the transcript.
 ///
 /// App identity on the left, the live model chip on the right. The chip leads to
-/// the same Model Management sheet the old overflow menu's "Select Model" item
+/// the same Models sheet the old overflow menu's "Change model" item
 /// did, promoted to a single tap because "what am I running" and "change what
 /// I'm running" are the same question asked constantly.
 class _ChatHeader extends StatefulWidget {
@@ -1194,31 +1286,10 @@ class _ChatHeaderState extends State<_ChatHeader>
                         ),
                       ),
                       const SizedBox(width: 4),
-                      ScaleTransition(
-                        scale: CurvedAnimation(
-                          parent: _controller,
-                          curve: const Interval(
-                            0.5,
-                            1.0,
-                            curve: Curves.easeOutBack,
-                          ),
-                        ),
-                        child: IconButton(
-                          icon: const Icon(Icons.clear_all),
-                          onPressed: widget.onClear,
-                          tooltip: 'Clear Chat',
-                          iconSize: 20,
-                          splashRadius: 20,
-                          constraints: const BoxConstraints.tightFor(
-                            width: 38,
-                            height: 38,
-                          ),
-                          padding: EdgeInsets.zero,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                      // Kept as an overflow so Export stays reachable on narrow
-                      // phones without displacing the status chip.
+                      // One overflow menu for everything that is not the
+                      // status chip: Change model, Clear chat, Export.
+                      // Clear used to have its own button next to the chip;
+                      // it now lives here so the header stays quiet.
                       ScaleTransition(
                         scale: CurvedAnimation(
                           parent: _controller,
@@ -1231,12 +1302,17 @@ class _ChatHeaderState extends State<_ChatHeader>
                         child: PopupMenuButton<String>(
                           onSelected: (value) {
                             if (value == 'model') widget.onManageModels();
+                            if (value == 'clear') widget.onClear();
                             if (value == 'export') widget.onExport();
                           },
                           itemBuilder: (context) => const [
                             PopupMenuItem(
                               value: 'model',
-                              child: Text('Select Model'),
+                              child: Text('Change model'),
+                            ),
+                            PopupMenuItem(
+                              value: 'clear',
+                              child: Text('Clear chat'),
                             ),
                             PopupMenuItem(
                               value: 'export',
@@ -1267,7 +1343,7 @@ class _ChatHeaderState extends State<_ChatHeader>
   }
 }
 
-/// Model Management sheet.
+/// Models sheet.
 ///
 /// Shows what is **actually in memory** next to what is **selected**. Those two
 /// drifting apart is exactly how a downloaded vision model ends up never being
@@ -1279,7 +1355,7 @@ class ModelSelectorDialog extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return AlertDialog(
-      title: const Text('Model Management'),
+      title: const Text('Models'),
       content: const _ModelPickerBody(),
       actions: [
         SizedBox(
@@ -1313,8 +1389,8 @@ class ModelSelectorDialog extends ConsumerWidget {
   /// Load the models the user selected in Settings -> Models.
   ///
   /// Downloading lives in the Models screen; this binds what is already on disk
-  /// into the native runtime: the chat GGUF first, then the vision projector if
-  /// one is selected, then the ONNX encoder behind Memory search.
+  /// into the runtime: the chat model first, then the vision model if
+  /// one is selected, then the memory search model.
   Future<void> _loadSelectedModels(BuildContext context, WidgetRef ref) async {
     final manager = ModelManager.getInstance();
     final llmService = ref.read(llmServiceProvider);
@@ -1323,10 +1399,10 @@ class ModelSelectorDialog extends ConsumerWidget {
     if (!await manager.isInstalled(chat)) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+          const SnackBar(
             content: Text(
               'No chat model downloaded yet. '
-              'Open Settings -> Models and pick one.',
+              'Open Settings → Models and pick one.',
             ),
           ),
         );
@@ -1353,7 +1429,7 @@ class ModelSelectorDialog extends ConsumerWidget {
       final visionArch = vision.llmArch;
       if (chatArch != null && visionArch != null && chatArch != visionArch) {
         visionNote =
-            'Vision off: ${vision.displayName} does not match '
+            'Pictures off: ${vision.displayName} does not fit '
             '${chat.displayName}.';
         vision = null;
       }
@@ -1375,7 +1451,7 @@ class ModelSelectorDialog extends ConsumerWidget {
     );
 
     var ok = false;
-    var message = 'Failed to load model';
+    var message = 'Could not load that model';
 
     try {
       // Safe loader (Clawzilla v1): CPU by default. An explicit GPU
@@ -1408,13 +1484,13 @@ class ModelSelectorDialog extends ConsumerWidget {
           visionAttached = await llmService.loadVision(projector);
           if (!visionAttached) {
             message =
-                '${chat.displayName} loaded, but vision failed to attach.'
+                '${chat.displayName} loaded, but it cannot see pictures yet.'
                 '${llmService.lastVisionError == null ? '' : ' ${llmService.lastVisionError}'}';
           }
         } else {
           message =
-              '${chat.displayName} loaded, but its vision projector file is '
-              'missing. Re-download ${vision.displayName} in Settings -> Models.';
+              '${chat.displayName} loaded, but its picture file is '
+              'missing. Download ${vision.displayName} again in Settings → Models.';
         }
       }
 
@@ -1441,31 +1517,25 @@ class ModelSelectorDialog extends ConsumerWidget {
               .updateSetting('cpu_load_succeeded', 'true');
         }
       }
-      if (ok && message == 'Failed to load model') {
-        final backend = llmService.activeBackend;
+      if (ok && message == 'Could not load that model') {
         message =
             '${chat.displayName} ready'
-            '${backend == null
-                ? ''
-                : backend == 'cpu'
-                ? ' · CPU'
-                : ' · GPU'}'
-            ' · ${llmService.threads} threads'
-            '${visionAttached ? ' · vision on' : ''}'
+            '${visionAttached ? ' · can see pictures' : ''}'
             '${visionNote == null ? '' : ' · $visionNote'}';
-      } else if (!ok && message == 'Failed to load model') {
+      } else if (!ok && message == 'Could not load that model') {
         // The native error is the only diagnostic that distinguishes "out of
         // RAM" from "corrupt file" from "GPU driver refused" — show it.
         message =
-            '${chat.displayName} failed to load. '
-            '${llmService.lastLoadError ?? 'Free up RAM and try again.'}';
+            '${chat.displayName} could not load. '
+            '${llmService.lastLoadError ?? 'Free up space and try again.'}';
       }
       if (ok && gpuDeferred) {
-        message += ' · GPU deferred until a CPU load succeeds';
+        message += ' · graphics will stay off until a plain load works';
       }
     } catch (e) {
       ok = false;
-      message = 'Error: $e';
+      Log.w('load selected models failed: $e');
+      message = 'Could not load that model.';
     }
 
     // Close the spinner through the captured navigator. Guarded because the
@@ -1482,8 +1552,8 @@ class ModelSelectorDialog extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
   ) async {
-    // Pick any GGUF from the device and bind it directly — useful for models
-    // the catalog does not know about.
+    // Pick any model file from the device and bind it directly — useful
+    // for models the catalog does not know about.
     try {
       // Same reason as the image picker: this pause is expected, not the user
       // leaving the app.
@@ -1496,8 +1566,7 @@ class ModelSelectorDialog extends ConsumerWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'That is not a .gguf file. Vision projectors must '
-              'also be GGUF (mmproj-*.gguf).',
+              'That is not a model file. Pick a file ending in .gguf.',
             ),
           ),
         );
@@ -1555,8 +1624,8 @@ class ModelSelectorDialog extends ConsumerWidget {
           SnackBar(
             content: Text(
               ok
-                  ? 'Loaded ${loadPath.split('/').last}'
-                  : 'Failed to load that GGUF'
+                  ? 'Loaded ${ModelPreflight.friendlyName(loadPath.split('/').last)}'
+                  : 'Could not load that model'
                       '${llm.lastLoadError == null ? '' : ': ${llm.lastLoadError}'}',
             ),
           ),
@@ -1583,7 +1652,7 @@ class ModelSelectorDialog extends ConsumerWidget {
       if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Could not load that file: $e')));
+      ).showSnackBar(const SnackBar(content: Text('Could not load that file.')));
     }
   }
 }
@@ -1765,16 +1834,21 @@ class _ModelPickerBodyState extends ConsumerState<_ModelPickerBody> {
     // Watched rather than read: `_loadSelectedModels` writes `model_path` when
     // it finishes, and this row has to update the moment it does.
     final path = ref.watch(settingsProvider)['model_path'] as String?;
-    final loaded = (path == null || path.isEmpty)
+    final loadedFile = (path == null || path.isEmpty)
         ? null
         : path.substring(path.lastIndexOf('/') + 1);
+    final loaded = loadedFile == null
+        ? null
+        : ModelPreflight.friendlyName(loadedFile);
 
     final selectedLlm = _llmId == null ? null : ModelCatalog.byId(_llmId);
     // Selected-but-not-loaded is the exact failure that produced "vision failed
     // to attach" with no explanation: the files are on disk, the user believes
     // they are in use, and they are not.
     final stale =
-        loaded != null && selectedLlm != null && loaded != selectedLlm.fileName;
+        loadedFile != null &&
+        selectedLlm != null &&
+        loadedFile != selectedLlm.fileName;
 
     // Show loading indicator while installing models are being detected.
     if (_loading) {
@@ -1983,7 +2057,7 @@ class _LoadedModelCard extends StatelessWidget {
                   Text(
                     loaded == null
                         ? 'Select a model below, then tap Load'
-                        : 'Running in memory',
+                        : 'Running now',
                     style: text.bodySmall?.copyWith(
                       color: loaded == null
                           ? scheme.onSurfaceVariant
@@ -2094,8 +2168,8 @@ class _ArchWarningCard extends StatelessWidget {
           Expanded(
             child: Text(
               '${chatModel.displayName} cannot use $visionDisplay. '
-              'Vision projectors only work with their matching LLM. '
-              'Select the vision model as the chat model instead.',
+              'A picture model only works with the chat model it was made '
+              'for. Select the vision model as the chat model instead.',
               style: text.bodySmall?.copyWith(color: scheme.error),
             ),
           ),
@@ -2196,6 +2270,13 @@ class _ModelRowCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      // The header line for a downloaded model: what the
+                      // file on disk says it is (name, kind, size). A bad
+                      // file shows why instead, and never loads.
+                      if (installed && usable) ...[
+                        const SizedBox(height: 3),
+                        _InspectorLine(model: model),
+                      ],
                       if (!usable && model.unsupportedReason != null) ...[
                         const SizedBox(height: 3),
                         Text(
@@ -2614,6 +2695,162 @@ class _PulsingDots extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// The mode + effort switcher above the composer.
+///
+/// Chat is the plain default; Plan makes the model lay out steps before
+/// acting; Code asks for working code before the explanation. Effort only
+/// changes how long a reply may run (Low 256 / Med 512 / High 1024) —
+/// a local model has no true reasoning knob to turn.
+class _ModeBar extends StatelessWidget {
+  const _ModeBar({
+    required this.mode,
+    required this.effort,
+    required this.onModeChanged,
+    required this.onEffortChanged,
+  });
+
+  final String mode;
+  final String effort;
+  final ValueChanged<String> onModeChanged;
+  final ValueChanged<String> onEffortChanged;
+
+  static const _compact = ButtonStyle(
+    visualDensity: VisualDensity.compact,
+    textStyle: WidgetStatePropertyAll(TextStyle(fontSize: 12)),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.surfaceHigh,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: SegmentedButton<String>(
+              style: _compact,
+              segments: const [
+                ButtonSegment(
+                  value: 'chat',
+                  label: Text('Chat'),
+                  tooltip: 'Just chat',
+                ),
+                ButtonSegment(
+                  value: 'plan',
+                  label: Text('Plan'),
+                  tooltip: 'Plan first, then act',
+                ),
+                ButtonSegment(
+                  value: 'code',
+                  label: Text('Code'),
+                  tooltip: 'Code first, then explain',
+                ),
+              ],
+              selected: {mode},
+              onSelectionChanged: (s) => onModeChanged(s.first),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 2,
+            child: SegmentedButton<String>(
+              style: _compact,
+              segments: const [
+                ButtonSegment(
+                  value: 'low',
+                  label: Text('Low'),
+                  tooltip: 'Short replies',
+                ),
+                ButtonSegment(
+                  value: 'med',
+                  label: Text('Med'),
+                  tooltip: 'Normal replies',
+                ),
+                ButtonSegment(
+                  value: 'high',
+                  label: Text('High'),
+                  tooltip: 'Long, step-by-step replies',
+                ),
+              ],
+              selected: {effort},
+              onSelectionChanged: (s) => onEffortChanged(s.first),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One header line for a downloaded model in the picker: what the file on
+/// disk says it is. Resolves the installed path, reads the header, and
+/// shows the summary — or the header-check error when the file is bad.
+/// Shows nothing while loading or when the file cannot be found; the load
+/// path reports the real error when the user taps Load.
+class _InspectorLine extends StatefulWidget {
+  const _InspectorLine({required this.model});
+
+  final LocalModel model;
+
+  @override
+  State<_InspectorLine> createState() => _InspectorLineState();
+}
+
+class _InspectorLineState extends State<_InspectorLine> {
+  String? _line;
+  String? _error;
+  bool _done = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    String? line;
+    String? error;
+    try {
+      final path = await ModelManager.getInstance().weightPath(widget.model);
+      final info = await ModelPreflight.inspect(path);
+      if (info != null) {
+        line = info.summaryLine;
+      } else {
+        error = await ModelPreflight.verify(path);
+      }
+    } catch (_) {
+      // A missing file or unreadable header: show nothing rather than a
+      // wrong line.
+    }
+    if (!mounted) return;
+    setState(() {
+      _done = true;
+      _line = line;
+      _error = error;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_done || (_line == null && _error == null)) {
+      return const SizedBox.shrink();
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return Text(
+      _error ?? _line!,
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+        color: _error != null
+            ? scheme.error
+            : scheme.onSurfaceVariant,
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 }

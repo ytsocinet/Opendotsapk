@@ -84,7 +84,7 @@ class AppConstants {
 - create_calendar_event: Create a calendar event
 - add_contact: Add a new contact
 - set_alarm: Set an alarm
-- open_app: Open an app by package name
+- open_app: Open one of the user's connected apps by package name
 - web_search: Search the web using DuckDuckGo
 - get_location: Get current location
 - create_note: Create a note

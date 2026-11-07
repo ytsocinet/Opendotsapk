@@ -32,13 +32,17 @@ class ToolPermissionStore {
 
   /// Tools whose Android permissions were removed in Clawzilla v1.
   /// These are always Block, regardless of stored or requested values.
+  ///
+  /// `open_app` is NOT here any more: it left the gate when connected
+  /// apps landed (Nov 7, 2026). It is gated per-app instead — the model
+  /// may only open an app Aaron picked in Settings → Connected apps, and
+  /// the registry refuses anything else at execution time.
   static const Set<String> v1GatedTools = {
     'get_location',
     'send_sms',
     'create_calendar_event',
     'add_contact',
     'set_alarm',
-    'open_app',
   };
 
   static bool isV1Gated(String toolName) => v1GatedTools.contains(toolName);

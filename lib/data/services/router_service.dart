@@ -186,7 +186,7 @@ class RouterService {
           provider: v.provider,
           modelId: v.modelId,
           reason:
-              'Image attached but no on-device vision model is loaded — '
+              'This picture needs a model that can see — '
               'using ${v.provider.displayName}',
           forced: true,
         );
@@ -213,7 +213,7 @@ class RouterService {
     if (!isOnline) {
       return const RouteDecision(
         target: RouteTarget.local,
-        reason: 'Offline — using the on-device model',
+        reason: 'Offline — using the model on this phone',
         forced: true,
       );
     }
@@ -221,7 +221,7 @@ class RouterService {
     if (_candidates.isEmpty) {
       return const RouteDecision(
         target: RouteTarget.local,
-        reason: 'No cloud model configured — using the on-device model',
+        reason: 'No cloud model set up — using the model on this phone',
         forced: true,
       );
     }
@@ -241,7 +241,7 @@ class RouterService {
         target: RouteTarget.cloud,
         provider: c.provider,
         modelId: c.modelId,
-        reason: 'No on-device model loaded — using ${c.provider.displayName}',
+        reason: 'No model loaded on this phone — using ${c.provider.displayName}',
         forced: true,
       );
     }

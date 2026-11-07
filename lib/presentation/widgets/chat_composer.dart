@@ -26,6 +26,8 @@ class ChatComposer extends StatefulWidget {
     required this.onVoice,
     required this.imageTooltip,
     required this.documentTooltip,
+    this.isListening = false,
+    this.onStopVoice,
   });
 
   final TextEditingController controller;
@@ -34,6 +36,13 @@ class ChatComposer extends StatefulWidget {
   /// True while a reply streams or a cloud turn is in flight. Drives both the
   /// send/stop swap and whether Send is actionable.
   final bool isGenerating;
+
+  /// True while the mic is listening. The mic button lights up and tapping
+  /// it stops the listen instead of starting a second one.
+  final bool isListening;
+
+  /// Stops the current listen. Only called when [isListening] is true.
+  final VoidCallback? onStopVoice;
 
   /// Sends a turn. [text] is non-null only when the message came from the
   /// keyboard's send action, which carries the committed string with it; the
@@ -180,8 +189,13 @@ class _ChatComposerState extends State<ChatComposer>
                     ),
                     _BarButton(
                       icon: Icons.mic,
-                      tooltip: 'Dictate',
-                      onPressed: widget.onVoice,
+                      tooltip: widget.isListening
+                          ? 'Listening… Tap to stop'
+                          : 'Dictate',
+                      isActive: widget.isListening,
+                      onPressed: widget.isListening
+                          ? (widget.onStopVoice ?? widget.onVoice)
+                          : widget.onVoice,
                     ),
                     const SizedBox(width: 4),
                     _SendStopButton(
@@ -207,16 +221,22 @@ class _ChatComposerState extends State<ChatComposer>
 /// Smaller than the Material default (36 rather than 48) because the row holds
 /// five controls; the surrounding touch target is padded back out instead of
 /// the icon growing.
+///
+/// [isActive] lights the button up — a filled primary circle with a slow
+/// pulse — so the user can see at a glance that the mic is listening. It is
+/// the mic's listening indicator.
 class _BarButton extends StatefulWidget {
   const _BarButton({
     required this.icon,
     required this.onPressed,
     required this.tooltip,
+    this.isActive = false,
   });
 
   final IconData icon;
   final VoidCallback onPressed;
   final String tooltip;
+  final bool isActive;
 
   @override
   State<_BarButton> createState() => _BarButtonState();
@@ -229,11 +249,34 @@ class _BarButtonState extends State<_BarButton>
     duration: const Duration(milliseconds: 100),
   );
 
+  late final AnimationController _pulseController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+
   bool _isHovered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isActive) _pulseController.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _BarButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      _pulseController.repeat(reverse: true);
+    } else if (!widget.isActive && oldWidget.isActive) {
+      _pulseController.stop();
+      _pulseController.reset();
+    }
+  }
 
   @override
   void dispose() {
     _pressController.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -254,9 +297,10 @@ class _BarButtonState extends State<_BarButton>
     final scheme = Theme.of(context).colorScheme;
 
     return AnimatedBuilder(
-      animation: _pressController,
+      animation: Listenable.merge([_pressController, _pulseController]),
       builder: (context, child) {
         final scale = 1.0 - (_pressController.value * 0.12);
+        final pulse = _pulseController.value;
         return Transform.scale(
           scale: scale,
           child: MouseRegion(
@@ -274,22 +318,44 @@ class _BarButtonState extends State<_BarButton>
                   height: 40,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _isHovered
-                        ? scheme.primary.withValues(alpha: 0.12)
-                        : Colors.transparent,
-                    border: _isHovered
+                    color: widget.isActive
+                        ? scheme.primary
+                        : _isHovered
+                            ? scheme.primary.withValues(alpha: 0.12)
+                            : Colors.transparent,
+                    border: widget.isActive
                         ? Border.all(
-                            color: scheme.primary.withValues(alpha: 0.3),
-                            width: 1,
+                            color: scheme.primary.withValues(
+                              alpha: 0.55 + 0.45 * pulse,
+                            ),
+                            width: 2,
                           )
+                        : _isHovered
+                            ? Border.all(
+                                color: scheme.primary.withValues(alpha: 0.3),
+                                width: 1,
+                              )
+                            : null,
+                    boxShadow: widget.isActive
+                        ? [
+                            BoxShadow(
+                              color: scheme.primary.withValues(
+                                alpha: 0.25 + 0.2 * pulse,
+                              ),
+                              blurRadius: 10,
+                              spreadRadius: 1,
+                            ),
+                          ]
                         : null,
                   ),
                   child: Icon(
                     widget.icon,
                     size: 21,
-                    color: _isHovered
-                        ? scheme.primary
-                        : scheme.onSurfaceVariant,
+                    color: widget.isActive
+                        ? scheme.onPrimary
+                        : _isHovered
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
                   ),
                 ),
               ),

@@ -207,8 +207,8 @@ class _CloudModelsScreenState extends ConsumerState<CloudModelsScreen> {
               'You supply your own API key. It is stored in this device\'s '
               'hardware keystore and sent only to the provider you chose.\n\n'
               'There is no Clawzilla server. Your key is never uploaded, and '
-              'the on-device model stays the default — cloud is used only when '
-              'you ask for it or when the router decides a turn needs it.',
+              'the model on this phone stays the default — cloud is used only when '
+              'you ask for it or when a reply needs it.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -230,7 +230,7 @@ class _CloudModelsScreenState extends ConsumerState<CloudModelsScreen> {
         children: [
           SegmentedButton<String>(
             segments: const [
-              ButtonSegment(value: 'local', label: Text('On-device')),
+              ButtonSegment(value: 'local', label: Text('On this phone')),
               ButtonSegment(value: 'auto', label: Text('Auto')),
               ButtonSegment(value: 'cloud', label: Text('Cloud')),
             ],
@@ -259,15 +259,15 @@ class _CloudModelsScreenState extends ConsumerState<CloudModelsScreen> {
   static String _modeExplanation(String mode) {
     switch (mode) {
       case 'local':
-        return 'Only the on-device model is used. Cloud is never contacted, '
+        return 'Only the model on this phone is used. Cloud is never contacted, '
             'even if a key is saved.';
       case 'cloud':
         return 'Every turn goes to the cloud provider, except when private '
             'mode is on or you are offline.';
       default:
-        return 'Short and personal turns stay on-device; long, code-heavy or '
-            'explicitly hard questions go to the cloud. Images use a cloud '
-            'model when no on-device vision model is loaded.';
+        return 'Short and personal turns stay on this phone; long, code-heavy or '
+            'explicitly hard questions go to the cloud. Pictures use a cloud '
+            'model when no vision model is loaded on this phone.';
     }
   }
 

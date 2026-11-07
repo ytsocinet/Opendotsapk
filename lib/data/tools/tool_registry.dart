@@ -20,12 +20,14 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../domain/models/tool_result.dart';
+import '../services/connected_apps_store.dart';
 import '../services/llm_service.dart';
 import 'tool_permission_store.dart';
 import '../database/database_helper.dart';
@@ -112,13 +114,32 @@ class ToolRegistry {
     add(
       ToolDefinition(
         name: 'open_app',
-        description: 'Open an app by package name.',
+        description:
+            'Open one of the user\'s connected apps by package name. '
+            'Only apps the user connected in Settings → Connected apps '
+            'can be opened — anything else is refused.',
         parameters: {
           'package_name': {'type': 'string', 'description': 'App package name'},
         },
         required: ['package_name'],
-        implemented: false,
-        unimplementedReason: 'Needs a launch Intent; not yet wired.',
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'share_to_app',
+        description:
+            'Send text to one of the user\'s connected apps by package '
+            'name, opening that app\'s share screen so the user can '
+            'confirm it. Only apps the user connected in Settings → '
+            'Connected apps can receive text — anything else is refused.',
+        parameters: {
+          'package_name': {'type': 'string', 'description': 'App package name'},
+          'text': {'type': 'string', 'description': 'Text to send'},
+        },
+        required: ['package_name', 'text'],
+        implemented: true,
       ),
     );
 
@@ -174,7 +195,7 @@ class ToolRegistry {
         name: 'analyze_image',
         description:
             'Look at a picture on the device with the local vision '
-            'model (Moondream2). Needs a downloaded vision model.',
+            'model. Needs a downloaded vision model.',
         parameters: {
           'path': {
             'type': 'string',
@@ -239,8 +260,97 @@ class ToolRegistry {
         return _executeGetLocation(params);
       case 'analyze_image':
         return _executeAnalyzeImage(params);
+      case 'open_app':
+        return _executeOpenApp(params);
+      case 'share_to_app':
+        return _executeShareToApp(params);
       default:
         return ToolResult.unsupported('No implementation for "$toolName".');
+    }
+  }
+
+  /// The native channel MainActivity answers for opening and sharing to
+  /// other apps. The Dart side never launches a package on its own —
+  /// Android does it, and only for packages on the connected list.
+  static const MethodChannel _appsChannel = MethodChannel('clawzilla/apps');
+
+  /// Open a connected app. The package must be on the connected list —
+  /// anything else is refused here, before Android is ever asked, so a
+  /// model that guesses a package name gets a plain refusal, not a launch.
+  /// A store read that fails refuses too: failing closed is the only safe
+  /// direction when the gate itself cannot be read.
+  Future<ToolResult> _executeOpenApp(Map<String, dynamic> params) async {
+    final packageName = params['package_name'] as String?;
+    if (packageName == null || packageName.trim().isEmpty) {
+      return ToolResult.failed('open_app requires a "package_name".');
+    }
+    final connected = await _isConnectedApp(packageName);
+    if (!connected) {
+      return ToolResult.unsupported(
+        'That app is not connected. Only apps the user connected in '
+        'Settings → Connected apps can be opened.',
+      );
+    }
+    try {
+      final opened = await _appsChannel.invokeMethod<bool>(
+        'launchApp',
+        {'package': packageName},
+      );
+      if (opened != true) {
+        return ToolResult.failed(
+          'Could not open that app — it may have been removed.',
+        );
+      }
+      return ToolResult.success('Opened $packageName.');
+    } on PlatformException catch (e) {
+      return ToolResult.failed('Could not open that app: ${e.message}');
+    }
+  }
+
+  /// Send text to a connected app. Android opens that app's share screen
+  /// with the text already in it — the user sees it and confirms or
+  /// cancels there, so nothing is ever sent silently.
+  Future<ToolResult> _executeShareToApp(Map<String, dynamic> params) async {
+    final packageName = params['package_name'] as String?;
+    final text = params['text'] as String?;
+    if (packageName == null || packageName.trim().isEmpty) {
+      return ToolResult.failed('share_to_app requires a "package_name".');
+    }
+    if (text == null || text.trim().isEmpty) {
+      return ToolResult.failed('share_to_app requires some "text" to send.');
+    }
+    final connected = await _isConnectedApp(packageName);
+    if (!connected) {
+      return ToolResult.unsupported(
+        'That app is not connected. Only apps the user connected in '
+        'Settings → Connected apps can receive text.',
+      );
+    }
+    try {
+      final shared = await _appsChannel.invokeMethod<bool>(
+        'shareToApp',
+        {'package': packageName, 'text': text},
+      );
+      if (shared != true) {
+        return ToolResult.failed(
+          'Could not share to that app — it may have been removed.',
+        );
+      }
+      return ToolResult.requiresUserAction(
+        'Opened $packageName with the text ready — confirm it there.',
+      );
+    } on PlatformException catch (e) {
+      return ToolResult.failed('Could not share to that app: ${e.message}');
+    }
+  }
+
+  /// The connected-apps gate, fail-closed: any read failure refuses the
+  /// open/share rather than letting it through on an unknown list.
+  Future<bool> _isConnectedApp(String packageName) async {
+    try {
+      return await ConnectedAppsStore.instance.isConnected(packageName);
+    } catch (_) {
+      return false;
     }
   }
 
@@ -386,8 +496,8 @@ class ToolRegistry {
     }
     if (!llm.isVisionLoaded) {
       return ToolResult.unsupported(
-        'No vision model is loaded. Download Moondream2 in Settings → Models '
-        'and select it as the vision model.',
+        'No vision model is loaded. Download one in Settings → Models '
+        'and pick it as the vision model.',
       );
     }
 
