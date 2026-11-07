@@ -136,7 +136,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                       gradient: const LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                        colors: [AppColors.brand, AppColors.accent],
                       ),
                       shape: BoxShape.circle,
                       boxShadow: [
@@ -147,10 +147,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                         ),
                       ],
                     ),
-                    child: const Icon(
-                      Icons.psychology_rounded,
-                      size: 62,
-                      color: Colors.white,
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/clawzilla-mark.png',
+                        width: 62,
+                        height: 62,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                 ),

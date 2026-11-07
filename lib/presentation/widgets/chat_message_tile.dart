@@ -262,10 +262,13 @@ class _AssistantAvatarState extends State<_AssistantAvatar>
               ),
             ],
           ),
-          child: const Icon(
-            Icons.psychology,
-            size: 16,
-            color: AppColors.accent,
+          child: ClipOval(
+            child: Image.asset(
+              'assets/images/clawzilla-mark.png',
+              width: 16,
+              height: 16,
+              fit: BoxFit.cover,
+            ),
           ),
         );
       },

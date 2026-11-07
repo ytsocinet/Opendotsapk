@@ -1,6 +1,6 @@
 /// Chooses between the on-device model and a cloud provider for each turn.
 ///
-/// This is the piece that keeps LocalMind's privacy promise intact while still
+/// This is the piece that keeps Clawzilla's privacy promise intact while still
 /// letting the user reach for a big model when they need one. The rules are
 /// deliberately boring and inspectable — a router nobody can predict is worse
 /// than no router.

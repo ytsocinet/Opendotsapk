@@ -1,6 +1,6 @@
 /// Pre-flight checks for GGUF model files, run BEFORE any native call.
 ///
-/// Why this exists: LocalMind kicked the user out of the app (process
+/// Why this exists: Clawzilla kicked the user out of the app (process
 /// death, below Dart) when loading a model on every backend. Dart try/catch
 /// cannot catch a native crash, so the only Dart-side defence is to refuse
 /// bad files before native code ever touches them, and to refuse loads

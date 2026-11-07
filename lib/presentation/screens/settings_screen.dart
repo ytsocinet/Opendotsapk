@@ -256,10 +256,13 @@ class _ProminentModelsSection extends ConsumerWidget {
                       ),
                     ],
                   ),
-                  child: const Icon(
-                    Icons.psychology_rounded,
-                    color: Colors.white,
-                    size: 28,
+                  child: ClipOval(
+                    child: Image.asset(
+                      'assets/images/clawzilla-mark.png',
+                      width: 28,
+                      height: 28,
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -1069,14 +1072,17 @@ class _AboutSectionState extends State<AboutSection> {
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [AppColors.brand, Color(0xFF8B5CF6)],
+                        colors: [AppColors.brand, AppColors.accent],
                       ),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
-                      Icons.psychology_rounded,
-                      size: 20,
-                      color: Colors.white,
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/clawzilla-mark.png',
+                        width: 20,
+                        height: 20,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),

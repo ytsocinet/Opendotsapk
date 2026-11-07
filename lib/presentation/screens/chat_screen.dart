@@ -826,7 +826,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     try {
       final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/localmind-chat.md');
+      final file = File('${dir.path}/clawzilla-chat.md');
       await file.writeAsString(buf.toString());
       await Share.shareXFiles([XFile(file.path)], text: 'Clawzilla chat');
     } catch (e) {
@@ -2498,10 +2498,13 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                     ),
                   ],
                 ),
-                child: const Icon(
-                  Icons.psychology,
-                  size: 17,
-                  color: AppColors.accent,
+                child: ClipOval(
+                  child: Image.asset(
+                    'assets/images/clawzilla-mark.png',
+                    width: 17,
+                    height: 17,
+                    fit: BoxFit.cover,
+                  ),
                 ),
               ),
               const SizedBox(width: 10),

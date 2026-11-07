@@ -130,3 +130,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/models/
+    - assets/images/
