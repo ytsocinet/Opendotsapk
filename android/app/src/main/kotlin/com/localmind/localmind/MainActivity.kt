@@ -8,16 +8,20 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 /**
  * Main activity for LocalMind.
  *
- * Extends the v2 embedding FlutterActivity. The v1 embedding was removed from
- * Flutter, so importing `io.flutter.app.FlutterActivity` (v1) fails the build
- * with "use of deleted Android v1 embedding".
+ * Extends the v2 embedding FlutterFragmentActivity (the FragmentActivity-based
+ * host) rather than plain FlutterActivity: the system app picker uses the
+ * Activity Result API (`registerForActivityResult`), which only exists on
+ * ComponentActivity, and plain FlutterActivity extends android.app.Activity.
+ * The v1 embedding was removed from Flutter, so importing
+ * `io.flutter.app.FlutterActivity` (v1) fails the build with "use of deleted
+ * Android v1 embedding".
  *
  * It also owns three MethodChannels:
  * - `com.localmind.localmind/secure_screen`: while the app's lock is on, notes
@@ -31,7 +35,7 @@ import io.flutter.plugin.common.MethodChannel
  *   `clawzilla://talk` launch (or ACTION_ASSIST) sets it, and the chat
  *   screen consumes it once to start listening.
  */
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
 
     private val secureScreenChannel = "com.localmind.localmind/secure_screen"
     private val appsChannel = "clawzilla/apps"
