@@ -102,10 +102,12 @@ class _ChatMessageTileState extends State<ChatMessageTile>
       constraints: BoxConstraints(maxWidth: maxWidth),
       decoration: BoxDecoration(
         color: isUser ? AppColors.userBubble : AppColors.aiBubble,
-        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-        border: isUser
-            ? null
-            : Border.all(color: scheme.outlineVariant.withValues(alpha: 0.45)),
+        // Clawziod look: terminal panels — 12 px rounding and a thin green
+        // border on both roles (the user bubble used to have no border).
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        border: Border.all(
+          color: AppColors.brand.withValues(alpha: isUser ? 0.25 : 0.35),
+        ),
         boxShadow: isUser
             ? [
                 BoxShadow(
@@ -217,7 +219,7 @@ class _ChatMessageTileState extends State<ChatMessageTile>
 
 /// The assistant's leading glyph.
 ///
-/// Small, low-contrast, and cyan: it marks authorship without turning every
+/// Small, low-contrast, and green: it marks authorship without turning every
 /// reply into an avatar that competes with the text.
 ///
 /// [theme] is passed through from [_buildMessage] so MarkdownStyleSheet can

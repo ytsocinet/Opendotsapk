@@ -16,19 +16,22 @@ import '../constants/app_constants.dart';
 class AppColors {
   AppColors._();
 
-  /// Matrix green brand — Clawzilla retheme (was indigo before).
+  /// Phosphor green brand — Clawziod look (was Matrix 0xFF00FF41, indigo
+  /// before that).
   static const Color brand = AppConstants.primaryColor;
 
-  /// Secondary accent for AI-authored surfaces and progress: a light Matrix
-  /// green that reads as "machine" against the brand green without competing.
-  static const Color accent = Color(0xFF4ADE80);
+  /// Secondary accent for AI-authored surfaces and progress: Clawziod's
+  /// emerald green, which reads as "machine" against the brand green without
+  /// competing. Was Matrix light green 0xFF4ADE80.
+  static const Color accent = Color(0xFF10B981);
 
   static const Color success = Color(0xFF34D399);
   static const Color warning = Color(0xFFFBBF24);
   static const Color danger = Color(0xFFF87171);
 
-  /// Page background — darker than the cards so elevation reads even at 0dp.
-  static const Color background = Color(0xFF070B08);
+  /// Page background — pitch black, darker than the cards so elevation reads
+  /// even at 0dp. Clawziod look (was 0xFF070B08).
+  static const Color background = Color(0xFF050807);
 
   /// Card / sheet surface.
   static const Color surface = Color(0xFF0E1510);
@@ -81,6 +84,9 @@ class AppTheme {
 
     return ThemeData(
       useMaterial3: true,
+      // Clawziod look: monospace everywhere. 'monospace' is a built-in
+      // generic family, so this needs no font download.
+      fontFamily: 'monospace',
       colorScheme: scheme,
       scaffoldBackgroundColor: AppColors.background,
       textTheme: text,
@@ -129,7 +135,10 @@ class AppTheme {
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusLarge),
-          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
+          // Terminal panels: a thin green border instead of the grey outline.
+          side: BorderSide(
+            color: scheme.primary.withValues(alpha: 0.28),
+          ),
         ),
       ),
       dialogTheme: DialogThemeData(
@@ -137,6 +146,9 @@ class AppTheme {
         backgroundColor: AppColors.surfaceHigh,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusLarge + 4),
+          side: BorderSide(
+            color: scheme.primary.withValues(alpha: 0.28),
+          ),
         ),
         titleTextStyle: text.titleLarge,
         contentTextStyle: text.bodyMedium,
@@ -333,6 +345,8 @@ class AppTheme {
     const color = Color(0xFFE9ECF5);
     const muted = Color(0xFF9AA3B5);
 
+    // `.apply` pins monospace onto every style: the ThemeData fontFamily
+    // above is the fallback, this is the guarantee.
     return TextTheme(
       displaySmall: const TextStyle(
         fontSize: 34,
@@ -382,6 +396,6 @@ class AppTheme {
         fontWeight: FontWeight.w500,
         color: muted,
       ),
-    );
+    ).apply(fontFamily: 'monospace');
   }
 }

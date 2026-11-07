@@ -253,6 +253,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             _ChatHeader(
               modelPath: modelPath,
               isGenerating: _isThinking,
+              alwaysListening:
+                  settings['always_listening'] as bool? ?? false,
               onManageModels: _showModelSelector,
               onClear: _clearChat,
               onExport: _exportChat,
@@ -1141,6 +1143,7 @@ class _ChatHeader extends StatefulWidget {
   const _ChatHeader({
     required this.modelPath,
     required this.isGenerating,
+    required this.alwaysListening,
     required this.onManageModels,
     required this.onClear,
     required this.onExport,
@@ -1148,6 +1151,11 @@ class _ChatHeader extends StatefulWidget {
 
   final String? modelPath;
   final bool isGenerating;
+
+  /// Drives the WAKE: ON/OFF pill. Read from settings by the parent so the
+  /// header itself stays a plain StatefulWidget.
+  final bool alwaysListening;
+
   final VoidCallback onManageModels;
   final VoidCallback onClear;
   final VoidCallback onExport;
@@ -1206,8 +1214,14 @@ class _ChatHeaderState extends State<_ChatHeader>
                 bottom: false,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-                  child: Row(
+                  // Clawziod look: the header is two rows — the title row,
+                  // then the weights line with the WAKE / AIR-GAP pills.
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
+                      Row(
+                        children: [
                       ScaleTransition(
                         scale: CurvedAnimation(
                           parent: _controller,
@@ -1217,13 +1231,16 @@ class _ChatHeaderState extends State<_ChatHeader>
                             curve: Curves.easeOutBack,
                           ),
                         ),
+                        // Clawziod look: the Matrix hand mark, not the old
+                        // head glyph. Same asset as the splash and settings
+                        // header, so the brand is one image everywhere.
                         child: Container(
-                          width: 32,
-                          height: 32,
+                          width: 36,
+                          height: 36,
                           decoration: BoxDecoration(
-                            color: AppColors.brand.withValues(alpha: 0.16),
-                            borderRadius: BorderRadius.circular(
-                              AppTheme.radiusSmall,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: AppColors.brand.withValues(alpha: 0.4),
                             ),
                             boxShadow: [
                               BoxShadow(
@@ -1233,10 +1250,13 @@ class _ChatHeaderState extends State<_ChatHeader>
                               ),
                             ],
                           ),
-                          child: const Icon(
-                            Icons.psychology,
-                            size: 18,
-                            color: AppColors.brand,
+                          child: ClipOval(
+                            child: Image.asset(
+                              'assets/images/clawzilla-mark.png',
+                              width: 36,
+                              height: 36,
+                              fit: BoxFit.cover,
+                            ),
                           ),
                         ),
                       ),
@@ -1250,9 +1270,23 @@ class _ChatHeaderState extends State<_ChatHeader>
                             curve: Curves.easeOut,
                           ),
                         ),
-                        child: Text(
-                          'Clawzilla',
-                          style: Theme.of(context).textTheme.titleLarge,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'CLAWZILLA',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            Text(
+                              'LOCAL AGENT',
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    letterSpacing: 2.0,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
                         ),
                       ),
                       const Spacer(),
@@ -1331,6 +1365,52 @@ class _ChatHeaderState extends State<_ChatHeader>
                           // a tight width would collapse the menu itself.
                         ),
                       ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      // Weights line: what is actually loaded, the wake
+                      // state, and the local-only badge. The weights text
+                      // flexes and truncates; the pills and the enclave
+                      // label never do.
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              loaded
+                                  ? 'WEIGHTS: ${_modelDisplayName(path)}'
+                                  : 'WEIGHTS: NO MODEL LOADED',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          _HeaderPill(
+                            label: widget.alwaysListening
+                                ? 'WAKE: ON'
+                                : 'WAKE: OFF',
+                            active: widget.alwaysListening,
+                          ),
+                          const SizedBox(width: 6),
+                          const _HeaderPill(
+                            label: 'AIR-GAP',
+                            icon: Icons.shield_outlined,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'ZERO-CLOUD ENCLAVE',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: AppColors.brand.withValues(
+                                    alpha: 0.75,
+                                  ),
+                                ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -1339,6 +1419,55 @@ class _ChatHeaderState extends State<_ChatHeader>
           ),
         );
       },
+    );
+  }
+}
+
+/// Small bordered pill for the chat header's second row.
+///
+/// Display only: it reports a real state (wake listening on/off, the
+/// local-only badge), it does not change anything when tapped.
+class _HeaderPill extends StatelessWidget {
+  const _HeaderPill({required this.label, this.icon, this.active = false});
+
+  final String label;
+  final IconData? icon;
+
+  /// Whether the pill reads as "on": brand tint when true, muted when false.
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final tint = active
+        ? AppColors.brand
+        : Theme.of(context).colorScheme.onSurfaceVariant;
+    return Container(
+      height: 22,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: tint.withValues(alpha: 0.45)),
+        color: active
+            ? AppColors.brand.withValues(alpha: 0.12)
+            : Colors.transparent,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 11, color: tint),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: tint,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2727,7 +2856,18 @@ class _ModeBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppColors.surfaceHigh,
+      // Clawziod look: a thin green top border frames the mode strip as a
+      // terminal panel, matching the composer's own top border below it.
+      decoration: BoxDecoration(
+        color: AppColors.surfaceHigh,
+        border: Border(
+          top: BorderSide(
+            color: Theme.of(
+              context,
+            ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ),
+      ),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
       child: Row(
         children: [

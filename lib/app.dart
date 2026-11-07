@@ -118,7 +118,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
           gradient: RadialGradient(
             center: Alignment(0, -0.35),
             radius: 0.9,
-            colors: [Color(0xFF1B1F44), AppColors.background],
+            // Clawziod look: the old indigo glow (0xFF1B1F44) goes green.
+            colors: [Color(0xFF0A2410), AppColors.background],
             stops: [0, 0.75],
           ),
         ),
@@ -164,8 +165,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                 child: Column(
                   children: [
                     const Text(
-                      AppConstants.appName,
+                      // Clawziod look: mono caps, and the boot line below.
+                      'CLAWZILLA',
                       style: TextStyle(
+                        fontFamily: 'monospace',
                         fontSize: 34,
                         fontWeight: FontWeight.w700,
                         letterSpacing: -0.8,
@@ -173,11 +176,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Your Private AI Agent',
+                      'LOCAL AGENT // ON-DEVICE',
                       style: TextStyle(
-                        fontSize: 15,
-                        letterSpacing: 0.2,
-                        color: Colors.white.withValues(alpha: 0.55),
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                        letterSpacing: 2.0,
+                        color: AppColors.brand.withValues(alpha: 0.75),
                       ),
                     ),
                     const SizedBox(height: 44),

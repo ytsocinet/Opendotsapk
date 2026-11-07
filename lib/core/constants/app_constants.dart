@@ -42,8 +42,9 @@ class AppConstants {
     }
   }
 
-  // Matrix green brand (was indigo 0xFF6366F1 before the Clawzilla retheme).
-  static const Color primaryColor = Color(0xFF00FF41);
+  // Phosphor green brand (Clawziod look, Nov 7, 2026 — was Matrix
+  // 0xFF00FF41, before that indigo 0xFF6366F1).
+  static const Color primaryColor = Color(0xFF00FF66);
 
   // ------------------------------------------------------------ model storage
   /// Sub-directory (under the app documents dir) holding downloaded GGUFs.

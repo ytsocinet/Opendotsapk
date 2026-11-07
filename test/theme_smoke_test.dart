@@ -94,11 +94,23 @@ void main() {
 
     test('the brand and the AI accent are the documented values', () {
       // The two colours the product is specified in. Pinned so a palette edit
-      // is a deliberate act rather than an accident. Matrix green since the
-      // Clawzilla retheme (Nov 6, 2026): brand was indigo 0xFF6366F1 and
-      // accent was cyan 0xFF22D3EE.
-      expect(AppColors.brand, const Color(0xFF00FF41));
-      expect(AppColors.accent, const Color(0xFF4ADE80));
+      // is a deliberate act rather than an accident. Clawziod phosphor green
+      // since the reskin (Nov 7, 2026): brand was Matrix 0xFF00FF41, before
+      // that indigo 0xFF6366F1; accent was Matrix light green 0xFF4ADE80,
+      // before that cyan 0xFF22D3EE.
+      expect(AppColors.brand, const Color(0xFF00FF66));
+      expect(AppColors.accent, const Color(0xFF10B981));
+    });
+
+    test('uses the Clawziod canvas and monospace type', () {
+      // Pitch black, not the old near-black; monospace on every style, so a
+      // screen that hand-writes its own TextStyle without the theme font is
+      // the only way non-mono text can still slip in.
+      expect(AppColors.background, const Color(0xFF050807));
+      final theme = AppTheme.dark;
+      expect(theme.textTheme.bodyMedium?.fontFamily, 'monospace');
+      expect(theme.textTheme.titleLarge?.fontFamily, 'monospace');
+      expect(theme.textTheme.labelSmall?.fontFamily, 'monospace');
     });
 
     test('surfaces are stepped so elevation reads without shadows', () {

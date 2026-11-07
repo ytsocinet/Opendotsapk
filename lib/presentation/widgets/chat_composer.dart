@@ -162,27 +162,43 @@ class _ChatComposerState extends State<ChatComposer>
                       onPressed: widget.onAttachDocument,
                     ),
                     Expanded(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 132),
-                        child: TextField(
-                          controller: widget.controller,
-                          focusNode: widget.focusNode,
-                          minLines: 1,
-                          maxLines: 4,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: widget.onSend,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                          decoration: InputDecoration(
-                            hintText: 'Type a message...',
-                            filled: false,
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 10,
+                      // Clawziod look: the text field sits in its own
+                      // bordered terminal box, so the composer reads as a
+                      // prompt, not a bare row.
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMedium,
+                          ),
+                          border: Border.all(
+                            color: scheme.primary.withValues(alpha: 0.28),
+                          ),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 132),
+                          child: TextField(
+                            controller: widget.controller,
+                            focusNode: widget.focusNode,
+                            minLines: 1,
+                            maxLines: 4,
+                            textInputAction: TextInputAction.send,
+                            onSubmitted: widget.onSend,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                            decoration: InputDecoration(
+                              hintText:
+                                  'Ask Cypher, save a note, search the web...',
+                              filled: false,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 10,
+                              ),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
                             ),
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
                           ),
                         ),
                       ),
