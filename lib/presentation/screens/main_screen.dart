@@ -1,25 +1,37 @@
 /// Main screen with bottom navigation.
 ///
-/// Five destinations. Chat and the model list are separate because picking a
+/// Six destinations. Chat and the model list are separate because picking a
 /// model is a settings-shaped task, while Memory and Activity are read-mostly.
+/// Browser is last on purpose: the original five keep their indices, so
+/// nothing that addressed a tab by number moves.
+library;
+
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/motion.dart';
+import '../providers/providers.dart';
+import 'browser_screen.dart';
 import 'chat_screen.dart';
 import 'memory_screen.dart';
 import 'activity_screen.dart';
 import 'settings_screen.dart';
 import 'tools_screen.dart';
 
-class MainScreen extends StatefulWidget {
+class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({super.key});
 
   @override
-  State<MainScreen> createState() => _MainScreenState();
+  ConsumerState<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends ConsumerState<MainScreen> {
   int _currentIndex = 0;
+
+  /// The Browser tab's index. A link tapped in chat writes
+  /// [browserOpenRequestProvider]; this shell switches to the tab and the
+  /// BrowserScreen loads the URL.
+  static const int _browserIndex = 5;
 
   // The tab bodies are held in a const list and never rebuilt, which is what
   // preserves each tab's state: rebuilding Chat would drop a half-typed
@@ -30,10 +42,20 @@ class _MainScreenState extends State<MainScreen> {
     ToolsScreen(),
     ActivityScreen(),
     SettingsScreen(),
+    BrowserScreen(),
   ];
 
   @override
   Widget build(BuildContext context) {
+    // A chat link is a request to show the browser, not a rebuild: the
+    // listener fires after the build, so setState here is safe.
+    ref.listen<String?>(browserOpenRequestProvider, (previous, next) {
+      if (next == null) return;
+      if (_currentIndex != _browserIndex) {
+        setState(() => _currentIndex = _browserIndex);
+      }
+    });
+
     return Scaffold(
       body: Stack(
         fit: StackFit.expand,
@@ -88,6 +110,11 @@ class _MainScreenState extends State<MainScreen> {
               selectedIcon: Icon(Icons.settings),
               label: 'Settings',
             ),
+            NavigationDestination(
+              icon: Icon(Icons.public_outlined),
+              selectedIcon: Icon(Icons.public),
+              label: 'Browser',
+            ),
           ],
         ),
       ),
@@ -104,7 +131,7 @@ class _MainScreenState extends State<MainScreen> {
 ///
 /// [AnimatedOpacity] rather than a plain [Opacity] specifically because it
 /// drops the subtree's paint entirely at zero opacity: with an [IndexedStack]
-/// only the visible child was ever painted, and five screens painting
+/// only the visible child was ever painted, and six screens painting
 /// simultaneously on a mid-range phone is a real regression.
 class _TabSlot extends StatelessWidget {
   const _TabSlot({super.key, required this.selected, required this.child});

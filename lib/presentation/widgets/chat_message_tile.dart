@@ -8,25 +8,33 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/motion.dart';
 import '../../domain/models/models.dart';
+import '../providers/providers.dart';
+import '../screens/browser_screen.dart';
 
 /// Renders a single [ChatMessage] as an avatar-and-bubble row.
 ///
 /// Text stays inside a [SelectableText] so long-press to copy, and the
 /// selectable-region behaviour users already rely on, is unchanged.
-class ChatMessageTile extends StatefulWidget {
+///
+/// Links in an assistant reply open in the Browser tab (through
+/// [browserOpenRequestProvider]) instead of leaving the app. Today nothing
+/// else in the app opens links at all — there is no url_launcher — so this
+/// is the first tappable link in the app.
+class ChatMessageTile extends ConsumerStatefulWidget {
   const ChatMessageTile({super.key, required this.message});
 
   final ChatMessage message;
 
   @override
-  State<ChatMessageTile> createState() => _ChatMessageTileState();
+  ConsumerState<ChatMessageTile> createState() => _ChatMessageTileState();
 }
 
-class _ChatMessageTileState extends State<ChatMessageTile>
+class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
@@ -160,6 +168,13 @@ class _ChatMessageTileState extends State<ChatMessageTile>
                   data: widget.message.content,
                   selectable: true,
                   styleSheet: MarkdownStyleSheet.fromTheme(theme),
+                  // A tapped link opens in the Browser tab. Plain words
+                  // that are not a URL become a Brave Search instead.
+                  onTapLink: (text, href, title) {
+                    if (href == null || href.isEmpty) return;
+                    ref.read(browserOpenRequestProvider.notifier).state =
+                        toBrowsableUrl(href);
+                  },
                 ),
                 const SizedBox(height: 6),
                 Align(

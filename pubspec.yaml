@@ -89,6 +89,17 @@ dependencies:
   # Network
   http: ^1.2.1
 
+  # In-app browser (Aaron's browser, Nov 7, 2026): the Browser tab is a
+  # WebView backed by Android System WebView. The agent gets NO tool for it
+  # in this batch — the browser is Aaron-only; the agent page-reader is a
+  # future step, explicitly decided Nov 7, 2026. Search default is Brave
+  # Search (Aaron's pick), not Google; the engine itself stays the system
+  # WebView because Android does not let an app embed Brave's own engine.
+  # 4.14.1 is the latest on pub.dev (Jul 7, 2026); its floors (Dart
+  # ^3.10.0, Flutter >=3.38.0) are met by CI Flutter 3.47.7, and its
+  # Android floor (SDK 24) is under the app's minSdk 28.
+  webview_flutter: ^4.14.1
+
   # Permissions & location
   permission_handler: ^11.3.1
   geolocator: ^11.1.0

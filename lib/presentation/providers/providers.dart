@@ -541,3 +541,12 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     RouterService.instance.privateMode = false;
   }
 }
+
+// In-app browser — open-URL requests from chat.
+//
+// A link tapped in a chat message writes the URL here; the Browser tab reads
+// it and clears it (MainScreen switches to the tab, BrowserScreen loads it).
+// Aaron-only by design (Nov 7, 2026): the agent gets no tool that writes
+// this — the agent page-reader is a future step, explicitly decided that day,
+// not part of this batch.
+final browserOpenRequestProvider = StateProvider<String?>((ref) => null);
