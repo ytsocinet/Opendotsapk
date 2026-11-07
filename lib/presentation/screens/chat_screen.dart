@@ -53,6 +53,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _isThinking = false;
   String _currentResponse = '';
 
+  /// Special tokens the model may emit as ordinary text (Llama's
+  /// `<|eot_id|>`, Qwen's `<|im_end|>` / `<|endoftext|>`, header
+  /// tokens). They are end-of-turn markers for the machine, not
+  /// words for the user — stripped once when a reply finishes.
+  static final _specialToken = RegExp(r'<\|[^|>]+\|>');
+
+  static String _stripSpecialTokens(String text) =>
+      text.replaceAll(_specialToken, '').trimRight();
+
   /// Local file paths of images queued for the next turn.
   ///
   /// Held as paths rather than bytes: the vision model reads from disk, and
@@ -209,6 +218,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  /// Toggle always-listening from the header WAKE pill. Mirrors the
+  /// Settings → Voice switch exactly: flip the setting, start or stop
+  /// the wake service, and on a failed start flip the setting back so
+  /// the pill never lies. Missing key / keyword file fails here just
+  /// as it does on the switch.
+  Future<void> _toggleWakeListening() async {
+    final wake = _wake;
+    final enabled =
+        ref.read(settingsProvider)['always_listening'] as bool? ?? false;
+    final next = !enabled;
+    ref.read(settingsProvider.notifier).updateSetting(
+      'always_listening',
+      next,
+    );
+    if (next) {
+      final problem = await wake?.start();
+      if (problem != null) {
+        ref.read(settingsProvider.notifier).updateSetting(
+          'always_listening',
+          false,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(problem)),
+          );
+        }
+      }
+    } else {
+      await wake?.stop();
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -252,6 +293,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               isGenerating: _isThinking,
               alwaysListening:
                   settings['always_listening'] as bool? ?? false,
+              onToggleWake: _toggleWakeListening,
               onManageModels: _showModelSelector,
               onClear: _clearChat,
               onExport: _exportChat,
@@ -766,6 +808,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   /// Persist the assistant reply, then speak it if TTS is on.
   Future<void> _finishAssistantMessage() async {
+    // Strip first: a reply that was nothing but special tokens must
+    // still hit the empty guard below instead of persisting as blank.
+    _currentResponse = _stripSpecialTokens(_currentResponse);
     if (_currentResponse.trim().isEmpty) return;
 
     // A stopped reply is kept and labelled rather than discarded: half a useful
@@ -1124,6 +1169,7 @@ class _ChatHeader extends StatefulWidget {
     required this.modelPath,
     required this.isGenerating,
     required this.alwaysListening,
+    required this.onToggleWake,
     required this.onManageModels,
     required this.onClear,
     required this.onExport,
@@ -1135,6 +1181,10 @@ class _ChatHeader extends StatefulWidget {
   /// Drives the WAKE: ON/OFF pill. Read from settings by the parent so the
   /// header itself stays a plain StatefulWidget.
   final bool alwaysListening;
+
+  /// Tapping the WAKE pill toggles always-listening (same toggle as the
+  /// Settings → Voice switch).
+  final VoidCallback onToggleWake;
 
   final VoidCallback onManageModels;
   final VoidCallback onClear;
@@ -1195,7 +1245,7 @@ class _ChatHeaderState extends State<_ChatHeader>
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
                   // Clawziod look: the header is three rows — the title row,
-                  // then the weights line, then the WAKE / AIR-GAP pills.
+                  // then the weights line, then the WAKE pill.
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -1364,10 +1414,10 @@ class _ChatHeaderState extends State<_ChatHeader>
                             ),
                       ),
                       const SizedBox(height: 4),
-                      // Pills: wake state and the local-only badge, on a
-                      // third row in a Wrap so they flow instead of
-                      // squeezing. No ZERO-CLOUD ENCLAVE text — the
-                      // AIR-GAP pill already says local-only.
+                      // Pills: wake state on a third row in a Wrap so it
+                      // flows instead of squeezing. The AIR-GAP badge is
+                      // gone — it was a label, not a control, and the app
+                      // already runs local inference by default.
                       Wrap(
                         spacing: 6,
                         children: [
@@ -1376,10 +1426,7 @@ class _ChatHeaderState extends State<_ChatHeader>
                                 ? 'WAKE: ON'
                                 : 'WAKE: OFF',
                             active: widget.alwaysListening,
-                          ),
-                          const _HeaderPill(
-                            label: 'AIR-GAP',
-                            icon: Icons.shield_outlined,
+                            onTap: widget.onToggleWake,
                           ),
                         ],
                       ),
@@ -1397,10 +1444,15 @@ class _ChatHeaderState extends State<_ChatHeader>
 
 /// Small bordered pill for the chat header's third row.
 ///
-/// Display only: it reports a real state (wake listening on/off, the
-/// local-only badge), it does not change anything when tapped.
+/// Reports a real state (wake listening on/off). With an [onTap] it is a
+/// control — tapping it toggles that state; without one it is display only.
 class _HeaderPill extends StatelessWidget {
-  const _HeaderPill({required this.label, this.icon, this.active = false});
+  const _HeaderPill({
+    required this.label,
+    this.icon,
+    this.active = false,
+    this.onTap,
+  });
 
   final String label;
   final IconData? icon;
@@ -1408,12 +1460,15 @@ class _HeaderPill extends StatelessWidget {
   /// Whether the pill reads as "on": brand tint when true, muted when false.
   final bool active;
 
+  /// Tap action, if any. When null the pill renders exactly as before.
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final tint = active
         ? AppColors.brand
         : Theme.of(context).colorScheme.onSurfaceVariant;
-    return Container(
+    final pill = Container(
       height: 22,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
@@ -1439,6 +1494,15 @@ class _HeaderPill extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+    final onTap = this.onTap;
+    if (onTap == null) return pill;
+    return GestureDetector(
+      onTap: onTap,
+      child: Tooltip(
+        message: 'Tap to turn always-listening on or off',
+        child: pill,
       ),
     );
   }
@@ -2841,60 +2905,59 @@ class _ModeBar extends StatelessWidget {
         ),
       ),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-      child: Row(
+      // Two full-width rows: one shared row gave the effort segments
+      // ~44 dp each and Low / Med / High wrapped letter-by-letter even
+      // without the check icons. Full width gives each segment ~112 dp.
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            flex: 3,
-            child: SegmentedButton<String>(
-              style: _compact,
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(
-                  value: 'chat',
-                  label: Text('Chat'),
-                  tooltip: 'Just chat',
-                ),
-                ButtonSegment(
-                  value: 'plan',
-                  label: Text('Plan'),
-                  tooltip: 'Plan first, then act',
-                ),
-                ButtonSegment(
-                  value: 'code',
-                  label: Text('Code'),
-                  tooltip: 'Code first, then explain',
-                ),
-              ],
-              selected: {mode},
-              onSelectionChanged: (s) => onModeChanged(s.first),
-            ),
+          SegmentedButton<String>(
+            style: _compact,
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(
+                value: 'chat',
+                label: Text('Chat'),
+                tooltip: 'Just chat',
+              ),
+              ButtonSegment(
+                value: 'plan',
+                label: Text('Plan'),
+                tooltip: 'Plan first, then act',
+              ),
+              ButtonSegment(
+                value: 'code',
+                label: Text('Code'),
+                tooltip: 'Code first, then explain',
+              ),
+            ],
+            selected: {mode},
+            onSelectionChanged: (s) => onModeChanged(s.first),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            flex: 2,
-            child: SegmentedButton<String>(
-              style: _compact,
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(
-                  value: 'low',
-                  label: Text('Low'),
-                  tooltip: 'Short replies',
-                ),
-                ButtonSegment(
-                  value: 'med',
-                  label: Text('Med'),
-                  tooltip: 'Normal replies',
-                ),
-                ButtonSegment(
-                  value: 'high',
-                  label: Text('High'),
-                  tooltip: 'Long, step-by-step replies',
-                ),
-              ],
-              selected: {effort},
-              onSelectionChanged: (s) => onEffortChanged(s.first),
-            ),
+          const SizedBox(height: 6),
+          SegmentedButton<String>(
+            style: _compact,
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(
+                value: 'low',
+                label: Text('Low'),
+                tooltip: 'Short replies',
+              ),
+              ButtonSegment(
+                value: 'med',
+                label: Text('Med'),
+                tooltip: 'Normal replies',
+              ),
+              ButtonSegment(
+                value: 'high',
+                label: Text('High'),
+                tooltip: 'Long, step-by-step replies',
+              ),
+            ],
+            selected: {effort},
+            onSelectionChanged: (s) => onEffortChanged(s.first),
           ),
         ],
       ),
