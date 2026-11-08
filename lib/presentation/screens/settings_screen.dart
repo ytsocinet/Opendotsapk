@@ -763,8 +763,9 @@ class VoiceSettings extends ConsumerWidget {
               if (value) {
                 final problem = await wake.start();
                 if (problem != null) {
-                  // Starting failed (no key, no keyword file, engine
-                  // error): flip the toggle back so it never lies.
+                  // Starting failed (no listening model, mic
+                  // permission, engine error): flip the toggle back so
+                  // it never lies.
                   ref
                       .read(settingsProvider.notifier)
                       .updateSetting('always_listening', false);
@@ -780,127 +781,7 @@ class VoiceSettings extends ConsumerWidget {
             },
           ),
         ),
-        const _PicovoiceKeyField(),
       ],
-    );
-  }
-}
-
-/// Picovoice AccessKey for "Hey Cypher" wake mode. Stored in the Android
-/// Keystore like the cloud keys — never in settings or the repo.
-class _PicovoiceKeyField extends StatefulWidget {
-  const _PicovoiceKeyField();
-
-  @override
-  State<_PicovoiceKeyField> createState() => _PicovoiceKeyFieldState();
-}
-
-class _PicovoiceKeyFieldState extends State<_PicovoiceKeyField> {
-  final _controller = TextEditingController();
-  bool _hasKey = false;
-  bool _busy = false;
-  String? _status;
-
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-  }
-
-  Future<void> _refresh() async {
-    final has = await SecureStore.instance.hasApiKey('picovoice');
-    if (mounted) setState(() => _hasKey = has);
-  }
-
-  Future<void> _save() async {
-    final key = _controller.text.trim();
-    if (key.isEmpty) return;
-    setState(() {
-      _busy = true;
-      _status = null;
-    });
-    try {
-      await SecureStore.instance.setApiKey('picovoice', key);
-      _controller.clear();
-      if (!mounted) return;
-      setState(() {
-        _hasKey = true;
-        _status = 'OK — key saved to the keystore.';
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _status = 'Could not save the key: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _remove() async {
-    await SecureStore.instance.deleteApiKey('picovoice');
-    if (!mounted) return;
-    setState(() {
-      _hasKey = false;
-      _status = 'Key removed. Always-listening stays off until a new key is saved.';
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Picovoice key — for "Hey Cypher"',
-            style: theme.textTheme.titleSmall,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _hasKey
-                ? 'A key is saved. Get yours free at console.picovoice.ai.'
-                : 'No key saved. Make a free Picovoice account, copy your AccessKey, and save it here.',
-            style: theme.textTheme.bodySmall,
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  obscureText: true,
-                  enableSuggestions: false,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    hintText: 'Paste AccessKey',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: _busy ? null : _save,
-                child: const Text('Save'),
-              ),
-            ],
-          ),
-          if (_hasKey)
-            TextButton(onPressed: _remove, child: const Text('Remove key')),
-          if (_status != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(_status!, style: theme.textTheme.bodySmall),
-            ),
-        ],
-      ),
     );
   }
 }

@@ -1,29 +1,31 @@
-/// Cypher wake mode: "Hey Cypher" always-listening (Porcupine) plus the
+/// Cypher wake mode: "Hey Cypher" always-listening (OpenWakeWord) plus the
 /// foreground service that keeps it alive with the app closed.
 ///
-/// Two things the code cannot conjure on its own, and reports plainly
-/// instead of failing silently:
-/// * The Picovoice AccessKey — the user saves it in Settings → Voice; it
-///   lives in the Android Keystore and never in the repo (the fork is
-///   public).
-/// * The "Hey Cypher" keyword file (`assets/hey_cypher.ppn`) — trained in
-///   the Picovoice Console and shipped in the app assets. Until it exists,
-///   starting always-listening reports that it is missing.
+/// No account and no key: OpenWakeWord is open source and runs fully
+/// on-device. The only thing the code needs is the trained keyword model
+/// (`assets/models/hey_cypher.tflite`) — trained from synthetic speech, no
+/// recordings — which ships in the app assets. Until it exists, starting
+/// always-listening reports that it is missing.
 ///
-/// All audio stays on the phone: Porcupine only answers "did someone say
+/// All audio stays on the phone: the detector only answers "did someone say
 /// the magic words?" and the speech recogniser only runs after it hears
 /// them. The foreground service shows a persistent "Cypher is listening"
 /// notification while it runs, and stopping it (the Settings toggle) stops
 /// the mic entirely.
+///
+/// (Picovoice Porcupine used to be the engine here. Its signup blocks
+/// personal email — company email required, and the login-page Google
+/// button did not get a personal account in either — so it was replaced
+/// Nov 8, 2026. Nothing in this file talks to Picovoice anymore.)
 library;
+
+import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:porcupine_flutter/porcupine_error.dart';
-import 'package:porcupine_flutter/porcupine_manager.dart';
+import 'package:wake_word_flutter/wake_word_flutter.dart';
 
 import '../../core/utils/log.dart';
-import 'secure_store.dart';
 
 /// Top-level foreground-task callback (must be top-level and entry-point
 /// marked). The listening itself runs in the main isolate; this handler
@@ -44,9 +46,6 @@ class _CypherWakeTaskHandler extends TaskHandler {
   Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
 
   @override
-  void onReceiveData(Object data) {}
-
-  @override
   void onNotificationButtonPressed(String id) {}
 
   @override
@@ -62,13 +61,19 @@ class WakeService {
   static WakeService? _instance;
   static WakeService get instance => _instance ??= WakeService._();
 
-  /// Asset path of the trained "Hey Cypher" keyword file. It is bundled
+  /// Asset path of the trained "Hey Cypher" keyword model. It is bundled
   /// once it exists; until then [start] reports it missing.
-  static const String keywordAsset = 'assets/hey_cypher.ppn';
+  static const String modelAsset = 'assets/models/hey_cypher.tflite';
 
   static const String wakePhrase = 'Hey Cypher';
 
-  PorcupineManager? _porcupine;
+  /// Score (0–1) the detector needs before it counts as a detection.
+  /// 0.5 is openWakeWord's default; raise it if it fires on its own,
+  /// lower it if it misses the phrase.
+  static const double detectionThreshold = 0.5;
+
+  WakeWordDetector? _detector;
+  StreamSubscription<WakeWordDetection>? _detectionSub;
   bool _running = false;
   bool _serviceRunning = false;
 
@@ -87,32 +92,30 @@ class WakeService {
   /// why it could not start.
   Future<String?> start() async {
     if (_running) return null;
-    final key = await SecureStore.instance.apiKey('picovoice');
-    if (key == null || key.trim().isEmpty) {
-      return 'Add your Picovoice key in Settings → Voice first.';
-    }
     try {
-      await rootBundle.load(keywordAsset);
+      await rootBundle.load(modelAsset);
     } catch (_) {
-      return 'The "Hey Cypher" keyword file is not installed yet.';
+      return 'The "Hey Cypher" listening model is not installed yet.';
     }
     try {
       await _startForegroundService();
-      _porcupine = await PorcupineManager.fromKeywordPaths(
-        key,
-        [keywordAsset],
-        _onWakeWord,
-        sensitivities: [0.5],
-        errorCallback: (e) => Log.w('wake word error: ${e.message}'),
+      _detector = await WakeWordDetector.loadFromAsset(
+        modelAsset,
+        threshold: detectionThreshold,
       );
-      await _porcupine!.start();
+      _detectionSub = _detector!.detections.listen(
+        (d) => _onWakeWord(d.score),
+      );
+      if (!await _detector!.start()) {
+        await _stopDetector();
+        await _stopForegroundService();
+        return 'Microphone permission is off — turn it on for Clawzilla in Settings and try again.';
+      }
       _running = true;
       Log.i('Cypher always-listening on');
       return null;
-    } on PorcupineException catch (e) {
-      await _stopForegroundService();
-      return 'Could not start listening: ${e.message}';
     } catch (e) {
+      await _stopDetector();
       await _stopForegroundService();
       return 'Could not start listening: $e';
     }
@@ -120,20 +123,28 @@ class WakeService {
 
   Future<void> stop() async {
     if (!_running && !_serviceRunning) return;
-    try {
-      await _porcupine?.stop();
-    } catch (_) {}
-    try {
-      await _porcupine?.delete();
-    } catch (_) {}
-    _porcupine = null;
+    await _stopDetector();
     _running = false;
     await _stopForegroundService();
     Log.i('Cypher always-listening off');
   }
 
-  void _onWakeWord(int keywordIndex) {
-    Log.i('wake word heard: $wakePhrase');
+  Future<void> _stopDetector() async {
+    try {
+      await _detectionSub?.cancel();
+    } catch (_) {}
+    _detectionSub = null;
+    try {
+      await _detector?.stop();
+    } catch (_) {}
+    try {
+      await _detector?.dispose();
+    } catch (_) {}
+    _detector = null;
+  }
+
+  void _onWakeWord(double score) {
+    Log.i('wake word heard: $wakePhrase (score=${score.toStringAsFixed(2)})');
     if (onWakeWord != null) {
       onWakeWord!();
     } else {

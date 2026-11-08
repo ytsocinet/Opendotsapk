@@ -73,10 +73,15 @@ dependencies:
   speech_to_text: ^7.5.0
   flutter_tts: ^4.0.2
 
-  # Wake word ("Hey Cypher"): on-device Porcupine engine. The AccessKey and
-  # the custom keyword file come from the user's Picovoice account — never
-  # committed to the repo (the fork is public).
-  porcupine_flutter: ^4.0.0
+  # Wake word ("Hey Cypher"): on-device OpenWakeWord engine, no account
+  # and no key. (Picovoice Porcupine was the engine here until Nov 8, 2026;
+  # its signup blocks personal email, so it was replaced.) wake_word_flutter
+  # bundles the shared feature extractor (melspectrogram + speech
+  # embedding); the only file we supply is our trained
+  # assets/models/hey_cypher.tflite. 0.0.1 is the latest on pub.dev
+  # (Oct 15, 2026); its floors (Dart ^3.13.4, Flutter >=3.3.0, Android
+  # minSdk 24) are met by CI Flutter 3.47.7 and the app's minSdk 28.
+  wake_word_flutter: ^0.0.1
 
   # Background tasks
   # Cypher always-listening runs as a foreground service (microphone type).

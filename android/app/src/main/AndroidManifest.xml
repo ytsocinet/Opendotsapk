@@ -4,8 +4,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- Cypher always-listening (added back after v1): foreground service
-         (microphone type) so Porcupine can listen with the app closed, and
-         the notification permission for its persistent notification. -->
+         (microphone type) so OpenWakeWord can listen with the app closed,
+         and the notification permission for its persistent notification. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
