@@ -172,8 +172,14 @@ android {
             // libonnxruntime.so the onnxruntime package already builds from
             // source for embeddings. Without this, :app:mergeReleaseNativeLibs
             // fails on the duplicate path. Both copies are the same library;
-            // keep the first one.
+            // keep the first one. All four ABIs: build #27 died on
+            // arm64-v8a, and after that one was covered build #28 died on
+            // armeabi-v7a — the merge stops at the first duplicate it meets,
+            // so every ABI needs its own line.
             pickFirst 'lib/arm64-v8a/libonnxruntime.so'
+            pickFirst 'lib/armeabi-v7a/libonnxruntime.so'
+            pickFirst 'lib/x86/libonnxruntime.so'
+            pickFirst 'lib/x86_64/libonnxruntime.so'
         }
     }
 }
