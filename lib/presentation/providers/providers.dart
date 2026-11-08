@@ -74,14 +74,39 @@ class SpeechNotifier extends StateNotifier<bool> {
   bool _isAvailable = false;
   final List<String> _words = [];
 
+  /// The in-flight listen's completer, if any. The engine ends a session
+  /// without a final result when it hears no match or when it is stopped,
+  /// and waiting on `finalResult` alone left the mic lit for the full
+  /// 30-second timeout in exactly those cases — the button looked stuck,
+  /// and tapping it again did nothing. The status and error callbacks
+  /// below resolve the listen the moment the engine actually stops.
+  Completer<String?>? _activeCompleter;
+
   SpeechNotifier() : super(false);
 
   Future<void> init() async {
     _isAvailable = await _speech.initialize(
-      onStatus: (status) => debugPrint('Speech status: $status'),
-      onError: (error) => debugPrint('Speech error: $error'),
+      onStatus: (status) {
+        debugPrint('Speech status: $status');
+        if (status == 'done' || status == 'notListening') {
+          _resolveActive();
+        }
+      },
+      onError: (error) {
+        debugPrint('Speech error: $error');
+        _resolveActive();
+      },
     );
     state = _isAvailable;
+  }
+
+  /// Resolve the in-flight listen with whatever words were captured, or
+  /// null when nothing was heard. No-op when nothing is listening.
+  void _resolveActive() {
+    final completer = _activeCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(_words.isEmpty ? null : _words.join(' '));
+    }
   }
 
   /// Listens and resolves with the recognised text once the user stops
@@ -94,6 +119,7 @@ class SpeechNotifier extends StateNotifier<bool> {
     _words.clear();
 
     final completer = Completer<String?>();
+    _activeCompleter = completer;
 
     await _speech.listen(
       listenFor: timeout,
@@ -110,11 +136,20 @@ class SpeechNotifier extends StateNotifier<bool> {
       },
     );
 
-    // Safety net if the engine never fires finalResult.
-    return completer.future.timeout(
-      timeout + const Duration(seconds: 2),
-      onTimeout: () => _words.isEmpty ? null : _words.join(' '),
-    );
+    // Safety net if the engine never reports back at all. Kill the
+    // session too, so a stale listen cannot swallow the next listen's
+    // callbacks.
+    try {
+      return await completer.future.timeout(
+        timeout + const Duration(seconds: 2),
+        onTimeout: () async {
+          await _speech.cancel();
+          return _words.isEmpty ? null : _words.join(' ');
+        },
+      );
+    } finally {
+      if (identical(_activeCompleter, completer)) _activeCompleter = null;
+    }
   }
 
   Future<void> stopListening() async {

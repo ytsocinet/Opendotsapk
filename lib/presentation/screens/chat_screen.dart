@@ -92,6 +92,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// the empty-result path knows not to show "Didn't catch that".
   bool _voiceStopRequested = false;
 
+  /// Counts listens, so a listen that ends late cannot darken the mic
+  /// while a newer listen is already running (see [_startVoiceInput]).
+  int _listenGeneration = 0;
+
   /// Wake service handle, kept so dispose can unregister without ref.
   WakeService? _wake;
 
@@ -1050,6 +1054,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   void _startVoiceInput() async {
+    // One listen at a time: the mic tap, the wake word, the side button
+    // and the auto-listen after a reply can all fire while a listen is
+    // already in flight, and a second listen orphaned the first one's
+    // result — the mic stayed lit until its timeout.
+    if (_isListening) return;
     final speechNotifier = ref.read(speechToTextProvider.notifier);
     final isAvailable = ref.read(speechToTextProvider);
 
@@ -1072,6 +1081,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     // Light the mic up before listening starts, so the user can see the
     // app heard the tap even while the recogniser warms up.
+    if (_isListening) return; // Lost a race with another starter.
+    final generation = ++_listenGeneration;
     _voiceStopRequested = false;
     if (mounted) setState(() => _isListening = true);
     final speech = ref.read(speechToTextProvider.notifier);
@@ -1084,7 +1095,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       Log.w('listen failed: $e');
       result = null;
     } finally {
-      if (mounted) setState(() => _isListening = false);
+      // Only this listen may darken the mic: a newer listen may already
+      // be running (tap stop, tap mic again), and clearing here would
+      // leave it dark while it listens.
+      if (mounted && generation == _listenGeneration) {
+        setState(() => _isListening = false);
+      }
     }
 
     if (result != null && result.isNotEmpty && mounted) {
@@ -1102,12 +1118,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _voiceStopRequested = false;
   }
 
-  /// Stop the current listen, from a tap on the lit mic button. The
-  /// in-flight `listenOnce` resolves empty, and [_voiceStopRequested]
-  /// keeps that from showing "Didn't catch that".
+  /// Stop the current listen, from a tap on the lit mic button. The mic
+  /// goes dark on the tap itself: the engine can take a moment to report
+  /// that it stopped, and waiting on it is what left the button looking
+  /// stuck. The in-flight `listenOnce` resolves with whatever was heard
+  /// (or empty), and [_voiceStopRequested] keeps an empty one from
+  /// showing "Didn't catch that".
   Future<void> _stopVoiceInput() async {
     if (!_isListening) return;
     _voiceStopRequested = true;
+    if (mounted) setState(() => _isListening = false);
     try {
       await ref.read(speechToTextProvider.notifier).stopListening();
     } catch (e) {
