@@ -225,16 +225,50 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   /// Enter the app — navigation only, no settings write.
   ///
-  /// Bisection (build #31 crash): tapping Continue in build #31 killed the
-  /// app the instant it was pressed, while the save step itself completed
-  /// fine (the Continue button appeared). So the fault is in the navigation
-  /// or in the model-picker screen it landed on. This build lands on the
-  /// main screen instead: if it opens, the crash was specific to the
-  /// model-picker screen; if it crashes too, the fault is in the navigation
-  /// itself. Either way the answer is in the result.
+  /// Bisection (build #32 crash): tapping Continue in build #32 still
+  /// killed the app, even though the destination was the main screen, not
+  /// the model picker. So neither destination screen is proven at fault —
+  /// the fault could be in the move itself or in something both screens
+  /// share. This build lands on a bare screen with nothing in it: if it
+  /// opens, the move is fine and the fault is in the real screens; if it
+  /// crashes too, the fault is in the move itself. The button on that
+  /// screen opens the real app with a plain push, so either way the user
+  /// can still get in if the bare screen holds.
   void _enter() {
     Navigator.of(context)
-        .pushReplacement(AppPageRoute(builder: (_) => const MainScreen()));
+        .pushReplacement(AppPageRoute(builder: (_) => const _EnteredScreen()));
+  }
+}
+
+/// The bare landing screen from the onboarding bisection.
+///
+/// Deliberately almost nothing: a Scaffold, one line of text, and a button
+/// that opens the real app with a plain push. No model list, no chat, no
+/// bottom nav, no providers read — so if this screen opens, the navigation
+/// itself is sound and the crash lives in the real screens' content.
+class _EnteredScreen extends StatelessWidget {
+  const _EnteredScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Clawzilla')),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('You made it in.'),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => Navigator.of(context).push(
+                AppPageRoute(builder: (_) => const MainScreen()),
+              ),
+              child: const Text('Open the app'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
