@@ -177,9 +177,22 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   /// the destination because without a model the app cannot answer anything —
   /// landing on an empty chat would be a dead end.
   Future<void> _finish() async {
-    await ref
-        .read(settingsProvider.notifier)
-        .updateSetting('onboarding_done', true);
+    // Save first-run, but never let a failing or slow settings write trap
+    // the user on this screen: on build #29 both buttons went dead with no
+    // error shown when the write did not complete. Navigate regardless and
+    // surface the problem instead of swallowing it.
+    try {
+      await ref
+          .read(settingsProvider.notifier)
+          .updateSetting('onboarding_done', true)
+          .timeout(const Duration(seconds: 5));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save that setting: $e')),
+        );
+      }
+    }
 
     if (!mounted) return;
 
