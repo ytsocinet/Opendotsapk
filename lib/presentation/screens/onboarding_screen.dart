@@ -17,7 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/motion.dart';
 import '../providers/providers.dart';
-import 'models_screen.dart';
+import 'main_screen.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -225,12 +225,16 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   /// Enter the app — navigation only, no settings write.
   ///
-  /// Deliberately separate from [_finish]: if tapping Continue crashes,
-  /// the fault is in the navigation or the model-picker screen; if tapping
-  /// Skip / Get started crashes, the fault is in the save itself.
+  /// Bisection (build #31 crash): tapping Continue in build #31 killed the
+  /// app the instant it was pressed, while the save step itself completed
+  /// fine (the Continue button appeared). So the fault is in the navigation
+  /// or in the model-picker screen it landed on. This build lands on the
+  /// main screen instead: if it opens, the crash was specific to the
+  /// model-picker screen; if it crashes too, the fault is in the navigation
+  /// itself. Either way the answer is in the result.
   void _enter() {
     Navigator.of(context)
-        .pushReplacement(AppPageRoute(builder: (_) => const ModelsScreen()));
+        .pushReplacement(AppPageRoute(builder: (_) => const MainScreen()));
   }
 }
 
