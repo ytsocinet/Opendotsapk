@@ -167,6 +167,13 @@ android {
         jniLibs {
             // Required by some native plugins (llama.cpp / onnxruntime).
             useLegacyPackaging = true
+            // wake_word_flutter pulls flutter_onnxruntime, which ships the
+            // onnxruntime-android AAR — a second copy of the
+            // libonnxruntime.so the onnxruntime package already builds from
+            // source for embeddings. Without this, :app:mergeReleaseNativeLibs
+            // fails on the duplicate path. Both copies are the same library;
+            // keep the first one.
+            pickFirst 'lib/arm64-v8a/libonnxruntime.so'
         }
     }
 }
