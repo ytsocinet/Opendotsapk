@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
@@ -117,5 +121,40 @@ Future<void> main() async {
 
   Log.i('startup completed in ${startupWatch.elapsedMilliseconds}ms');
 
-  runApp(const ProviderScope(child: LocalMindApp()));
+  // Crash capture (diagnostic for the build #33 Continue crash): any
+  // uncaught Dart error is appended to crash.log in the app documents dir
+  // so the next launch can show it on screen. Writes are synchronous so
+  // the record lands even if the isolate dies right after. A native crash
+  // writes nothing, which itself says the fault is below Dart.
+  File? crashLog;
+  try {
+    final docs = await getApplicationDocumentsDirectory();
+    crashLog = File('${docs.path}/crash.log');
+  } catch (e) {
+    Log.w('crash-log setup failed: $e');
+  }
+  if (crashLog != null) {
+    final log = crashLog;
+    FlutterError.onError = (details) {
+      try {
+        log.writeAsStringSync(
+          'FlutterError: ${details.exceptionAsString()}\n${details.stack}\n',
+          mode: FileMode.append,
+        );
+      } catch (_) {}
+      FlutterError.presentError(details);
+    };
+  }
+
+  runZonedGuarded(
+    () => runApp(const ProviderScope(child: LocalMindApp())),
+    (error, stack) {
+      try {
+        crashLog?.writeAsStringSync(
+          'Uncaught: $error\n$stack\n',
+          mode: FileMode.append,
+        );
+      } catch (_) {}
+    },
+  );
 }

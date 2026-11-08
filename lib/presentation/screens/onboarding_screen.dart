@@ -12,8 +12,11 @@
 /// when they are not.
 library;
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/theme/motion.dart';
 import '../providers/providers.dart';
@@ -246,14 +249,67 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 /// that opens the real app with a plain push. No model list, no chat, no
 /// bottom nav, no providers read — so if this screen opens, the navigation
 /// itself is sound and the crash lives in the real screens' content.
-class _EnteredScreen extends StatelessWidget {
+///
+/// Diagnostic extras (build #33 crash): it shows the last crash log if one
+/// was written (see main.dart), and a "Test engine" button that constructs
+/// the model engine on its own — if that tap crashes, the engine itself is
+/// the fault; if it reports fine, the fault is elsewhere in the real screens.
+class _EnteredScreen extends ConsumerStatefulWidget {
   const _EnteredScreen();
+
+  @override
+  ConsumerState<_EnteredScreen> createState() => _EnteredScreenState();
+}
+
+class _EnteredScreenState extends ConsumerState<_EnteredScreen> {
+  String? _crashLog;
+  String? _engineStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCrashLog();
+  }
+
+  Future<void> _loadCrashLog() async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final file = File('${docs.path}/crash.log');
+      if (!await file.exists()) return;
+      final text = await file.readAsString();
+      if (!mounted || text.trim().isEmpty) return;
+      setState(() {
+        _crashLog = text.length > 2000
+            ? text.substring(text.length - 2000)
+            : text;
+      });
+    } catch (_) {
+      // No log, no problem — a native crash writes nothing at all.
+    }
+  }
+
+  Future<void> _testEngine() async {
+    setState(() => _engineStatus = 'Testing the engine…');
+    try {
+      final llm = ref.read(llmServiceProvider);
+      if (!mounted) return;
+      setState(() {
+        _engineStatus = llm.isLoaded
+            ? 'Engine OK — a model is already loaded.'
+            : 'Engine OK — it started fine, no model loaded yet.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _engineStatus = 'Engine failed: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Clawzilla')),
-      body: Center(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -265,6 +321,24 @@ class _EnteredScreen extends StatelessWidget {
               ),
               child: const Text('Open the app'),
             ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: _testEngine,
+              child: const Text('Test engine'),
+            ),
+            if (_engineStatus != null) ...[
+              const SizedBox(height: 12),
+              Text(_engineStatus!, textAlign: TextAlign.center),
+            ],
+            if (_crashLog != null) ...[
+              const SizedBox(height: 20),
+              const Text(
+                'Last crash log:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(_crashLog!, style: const TextStyle(fontSize: 12)),
+            ],
           ],
         ),
       ),
