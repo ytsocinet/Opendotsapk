@@ -34,6 +34,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   int _index = 0;
 
+  /// Diagnostic (build #30 crash): what the settings save actually did,
+  /// shown on this screen instead of swallowed. Null until the user taps
+  /// Skip or Get started; 'Saving…' while the write is in flight; then the
+  /// real outcome — 'Saved OK' or 'Save failed: <error>'. The Continue
+  /// button below only appears once this is set, so the save and the
+  /// navigation are tested as two separate steps.
+  String? _saveStatus;
+
   /// Kept as a const list so the three slides are the same widget instances
   /// across rebuilds and the controller's page cache is not thrown away by
   /// every setState from the indicator.
@@ -121,6 +129,28 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               activeColor: scheme.primary,
               inactiveColor: scheme.onSurfaceVariant.withValues(alpha: 0.3),
             ),
+            if (_saveStatus != null) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                child: Text(
+                  _saveStatus!,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ],
+            if (_saveStatus != null && _saveStatus != 'Saving…') ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _enter,
+                    child: const Text('Continue'),
+                  ),
+                ),
+              ),
+            ],
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
               child: Row(
@@ -170,32 +200,35 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     await _finish();
   }
 
-  /// Commit first-run and enter the app.
+  /// Commit first-run — save only, no navigation.
   ///
-  /// Shared by the primary button and by Skip, so both write the same flag,
-  /// at the same point, and land on the same destination. The model picker is
-  /// the destination because without a model the app cannot answer anything —
-  /// landing on an empty chat would be a dead end.
+  /// Diagnostic split (build #30 crash): on build #30 both buttons killed
+  /// the app the instant they were tapped and the flag never persisted, so
+  /// the save and the navigation are tested as two separate steps. This
+  /// method only writes the flag and reports the real outcome on screen.
+  /// [_enter] does only the navigation, and only after the user taps
+  /// Continue. Whichever step crashes tells us where the fault is.
   Future<void> _finish() async {
-    // Save first-run, but never let a failing or slow settings write trap
-    // the user on this screen: on build #29 both buttons went dead with no
-    // error shown when the write did not complete. Navigate regardless and
-    // surface the problem instead of swallowing it.
+    setState(() => _saveStatus = 'Saving…');
     try {
       await ref
           .read(settingsProvider.notifier)
           .updateSetting('onboarding_done', true)
           .timeout(const Duration(seconds: 5));
+      if (!mounted) return;
+      setState(() => _saveStatus = 'Saved OK — tap Continue to enter the app.');
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not save that setting: $e')),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _saveStatus = 'Save failed: $e');
     }
+  }
 
-    if (!mounted) return;
-
+  /// Enter the app — navigation only, no settings write.
+  ///
+  /// Deliberately separate from [_finish]: if tapping Continue crashes,
+  /// the fault is in the navigation or the model-picker screen; if tapping
+  /// Skip / Get started crashes, the fault is in the save itself.
+  void _enter() {
     Navigator.of(context)
         .pushReplacement(AppPageRoute(builder: (_) => const ModelsScreen()));
   }
