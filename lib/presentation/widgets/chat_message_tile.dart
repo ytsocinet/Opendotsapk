@@ -16,6 +16,31 @@ import '../../domain/models/models.dart';
 import '../providers/providers.dart';
 import '../screens/browser_screen.dart';
 
+/// Split an assistant reply into its reasoning and its answer.
+///
+/// Reasoning models (MiniCPM5, Qwen3, DeepSeek-R1 style) emit their
+/// chain-of-thought inside `<think>...</think>` and the answer after
+/// `</think>`. The tile used to render that whole raw output in one bubble,
+/// so the thinking and the answer ran together. Returns the thinking text
+/// (empty when there is none) and the answer text.
+///
+/// An unclosed `<think>` — the reply was stopped mid-thought — puts
+/// everything after the tag into thinking. Text before `<think>` (a model
+/// that chats first, then thinks) is kept as part of the answer.
+({String thinking, String answer}) splitThinking(String content) {
+  final open = content.indexOf('<think>');
+  if (open < 0) return (thinking: '', answer: content);
+  final close = content.indexOf('</think>', open + 7);
+  final before = content.substring(0, open).trim();
+  if (close < 0) {
+    return (thinking: content.substring(open + 7).trim(), answer: before);
+  }
+  final thinking = content.substring(open + 7, close).trim();
+  final after = content.substring(close + 8).trim();
+  final answer = before.isEmpty ? after : '$before\n\n$after'.trim();
+  return (thinking: thinking, answer: answer);
+}
+
 /// Renders a single [ChatMessage] as an avatar-and-bubble row.
 ///
 /// Text stays inside a [SelectableText] so long-press to copy, and the
@@ -105,6 +130,13 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
     double maxWidth,
     ThemeData theme,
   ) {
+    // Split the model's reasoning out of the answer, when it is there, so
+    // the thinking gets its own collapsible box instead of running together
+    // with the answer in one bubble. For user messages (and replies with no
+    // `<think>` block) this is a no-op: thinking is empty, answer is the
+    // whole content.
+    final split = splitThinking(widget.message.content);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       constraints: BoxConstraints(maxWidth: maxWidth),
@@ -164,26 +196,39 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                MarkdownBody(
-                  data: widget.message.content,
-                  selectable: true,
-                  styleSheet: MarkdownStyleSheet.fromTheme(theme),
-                  // A tapped link opens in the Browser tab. Plain words
-                  // that are not a URL become a Brave Search instead.
-                  onTapLink: (text, href, title) {
-                    if (href == null || href.isEmpty) return;
-                    ref.read(browserOpenRequestProvider.notifier).state =
-                        toBrowsableUrl(href);
-                  },
-                ),
+                if (split.thinking.isNotEmpty) ...[
+                  ThinkingSection(thinking: split.thinking),
+                  const SizedBox(height: 8),
+                ],
+                if (split.answer.isNotEmpty)
+                  MarkdownBody(
+                    data: split.answer,
+                    selectable: true,
+                    styleSheet: MarkdownStyleSheet.fromTheme(theme),
+                    // A tapped link opens in the Browser tab. Plain words
+                    // that are not a URL become a Brave Search instead.
+                    onTapLink: (text, href, title) {
+                      if (href == null || href.isEmpty) return;
+                      ref.read(browserOpenRequestProvider.notifier).state =
+                          toBrowsableUrl(href);
+                    },
+                  ),
                 const SizedBox(height: 6),
                 Align(
                   alignment: Alignment.centerRight,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(6),
                     onTap: () async {
+                      // Copy the answer, not the reasoning — that is the
+                      // part the user wants to keep or share. Falls back to
+                      // the full content when the answer is empty (a reply
+                      // stopped mid-thought).
                       await Clipboard.setData(
-                        ClipboardData(text: widget.message.content),
+                        ClipboardData(
+                          text: split.answer.isNotEmpty
+                              ? split.answer
+                              : widget.message.content,
+                        ),
                       );
                       if (context.mounted) {
                         ScaffoldMessenger.of(context)
@@ -229,6 +274,88 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
     final at = DateTime.fromMillisecondsSinceEpoch(millisSinceEpoch);
     String two(int value) => value.toString().padLeft(2, '0');
     return '${two(at.hour)}:${two(at.minute)}';
+  }
+}
+
+/// The model's reasoning, shown as its own collapsible box above the answer.
+///
+/// Reasoning models emit `<think>...</think>` before the answer; the tile
+/// used to render that whole raw output in the answer bubble. This box keeps
+/// the thinking visible but out of the way — collapsed by default, tap the
+/// header to open or close it. It only renders when there IS thinking text.
+class ThinkingSection extends StatefulWidget {
+  const ThinkingSection({super.key, required this.thinking});
+
+  final String thinking;
+
+  @override
+  State<ThinkingSection> createState() => _ThinkingSectionState();
+}
+
+class _ThinkingSectionState extends State<ThinkingSection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final text = theme.textTheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: AppColors.brand.withValues(alpha: 0.25),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.psychology_outlined,
+                    size: 14,
+                    color: AppColors.accent.withValues(alpha: 0.8),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Thinking',
+                    style: text.labelMedium?.copyWith(
+                      color: AppColors.accent,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    _expanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    size: 16,
+                    color: AppColors.accent.withValues(alpha: 0.8),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: SelectableText(
+                widget.thinking,
+                style: text.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 

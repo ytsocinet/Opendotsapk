@@ -48,6 +48,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
+  /// True when the user has scrolled away from the latest end of the chat.
+  ///
+  /// The list used to yank back to the bottom on every token flush, so the
+  /// user could not read an earlier message while the model was answering.
+  /// When this is set, the streaming auto-scroll stands down; the view only
+  /// returns to the bottom when an answer finishes (force) or the user
+  /// scrolls back down themselves.
+  bool _userScrolledAway = false;
+
   /// The composer focus node.
   final FocusNode _composerFocus = FocusNode();
   final Uuid _uuid = const Uuid();
@@ -123,6 +132,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     super.initState();
     _wake = ref.read(wakeServiceProvider);
     WidgetsBinding.instance.addObserver(this);
+    _scrollController.addListener(_onScroll);
     AssistantLaunch.setListenHandler(() {
       if (mounted) _startVoiceInput();
     });
@@ -133,6 +143,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       _restoreWakeListening();
       _checkAssistantLaunch();
     });
+  }
+
+  /// Tracks whether the user has scrolled away from the latest end, so the
+  /// streaming auto-scroll can stand down while they read earlier messages.
+  ///
+  /// In the reversed list, offset 0 is the latest end (the bottom). More than
+  /// a little way up means the user is reading history, not watching the
+  /// reply come in. No setState: nothing on screen depends on this flag, it
+  /// only gates the auto-scroll.
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    _userScrolledAway = _scrollController.offset > 120;
   }
 
   /// The side button (or the "Talk to Cypher" deep link) opened the app
@@ -264,6 +286,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scrollController.removeListener(_onScroll);
     AssistantLaunch.setListenHandler(null);
     _wake?.onWakeWord = null;
     _flushTimer?.cancel();
@@ -674,7 +697,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               timestamp: DateTime.now().millisecondsSinceEpoch,
             ),
           );
-      if (mounted) _scrollToBottom();
+      // A new message just landed: go to the bottom even if the user was
+      // reading earlier messages.
+      if (mounted) _scrollToBottom(force: true);
       return;
     }
 
@@ -720,7 +745,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           _isThinking = false;
           _currentResponse = '';
         });
-        _scrollToBottom();
+        // The answer has landed: return to the bottom even if the user was
+        // reading earlier messages while it generated.
+        _scrollToBottom(force: true);
       }
     }
   }
@@ -817,7 +844,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           _isThinking = false;
           _currentResponse = '';
         });
-        _scrollToBottom();
+        // The answer has landed: return to the bottom even if the user was
+        // reading earlier messages while it generated.
+        _scrollToBottom(force: true);
       }
     }
   }
@@ -849,7 +878,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final ttsEnabled =
         ref.read(settingsProvider)['tts_enabled'] as bool? ?? true;
     if (ttsEnabled) {
-      await ref.read(textToSpeechProvider.notifier).speak(_currentResponse);
+      // Read the answer, not the reasoning: the `<think>` block is for the
+      // eye, not the ear. Falls back to the whole reply when the answer is
+      // empty (a reply that was all thinking).
+      final answer = splitThinking(_currentResponse).answer;
+      await ref
+          .read(textToSpeechProvider.notifier)
+          .speak(answer.isNotEmpty ? answer : _currentResponse);
     }
 
     // Cypher voice conversation: after a spoken reply, listen again so
@@ -1153,10 +1188,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool force = false}) {
     // Offset 0 is the latest end of the reversed list (the bottom).
+    // Unless forced, stand down while the user is reading earlier messages
+    // — the streaming flush used to yank the list back here every 50 ms.
+    if (!force && _userScrolledAway) return;
+    if (force) _userScrolledAway = false;
     Future.delayed(const Duration(milliseconds: 100), () {
       if (!_scrollController.hasClients) return;
+      if (!force && _userScrolledAway) return;
       _scrollController.animateTo(
         0,
         duration: const Duration(milliseconds: 300),
