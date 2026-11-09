@@ -1743,21 +1743,71 @@ class ModelSelectorDialog extends ConsumerWidget {
   ) async {
     // One file pick at a time: the file picker throws `already_active` if a
     // second pick starts while one is still open (e.g. a double-tap on
-    // "From storage"), and that error hides the first pick's result. Ignore
-    // the extra tap instead.
-    if (_isPickingFile) return;
+    // "From storage"), and that error hides the first pick's result.
+    if (_isPickingFile) {
+      // A pick is already running. Say so instead of silently ignoring the
+      // tap — a big model file takes a while to copy, and silence reads as
+      // a dead button.
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Still working on the last file — give it a moment.'),
+          ),
+        );
+      }
+      return;
+    }
     _isPickingFile = true;
     // Pick any model file from the device and bind it directly — useful
     // for models the catalog does not know about.
+    //
+    // The spinner goes up BEFORE the pick, not after it: the file picker
+    // copies the whole file into the app cache before it answers, and a
+    // 2 GB model takes a while to copy. Without this the screen looks dead
+    // between picking the file and the load starting, and a second tap
+    // lands on a pick that is still running.
+    //
+    // The navigator is captured before the first await, and `closeSpinner`
+    // pops through it exactly once (`spinnerUp`): the inner catch pops and
+    // rethrows, and the outer catch would otherwise pop the model picker
+    // dialog underneath.
+    final nav = Navigator.of(context);
+    var spinnerUp = true;
+    void closeSpinner() {
+      if (!spinnerUp) return;
+      spinnerUp = false;
+      if (nav.canPop()) nav.pop();
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Getting the file ready — a big model can take a minute.'),
+          ],
+        ),
+      ),
+    );
+
     try {
       // Same reason as the image picker: this pause is expected, not the user
       // leaving the app.
       BiometricGate.suppressReLock();
       final result = await FilePicker.pickFiles(type: FileType.any);
-      if (result.isEmpty || !context.mounted) return;
+      if (result.isEmpty || !context.mounted) {
+        closeSpinner();
+        return;
+      }
       final picked = result.first;
 
       if (!picked.name.toLowerCase().endsWith('.gguf')) {
+        closeSpinner();
+        if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -1768,17 +1818,6 @@ class ModelSelectorDialog extends ConsumerWidget {
         return;
       }
 
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: CircularProgressIndicator()),
-      );
-
-      // Captured before the load so the spinner can be closed from the catch
-      // below. Without this, a loadModel that throws leaves a
-      // non-dismissible spinner on screen while the snackbar reports the
-      // failure underneath it — the app looks stuck rather than failed.
-      final nav = Navigator.of(context);
       try {
         // Resolve a loadable path. Some pickers hand back no direct
         // filesystem path (cloud files, some Downloads entries); those
@@ -1812,7 +1851,7 @@ class ModelSelectorDialog extends ConsumerWidget {
           gpuLayers: 0,
           totalRamMb: gpu.totalRamMb,
         );
-        if (nav.canPop()) nav.pop();
+        closeSpinner();
         if (!context.mounted) return;
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1839,10 +1878,11 @@ class ModelSelectorDialog extends ConsumerWidget {
               .updateSetting('active_llm_id', null);
         }
       } catch (e) {
-        if (nav.canPop()) nav.pop();
+        closeSpinner();
         rethrow;
       }
     } catch (e) {
+      closeSpinner();
       Log.w('load from storage failed: $e');
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
