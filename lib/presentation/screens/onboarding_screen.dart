@@ -264,11 +264,42 @@ class _EnteredScreen extends ConsumerStatefulWidget {
 class _EnteredScreenState extends ConsumerState<_EnteredScreen> {
   String? _crashLog;
   String? _engineStatus;
+  String? _startupLog;
 
   @override
   void initState() {
     super.initState();
     _loadCrashLog();
+  }
+
+  /// Reads the phone's own startup log (logcat) and keeps the lines that
+  /// mention the plugin registration. The generated registrant logs a line
+  /// like "Error registering plugin sqflite, ..." when a plugin's startup
+  /// throws — that line is the exact reason the database never loaded, and
+  /// an app can read its own log lines without any extra permission.
+  Future<void> _loadStartupLog() async {
+    setState(() => _startupLog = 'Reading the startup log…');
+    try {
+      final result = await Process.run('logcat', ['-d', '-v', 'brief']);
+      final out = result.stdout as String;
+      final lines = out.split('\n').where((line) {
+        final lower = line.toLowerCase();
+        return lower.contains('sqflite') ||
+            lower.contains('registrant') ||
+            lower.contains('error registering') ||
+            lower.contains('flutter');
+      }).toList();
+      final shown = lines.length > 30
+          ? lines.sublist(lines.length - 30)
+          : lines;
+      if (!mounted) return;
+      setState(() => _startupLog = shown.isEmpty
+          ? 'No matching lines in the startup log.'
+          : shown.join('\n'));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _startupLog = 'Could not read the log: $e');
+    }
   }
 
   Future<void> _loadCrashLog() async {
@@ -326,9 +357,23 @@ class _EnteredScreenState extends ConsumerState<_EnteredScreen> {
               onPressed: _testEngine,
               child: const Text('Test engine'),
             ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: _loadStartupLog,
+              child: const Text('Show startup log'),
+            ),
             if (_engineStatus != null) ...[
               const SizedBox(height: 12),
               Text(_engineStatus!, textAlign: TextAlign.center),
+            ],
+            if (_startupLog != null) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Startup log:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(_startupLog!, style: const TextStyle(fontSize: 12)),
             ],
             if (_crashLog != null) ...[
               const SizedBox(height: 20),
