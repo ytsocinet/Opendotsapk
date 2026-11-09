@@ -55,6 +55,23 @@ throws "unknown pre-tokenizer type: 'minicpm5'" before any weight is touched.
 This script also mirrors the upstream llama.cpp MiniCPM5 support into the
 vendored tree (enum entry, pre-tokenizer regexes, and the "minicpm5" mapping
 with ignore_merges / clean_spaces flags) so those models load.
+
+## Engine update
+
+native_llama 1.0.1's vendored llama.cpp is from April 2026. It predates
+MiniCPM5, Qwen3.5 and other current models, so every new model family needed
+a hand-written patch (MiniCPM5 above) or refused to load at all. This script
+also swaps the whole vendored tree for a pinned current llama.cpp snapshot
+(LLAMA_CPP_COMMIT), so a new GGUF loads without a per-model line. The commit
+is pinned so builds are reproducible; bump it to move to a newer engine.
+
+The swap is done at build time (the CI downloads the tarball and replaces
+ios/shared_cpp with the same subset native_llama vendors), so the fork stays
+small. On the new tree the MiniCPM5 vocab patch above is a no-op — the tree
+already knows "minicpm5" — and it is kept so the script still fixes the
+stock April 2026 tree if the engine update is ever skipped. The one file the
+new tree dropped that the plugin's CMakeLists lists explicitly,
+tools/mtmd/clip.cpp, is removed from that list as part of the swap.
 """
 
 from __future__ import annotations
@@ -62,6 +79,9 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import tarfile
+import tempfile
+import urllib.request
 from pathlib import Path
 
 # ---------------------------------------------------------------- CMakeLists
@@ -265,6 +285,133 @@ def patch_vocab(package_root: Path) -> int:
     return changed
 
 
+# ------------------------------------------------------- Engine update
+
+# Pinned llama.cpp commit (master HEAD as of 2026-11-09). Bump this to move
+# to a newer engine; the commit is pinned so builds are reproducible.
+LLAMA_CPP_COMMIT = "a4d4f2fd4ec85ec6a0a9ece4870416c1b6cc24f5"
+LLAMA_CPP_URL = (
+    "https://github.com/ggerganov/llama.cpp/archive/%s.tar.gz"
+    % LLAMA_CPP_COMMIT
+)
+
+# Top-level entries copied from the new tree into ios/shared_cpp. This is the
+# same subset native_llama vendors (the plugin's shared_cpp is a copy of the
+# llama.cpp repo minus examples/tests/server/app). tools/ is narrowed to mtmd
+# below, the only tool the plugin compiles.
+ENGINE_ENTRIES = (
+    "CMakeLists.txt",
+    "LICENSE",
+    "cmake",
+    "common",
+    "ggml",
+    "include",
+    "licenses",
+    "src",
+    "vendor",
+)
+
+
+def update_engine(package_root: Path) -> bool:
+    """Replace the vendored llama.cpp with a pinned current snapshot.
+
+    native_llama 1.0.1 vendors an April 2026 llama.cpp. That tree predates
+    MiniCPM5, Qwen3.5 and other current models, so every new model family
+    needed a hand-written patch or refused to load. Swapping in a current
+    llama.cpp means a new GGUF loads without a per-model line.
+
+    Returns True when the tree was replaced. Skips (returns False) when the
+    tree already contains the new engine (checked by the MINICPM5 marker in
+    llama-vocab.h, which the April 2026 tree lacks), so repeated runs are
+    cheap. Raises SystemExit if the download or the replacement fails, so CI
+    fails loudly instead of silently shipping the old engine.
+    """
+    shared_cpp = package_root / "ios" / "shared_cpp"
+    vocab_h = shared_cpp / "src" / "llama-vocab.h"
+    if vocab_h.is_file():
+        try:
+            if "MINICPM5" in vocab_h.read_text():
+                print("engine already current (MINICPM5 present); skipping download")
+                return False
+        except OSError:
+            pass
+
+    print("downloading llama.cpp %s ..." % LLAMA_CPP_COMMIT)
+    with tempfile.TemporaryDirectory(prefix="llama-cpp-") as tmp:
+        tmp_path = Path(tmp)
+        archive = tmp_path / "llama.cpp.tar.gz"
+        try:
+            urllib.request.urlretrieve(LLAMA_CPP_URL, archive)
+        except Exception as e:  # noqa: BLE001 - report and fail loudly
+            raise SystemExit(
+                "::error::could not download llama.cpp %s: %s"
+                % (LLAMA_CPP_COMMIT, e)
+            )
+        try:
+            with tarfile.open(archive, "r:gz") as tf:
+                tf.extractall(tmp_path)
+        except Exception as e:  # noqa: BLE001 - report and fail loudly
+            raise SystemExit(
+                "::error::could not extract llama.cpp archive: %s" % e
+            )
+        roots = [p for p in tmp_path.iterdir() if p.is_dir()]
+        if len(roots) != 1:
+            raise SystemExit(
+                "::error::unexpected llama.cpp archive layout: %s" % roots
+            )
+        new_root = roots[0]
+
+        # Replace the vendored tree with the new subset. Delete first so no
+        # stale April 2026 file lingers.
+        if shared_cpp.exists():
+            shutil.rmtree(shared_cpp)
+        shared_cpp.mkdir(parents=True)
+        for entry in ENGINE_ENTRIES:
+            src = new_root / entry
+            if not src.exists():
+                raise SystemExit(
+                    "::error::llama.cpp %s is missing %s; cannot update engine"
+                    % (LLAMA_CPP_COMMIT, entry)
+                )
+            dst = shared_cpp / entry
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+        # tools/ is narrowed to mtmd, the only tool the plugin compiles.
+        mtmd_src = new_root / "tools" / "mtmd"
+        if not mtmd_src.is_dir():
+            raise SystemExit(
+                "::error::llama.cpp %s is missing tools/mtmd" % LLAMA_CPP_COMMIT
+            )
+        shutil.copytree(mtmd_src, shared_cpp / "tools" / "mtmd")
+
+        # The new tree dropped tools/mtmd/clip.cpp; the plugin's CMakeLists
+        # lists it explicitly, so drop the line or CMake fails on a missing
+        # source file. Only when the new tree really lacks it.
+        if not (shared_cpp / "tools" / "mtmd" / "clip.cpp").is_file():
+            cmake = (
+                package_root
+                / "android"
+                / "src"
+                / "main"
+                / "cpp"
+                / "CMakeLists.txt"
+            )
+            if cmake.is_file():
+                lines = cmake.read_text().splitlines(keepends=True)
+                kept = [ln for ln in lines if "tools/mtmd/clip.cpp" not in ln]
+                if len(kept) != len(lines):
+                    cmake.write_text("".join(kept))
+                    print(
+                        "dropped clip.cpp from %s (absent in new engine)"
+                        % cmake
+                    )
+
+    print("engine updated to llama.cpp %s" % LLAMA_CPP_COMMIT)
+    return True
+
+
 def main() -> int:
     args = set(sys.argv[1:])
     require_gpu = "--require-gpu" in args
@@ -329,7 +476,17 @@ def main() -> int:
                 )
             )
 
+        # Engine update (independent of the Vulkan mode): swap the vendored
+        # April 2026 llama.cpp for a pinned current snapshot, so a new GGUF
+        # loads without a per-model patch. On the new tree the MiniCPM5
+        # vocab patch below is a no-op (the tree already knows it).
+        if update_engine(base.parent):
+            patched += 1
+
         # MiniCPM5 tokenizer support (independent of the Vulkan mode).
+        # No-op on the updated engine, which already knows "minicpm5"; kept
+        # so the script still fixes the stock April 2026 tree if the engine
+        # update is ever skipped.
         patched += patch_vocab(base.parent)
 
     if patched == 0:
