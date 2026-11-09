@@ -30,6 +30,7 @@ import '../../data/services/model_manager.dart';
 import '../../data/services/model_preflight.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/router_service.dart';
+import '../../data/services/storage_models_store.dart';
 import '../../data/services/wake_service.dart';
 import '../widgets/biometric_gate.dart';
 import '../../domain/models/local_model.dart';
@@ -1545,7 +1546,9 @@ class ModelSelectorDialog extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return AlertDialog(
       title: const Text('Models'),
-      content: const _ModelPickerBody(),
+      content: _ModelPickerBody(
+        onLoadFile: (path) => _loadModelFile(context, ref, path),
+      ),
       actions: [
         SizedBox(
           width: double.infinity,
@@ -1876,6 +1879,9 @@ class ModelSelectorDialog extends ConsumerWidget {
           await ref
               .read(settingsProvider.notifier)
               .updateSetting('active_llm_id', null);
+          // The file earns a slot in "My models" so Aaron can switch back
+          // to it from the picker instead of picking it from storage again.
+          await StorageModelsStore.instance.add(loadPath);
         }
       } catch (e) {
         closeSpinner();
@@ -1892,6 +1898,85 @@ class ModelSelectorDialog extends ConsumerWidget {
       _isPickingFile = false;
     }
   }
+
+  /// Load a model file that already has a slot (a "My models" row tap).
+  ///
+  /// Same safe load as [_loadModelFromStorage] but with a known path, so
+  /// there is no pick and no copy — just the spinner, the load, and the
+  /// result. On success the file becomes the current model; on failure
+  /// the reason is shown, and a file that is gone loses its slot.
+  Future<void> _loadModelFile(
+    BuildContext context,
+    WidgetRef ref,
+    String loadPath,
+  ) async {
+    final nav = Navigator.of(context);
+    var spinnerUp = true;
+    void closeSpinner() {
+      if (!spinnerUp) return;
+      spinnerUp = false;
+      if (nav.canPop()) nav.pop();
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      // A slot whose file is gone is not an error to load — it is a slot
+      // to forget.
+      if (!File(loadPath).existsSync()) {
+        await StorageModelsStore.instance.remove(loadPath);
+        closeSpinner();
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('That model file is gone — pick it again.'),
+          ),
+        );
+        return;
+      }
+
+      final gpu = await GpuService.detect();
+      final llm = ref.read(llmServiceProvider);
+      final ok = await llm.loadModel(
+        loadPath,
+        gpuLayers: 0,
+        totalRamMb: gpu.totalRamMb,
+      );
+      closeSpinner();
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            ok
+                ? 'Loaded ${ModelPreflight.friendlyName(loadPath.split('/').last)}'
+                : 'Could not load that model'
+                    '${llm.lastLoadError == null ? '' : ': ${llm.lastLoadError}'}',
+          ),
+        ),
+      );
+      if (ok && context.mounted) {
+        await ref
+            .read(settingsProvider.notifier)
+            .updateSetting('model_path', loadPath);
+        await ref
+            .read(settingsProvider.notifier)
+            .updateSetting('active_llm_id', null);
+        await StorageModelsStore.instance.add(loadPath);
+      }
+    } catch (e) {
+      closeSpinner();
+      Log.w('load model file failed: $e');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load that file: $e')),
+      );
+    }
+  }
 }
 
 /// The picker inside [ModelSelectorDialog].
@@ -1901,7 +1986,11 @@ class ModelSelectorDialog extends ConsumerWidget {
 /// be loaded — it does not hot-swap the runtime — which is precisely why the
 /// mismatch warning matters.
 class _ModelPickerBody extends ConsumerStatefulWidget {
-  const _ModelPickerBody();
+  const _ModelPickerBody({required this.onLoadFile});
+
+  /// Load a model file that already has a slot (a "My models" row tap).
+  /// Passed down from [ModelSelectorDialog], which owns the load.
+  final Future<void> Function(String path) onLoadFile;
 
   @override
   ConsumerState<_ModelPickerBody> createState() => _ModelPickerBodyState();
@@ -1937,11 +2026,48 @@ class _ModelPickerBodyState extends ConsumerState<_ModelPickerBody> {
   /// True while [_loadInstalled] is running so the UI can show a loading indicator.
   bool _loading = true;
 
+  /// Models Aaron loaded from storage, most recently loaded first. These
+  /// are his slots — blank until he fills them by loading a file, and
+  /// tapped to switch between them. Read from the store, never from the
+  /// catalog.
+  List<String> _storageModels = [];
+
   @override
   void initState() {
     super.initState();
     _refresh();
     _loadInstalled();
+    _loadStorageModels();
+    // A storage load writes `model_path` when it finishes; the slot for
+    // that file has to appear without closing and reopening the dialog.
+    ref.listen(settingsProvider, (previous, next) {
+      final prevPath = previous?['model_path'] as String?;
+      final nextPath = next['model_path'] as String?;
+      if (prevPath != nextPath) _loadStorageModels();
+    });
+  }
+
+  /// Read the slots, dropping any whose file is gone so the list only
+  /// ever shows models that can actually load.
+  Future<void> _loadStorageModels() async {
+    final stored = await StorageModelsStore.instance.entries();
+    final alive = stored.where((p) => File(p).existsSync()).toList();
+    if (alive.length != stored.length) {
+      for (final p in stored) {
+        if (!alive.contains(p)) {
+          await StorageModelsStore.instance.remove(p);
+        }
+      }
+    }
+    if (!mounted) return;
+    setState(() => _storageModels = alive);
+  }
+
+  static String _fmtBytes(int b) {
+    if (b >= 1 << 30) return '${(b / (1 << 30)).toStringAsFixed(2)} GB';
+    if (b >= 1 << 20) return '${(b / (1 << 20)).round()} MB';
+    if (b <= 0) return '0 MB';
+    return '${(b / (1 << 10)).round()} KB';
   }
 
   Future<void> _loadInstalled() async {
@@ -2134,6 +2260,13 @@ class _ModelPickerBodyState extends ConsumerState<_ModelPickerBody> {
 
             const SizedBox(height: 4),
 
+            // -------------------------------------------------------- my models
+            // Aaron's own slots: blank until he fills them by loading a
+            // file from storage, tapped to switch between them. The
+            // catalog below stays the download list.
+            ..._myModelsSection(context, path, text, scheme),
+            const SizedBox(height: 4),
+
             // ------------------------------------------------ section dividers
             ..._section(context, 'Chat model', ModelKind.llm, text, scheme),
             const SizedBox(height: 4),
@@ -2154,6 +2287,91 @@ class _ModelPickerBodyState extends ConsumerState<_ModelPickerBody> {
             ),
             const SizedBox(height: 8),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Aaron's own slots. Blank until he fills them by loading a file from
+  /// storage; each row loads that file, so he can switch between his
+  /// models without picking from storage again. [currentPath] is the
+  /// loaded file, so its row reads as the one in use.
+  List<Widget> _myModelsSection(
+    BuildContext context,
+    String? currentPath,
+    TextTheme text,
+    ColorScheme scheme,
+  ) {
+    final widgets = <Widget>[
+      _SectionHeader(title: 'My models', textColor: scheme.primary),
+    ];
+    if (_storageModels.isEmpty) {
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Text(
+            'Empty — load a model from storage and it will sit here.',
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ),
+      );
+      return widgets;
+    }
+    for (var i = 0; i < _storageModels.length; i++) {
+      widgets.add(_storageModelRow(_storageModels[i], currentPath, i));
+    }
+    return widgets;
+  }
+
+  Widget _storageModelRow(String filePath, String? currentPath, int index) {
+    final fileName = filePath.split('/').last;
+    final name = ModelPreflight.friendlyName(fileName);
+    final isCurrent = currentPath == filePath;
+    String size = '';
+    try {
+      size = _fmtBytes(File(filePath).lengthSync());
+    } catch (_) {
+      size = '';
+    }
+    return FadeSlideIn(
+      delay: staggerDelay(index),
+      child: Card(
+        child: ListTile(
+          leading: Icon(
+            Icons.description_outlined,
+            color: isCurrent
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+          title: Text(name),
+          subtitle: Text(
+            [
+              if (size.isNotEmpty) size,
+              isCurrent ? 'Loaded' : 'Tap to switch to this model',
+            ].join(' · '),
+          ),
+          trailing: IconButton(
+            icon: const Icon(Icons.close, size: 20),
+            tooltip: 'Remove this slot (the file stays on the phone)',
+            onPressed: () async {
+              await StorageModelsStore.instance.remove(filePath);
+              if (!mounted) return;
+              setState(() => _storageModels.remove(filePath));
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Removed from My models. The file is still on the phone.',
+                  ),
+                ),
+              );
+            },
+          ),
+          onTap: () async {
+            await widget.onLoadFile(filePath);
+            // The load may have pruned a gone file; re-read the slots.
+            await _loadStorageModels();
+          },
         ),
       ),
     );
