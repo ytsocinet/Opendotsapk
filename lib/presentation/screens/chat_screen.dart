@@ -1835,9 +1835,9 @@ class ModelSelectorDialog extends ConsumerWidget {
     } catch (e) {
       Log.w('load from storage failed: $e');
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not load that file.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load that file: $e')),
+      );
     }
   }
 }
