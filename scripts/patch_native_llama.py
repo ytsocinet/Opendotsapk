@@ -412,6 +412,93 @@ def update_engine(package_root: Path) -> bool:
     return True
 
 
+# ------------------------------------------------------- native-lib.cpp glue
+
+# The new engine changed two APIs the plugin's JNI glue calls. The old
+# native-lib.cpp (native_llama 1.0.1, April 2026) does not compile against
+# the new headers, so the script rewrites those two call sites:
+#
+# 1. llama_sampler_init_penalties gained a leading n_vocab argument:
+#    (n_vocab, penalty_last_n, penalty_repeat, penalty_freq, penalty_present).
+#    The old call passed (128, 1.2f, 0.1f, 0.1f); the new call keeps those
+#    four values and prepends the vocab size, which the function already has
+#    as `vocab` (llama_vocab_n_tokens).
+# 2. mtmd_helper_bitmap_init_from_file now takes (ctx, fname, placeholder,
+#    opt) and returns a mtmd_helper_bitmap_wrapper instead of a raw
+#    mtmd_bitmap *. placeholder=false decodes the image, as the old call
+#    did; the bitmap is taken out of the wrapper so the rest of the function
+#    (which pushes it into a vector<mtmd_bitmap *>) is unchanged.
+NATIVE_LIB_PENALTIES_OLD = (
+    "llama_sampler_init_penalties(128, 1.2f, 0.1f, 0.1f)"
+)
+NATIVE_LIB_PENALTIES_NEW = (
+    "llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 128, 1.2f, 0.1f, 0.1f)"
+)
+
+NATIVE_LIB_BITMAP_OLD = (
+    "mtmd_bitmap * bmp = mtmd_helper_bitmap_init_from_file(mtmd_ctx, m_path);"
+)
+NATIVE_LIB_BITMAP_NEW = (
+    "struct mtmd_helper_bitmap_wrapper wrap = mtmd_helper_bitmap_init_from_file(\n"
+    "mtmd_ctx, m_path, false, mtmd_helper_init_opt_default());\n"
+    "mtmd_bitmap * bmp = wrap.bitmap;"
+)
+
+
+def patch_native_lib(package_root: Path) -> int:
+    """Rewrite the two native-lib.cpp call sites for the new engine's APIs.
+
+    Only applies when the vendored tree is the new engine (checked by the
+    MINICPM5 marker, the same marker update_engine uses). On the stock April
+    2026 tree the old calls are correct, so the patch is skipped there.
+    Returns the number of replacements made. Raises SystemExit if a call
+    site is in an unrecognised state, so CI fails loudly.
+    """
+    vocab_h = package_root / "ios" / "shared_cpp" / "src" / "llama-vocab.h"
+    if not vocab_h.is_file() or "MINICPM5" not in vocab_h.read_text():
+        print("old engine; native-lib.cpp calls are correct as-is, skipping")
+        return 0
+
+    native_lib = (
+        package_root / "android" / "src" / "main" / "cpp" / "native-lib.cpp"
+    )
+    if not native_lib.is_file():
+        raise SystemExit(
+            "::error::native-lib.cpp not found under %s" % package_root
+        )
+
+    text = native_lib.read_text()
+    changed = 0
+
+    if NATIVE_LIB_PENALTIES_NEW in text:
+        print("native-lib.cpp penalties call already updated; skipping")
+    elif NATIVE_LIB_PENALTIES_OLD in text:
+        text = text.replace(
+            NATIVE_LIB_PENALTIES_OLD, NATIVE_LIB_PENALTIES_NEW, 1
+        )
+        changed += 1
+        print("patched native-lib.cpp (penalties call, n_vocab first arg)")
+    else:
+        raise SystemExit(
+            "::error::unrecognised penalties call in %s" % native_lib
+        )
+
+    if NATIVE_LIB_BITMAP_NEW in text:
+        print("native-lib.cpp bitmap call already updated; skipping")
+    elif NATIVE_LIB_BITMAP_OLD in text:
+        text = text.replace(NATIVE_LIB_BITMAP_OLD, NATIVE_LIB_BITMAP_NEW, 1)
+        changed += 1
+        print("patched native-lib.cpp (bitmap call, wrapper + defaults)")
+    else:
+        raise SystemExit(
+            "::error::unrecognised bitmap call in %s" % native_lib
+        )
+
+    if changed:
+        native_lib.write_text(text)
+    return changed
+
+
 def main() -> int:
     args = set(sys.argv[1:])
     require_gpu = "--require-gpu" in args
@@ -482,6 +569,10 @@ def main() -> int:
         # vocab patch below is a no-op (the tree already knows it).
         if update_engine(base.parent):
             patched += 1
+
+        # JNI glue for the new engine's changed APIs (penalties + mtmd
+        # bitmap). Skipped on the old tree, where the old calls are correct.
+        patched += patch_native_lib(base.parent)
 
         # MiniCPM5 tokenizer support (independent of the Vulkan mode).
         # No-op on the updated engine, which already knows "minicpm5"; kept
