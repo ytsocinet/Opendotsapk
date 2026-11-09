@@ -386,71 +386,95 @@ def update_engine(package_root: Path) -> bool:
             )
         shutil.copytree(mtmd_src, shared_cpp / "tools" / "mtmd")
 
-        # The new tree dropped tools/mtmd/clip.cpp; the plugin's CMakeLists
-        # lists it explicitly, so drop the line or CMake fails on a missing
-        # source file. Only when the new tree really lacks it.
-        if not (shared_cpp / "tools" / "mtmd" / "clip.cpp").is_file():
-            cmake = (
-                package_root
-                / "android"
-                / "src"
-                / "main"
-                / "cpp"
-                / "CMakeLists.txt"
-            )
-            if cmake.is_file():
-                lines = cmake.read_text().splitlines(keepends=True)
-                kept = [ln for ln in lines if "tools/mtmd/clip.cpp" not in ln]
-                if len(kept) != len(lines):
-                    cmake.write_text("".join(kept))
-                    print(
-                        "dropped clip.cpp from %s (absent in new engine)"
-                        % cmake
-                    )
-
-        # The new tree split mtmd's implementation into separate files
-        # (mtmd-graph.cpp, mtmd-model.cpp, mtmd-subcontext.cpp,
-        # mtmd-helper-gen.cpp) that the plugin's CMakeLists does not list.
-        # Without them the link fails with undefined mtmd_graph / mtmd_model
-        # / mtmd_subcontext symbols. Add the ones the new tree has, right
-        # after the mtmd.cpp line.
-        mtmd_new = (
-            "mtmd-graph.cpp",
-            "mtmd-model.cpp",
-            "mtmd-subcontext.cpp",
-            "mtmd-helper-gen.cpp",
-        )
-        cmake = (
-            package_root
-            / "android"
-            / "src"
-            / "main"
-            / "cpp"
-            / "CMakeLists.txt"
-        )
-        if cmake.is_file():
-            text = cmake.read_text()
-            anchor = '"${SHARED_CPP_DIR}/tools/mtmd/mtmd.cpp"\n'
-            missing = [
-                f
-                for f in mtmd_new
-                if (shared_cpp / "tools" / "mtmd" / f).is_file()
-                and f not in text
-            ]
-            if missing and anchor in text:
-                insert = "".join(
-                    '    "${SHARED_CPP_DIR}/tools/mtmd/%s"\n' % f
-                    for f in missing
-                )
-                text = text.replace(anchor, anchor + insert, 1)
-                cmake.write_text(text)
-                print(
-                    "added %s to %s (new mtmd sources)"
-                    % (", ".join(missing), cmake)
-                )
-
     print("engine updated to llama.cpp %s" % LLAMA_CPP_COMMIT)
     return True
+
+
+def reconcile_cmake(package_root: Path) -> int:
+    """Reconcile the plugin's CMakeLists with the vendored tree on disk.
+
+    Runs on EVERY invocation, whether the engine was just replaced or was
+    already current. This matters because the CI caches the pub-cache: a
+    tree updated by an earlier run can persist while the plugin's CMakeLists
+    still lacks the new tree's files, so gating this on the download would
+    silently skip the fix on the next run.
+
+    Two reconciliations, both driven by what the tree on disk actually has:
+    1. Drop the clip.cpp line when the tree lacks tools/mtmd/clip.cpp (the
+       new tree dropped it; CMake fails on a missing source file).
+    2. Add the new tree's split mtmd sources (mtmd-graph.cpp,
+       mtmd-model.cpp, mtmd-subcontext.cpp, mtmd-helper-gen.cpp) right after
+       the mtmd.cpp line, when the tree has them and the list lacks them.
+       Without them the link fails with undefined mtmd_graph / mtmd_model /
+       mtmd_subcontext symbols.
+    Returns the number of changes made.
+    """
+    shared_cpp = package_root / "ios" / "shared_cpp"
+    cmake = (
+        package_root / "android" / "src" / "main" / "cpp" / "CMakeLists.txt"
+    )
+    if not cmake.is_file():
+        return 0
+
+    changed = 0
+    text = cmake.read_text()
+
+    if not (shared_cpp / "tools" / "mtmd" / "clip.cpp").is_file():
+        lines = text.splitlines(keepends=True)
+        kept = [ln for ln in lines if "tools/mtmd/clip.cpp" not in ln]
+        if len(kept) != len(lines):
+            text = "".join(kept)
+            changed += 1
+            print("dropped clip.cpp from %s (absent in vendored tree)" % cmake)
+
+    mtmd_new = (
+        "mtmd-graph.cpp",
+        "mtmd-model.cpp",
+        "mtmd-subcontext.cpp",
+        "mtmd-helper-gen.cpp",
+    )
+    anchor = '"${SHARED_CPP_DIR}/tools/mtmd/mtmd.cpp"\n'
+    missing = [
+        f
+        for f in mtmd_new
+        if (shared_cpp / "tools" / "mtmd" / f).is_file() and f not in text
+    ]
+    if missing and anchor in text:
+        insert = "".join(
+            '    "${SHARED_CPP_DIR}/tools/mtmd/%s"\n' % f for f in missing
+        )
+        text = text.replace(anchor, anchor + insert, 1)
+        changed += 1
+        print(
+            "added %s to %s (new mtmd sources)"
+            % (", ".join(missing), cmake)
+        )
+
+    # The new tree's mtmd-helper.cpp calls hash_sha256_hex, implemented in
+    # the vendored vendor/hash library (vendor::hash target, built by the
+    # tree's root CMakeLists). The plugin links only `llama`, so the symbol
+    # is undefined at link time. Link vendor::hash too, when the tree has
+    # it. The old tree has no vendor/hash and its mtmd-helper never calls
+    # it, so this is a no-op there.
+    if (
+        (shared_cpp / "vendor" / "hash" / "hash.cpp").is_file()
+        and "vendor::hash" not in text
+    ):
+        link_old = (
+            "target_link_libraries(native_llama llama dl vulkan ${log-lib})"
+        )
+        link_new = (
+            "target_link_libraries(native_llama llama vendor::hash "
+            "dl vulkan ${log-lib})"
+        )
+        if link_old in text:
+            text = text.replace(link_old, link_new, 1)
+            changed += 1
+            print("linked vendor::hash in %s (new mtmd needs it)" % cmake)
+
+    if changed:
+        cmake.write_text(text)
+    return changed
 
 
 # ------------------------------------------------------- native-lib.cpp glue
@@ -610,6 +634,12 @@ def main() -> int:
         # vocab patch below is a no-op (the tree already knows it).
         if update_engine(base.parent):
             patched += 1
+
+        # CMakeLists reconciliation (runs EVERY time, even when the engine
+        # was already current — the CI caches the pub-cache, so a tree
+        # updated by an earlier run can persist while the plugin's
+        # CMakeLists still lacks the new tree's files).
+        patched += reconcile_cmake(base.parent)
 
         # JNI glue for the new engine's changed APIs (penalties + mtmd
         # bitmap). Skipped on the old tree, where the old calls are correct.
