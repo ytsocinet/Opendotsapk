@@ -1258,8 +1258,18 @@ class _ModelsFolderSectionState
         );
         widget.onLoaded();
       } else {
+        // Surface the actual reason, like the chat picker does — a bare
+        // "Could not load that model." hides whether the engine rejected
+        // the file, the file is too big, or the header failed.
+        final reason = LlmService.getInstance().lastLoadError;
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not load that model.')),
+          SnackBar(
+            content: Text(
+              'Could not load that model'
+              '${reason == null ? '' : ': $reason'}',
+            ),
+          ),
         );
       }
     } finally {
