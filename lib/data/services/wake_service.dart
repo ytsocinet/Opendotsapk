@@ -23,6 +23,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:wake_word_flutter/wake_word_flutter.dart';
 
 import '../../core/utils/log.dart';
@@ -177,6 +178,20 @@ class WakeService {
         'Notifications are off — wake mode needs them to show the '
         'listening notice. Turn on notifications for Clawzilla in '
         'Settings and try again.',
+      );
+    }
+    // Microphone permission (Android 14+): a microphone-type foreground
+    // service cannot start without RECORD_AUDIO. Without this check the
+    // service's startForeground throws, the service stops itself, and
+    // the start times out after 5 seconds with no useful message.
+    var mic = await Permission.microphone.status;
+    if (!mic.isGranted) {
+      mic = await Permission.microphone.request();
+    }
+    if (!mic.isGranted) {
+      throw StateError(
+        'Microphone permission is off — wake mode needs it to listen. '
+        'Turn on the microphone for Clawzilla in Settings and try again.',
       );
     }
     FlutterForegroundTask.init(
