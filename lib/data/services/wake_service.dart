@@ -165,6 +165,15 @@ class WakeService {
   }
 
   Future<void> _startForegroundService() async {
+    // A previous session can leave the native service running while this
+    // isolate's flag is false (the service outlives the app). Starting
+    // again then throws ServiceAlreadyStartedException. Adopt the
+    // running service instead of failing — the detector is loaded fresh
+    // below, the service only keeps the notification and process alive.
+    if (await FlutterForegroundTask.isRunningService) {
+      _serviceRunning = true;
+      return;
+    }
     // Notification permission first (Android 13+): without it the
     // foreground notification cannot show and the service cannot start.
     // The result is checked — a denied prompt used to fall through and
