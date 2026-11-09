@@ -99,7 +99,7 @@ class _MemoryListState extends ConsumerState<MemoryList> {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final memories = _filtered;
     return Column(
       children: [
