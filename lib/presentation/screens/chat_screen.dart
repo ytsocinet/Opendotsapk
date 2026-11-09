@@ -63,18 +63,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _isThinking = false;
   String _currentResponse = '';
 
-  /// Special tokens the model may emit as ordinary text (Llama's
-  /// `<|eot_id|>`, Qwen's `<|im_end|>` / `<|endoftext|>`, Gemma's
-  /// `<end_of_turn>` / `<start_of_turn>`, header tokens). They are
+  /// Special tokens the model may emit as ordinary text. They are
   /// end-of-turn markers for the machine, not words for the user —
-  /// stripped once when a reply finishes. Only the known marker
-  /// strings are stripped, so ordinary text in angle brackets survives.
-  static final _specialToken = RegExp(
-    r'<\|[^|>]+\|>|<end_of_turn>|<start_of_turn>|<end_of_message>|<end_of_text>',
+  /// stripped once when a reply finishes, so no token from any model
+  /// ever shows up in a reply.
+  ///
+  /// Three layers. Pipe-delimited tokens (`<|eot_id|>`,
+  /// `<|im_end|>`, any `<|...|>`) are stripped anywhere — no
+  /// legitimate text uses that shape. The known bare stop tokens
+  /// (Gemma's `<end_of_turn>` / `<start_of_turn>`, `<bos>` / `<eos>` /
+  /// `<s>` / `</s>`, Llama 2's `[INST]` / `<<SYS>>`) are stripped
+  /// anywhere too. And anything token-like still sitting at the very
+  /// start or end of the reply is stripped in a loop, which is where
+  /// a new model's stop token lands even when its name is one we have
+  /// never seen. The middle of a reply is left alone for bare
+  /// `<...>` — a code answer can legitimately contain `<String>` or
+  /// `<div>`, and stripping those would corrupt it.
+  static final _pipeToken = RegExp(r'<\|[^|>]+\|>');
+  static final _bareStopToken = RegExp(
+    r'<end_of_turn>|<start_of_turn>|<end_of_message>|<end_of_text>|'
+    r'<begin_of_text>|<end_of_sentence>|<begin_of_sentence>|'
+    r'<bos>|<eos>|<pad>|<unk>|<sep>|<cls>|<mask>|<s>|</s>|'
+    r'\[INST\]|\[/INST\]|<<SYS>>|<\</SYS>>',
   );
+  static final _leadingToken =
+      RegExp(r'^(<\|[^|>]+\|>|</?[A-Za-z][A-Za-z0-9_]*>)');
+  static final _trailingToken =
+      RegExp(r'(<\|[^|>]+\|>|</?[A-Za-z][A-Za-z0-9_]*>)$');
 
-  static String _stripSpecialTokens(String text) =>
-      text.replaceAll(_specialToken, '').trimRight();
+  static String _stripSpecialTokens(String text) {
+    var out = text.trim();
+    out = out.replaceAll(_pipeToken, '');
+    out = out.replaceAll(_bareStopToken, '');
+    var prev = '';
+    while (prev != out) {
+      prev = out;
+      out = out.replaceFirst(_leadingToken, '').trimLeft();
+      out = out.replaceFirst(_trailingToken, '').trimRight();
+    }
+    return out.trimRight();
+  }
 
   /// Local file paths of images queued for the next turn.
   ///
