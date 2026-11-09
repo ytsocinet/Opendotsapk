@@ -64,10 +64,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   String _currentResponse = '';
 
   /// Special tokens the model may emit as ordinary text (Llama's
-  /// `<|eot_id|>`, Qwen's `<|im_end|>` / `<|endoftext|>`, header
-  /// tokens). They are end-of-turn markers for the machine, not
-  /// words for the user — stripped once when a reply finishes.
-  static final _specialToken = RegExp(r'<\|[^|>]+\|>');
+  /// `<|eot_id|>`, Qwen's `<|im_end|>` / `<|endoftext|>`, Gemma's
+  /// `<end_of_turn>` / `<start_of_turn>`, header tokens). They are
+  /// end-of-turn markers for the machine, not words for the user —
+  /// stripped once when a reply finishes. Only the known marker
+  /// strings are stripped, so ordinary text in angle brackets survives.
+  static final _specialToken = RegExp(
+    r'<\|[^|>]+\|>|<end_of_turn>|<start_of_turn>|<end_of_message>|<end_of_text>',
+  );
 
   static String _stripSpecialTokens(String text) =>
       text.replaceAll(_specialToken, '').trimRight();
