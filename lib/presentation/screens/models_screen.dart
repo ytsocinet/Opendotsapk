@@ -31,6 +31,7 @@ import '../../data/services/gpu_service.dart';
 import '../../data/services/llm_service.dart';
 import '../../data/services/model_manager.dart';
 import '../../data/services/model_preflight.dart';
+import '../../data/services/storage_models_store.dart';
 import '../../domain/models/local_model.dart';
 import '../providers/providers.dart';
 import '../widgets/screen_empty_state.dart';
@@ -309,6 +310,7 @@ class _ModelsScreenState extends ConsumerState<ModelsScreen> {
         children: [
           _storageCard(theme, scheme),
           _ModelsFolderSection(onLoaded: _loadStorage),
+          _MyModelsSection(onLoaded: _loadStorage),
           if (!_anythingInstalled) ...[
             const SizedBox(height: 4),
             _firstRunCard(),
@@ -1201,17 +1203,32 @@ class _ModelsFolderSectionState
     try {
       final dir = Directory(folder);
       final entries = await dir.list().toList();
+      // Every non-hidden file, not just .gguf ones: a model file that lost
+      // its extension (Qwen3.5-2B) is still a loadable GGUF, and a file
+      // that is not one shows its header error instead of a Load button.
+      // The preflight check below decides which is which.
       final files = entries
           .whereType<File>()
-          .where((f) => f.path.toLowerCase().endsWith('.gguf'))
+          .where((f) => !f.path.split('/').last.startsWith('.'))
           .toList()
         ..sort((a, b) => a.path.compareTo(b.path));
       final out = <_FolderFile>[];
       for (final f in files) {
-        final info = await ModelPreflight.inspect(f.path);
-        final error =
-            info == null ? await ModelPreflight.verify(f.path) : null;
-        out.add(_FolderFile(path: f.path, info: info, error: error));
+        // One unreadable file must not kill the whole listing.
+        try {
+          final info = await ModelPreflight.inspect(f.path);
+          final error =
+              info == null ? await ModelPreflight.verify(f.path) : null;
+          out.add(_FolderFile(path: f.path, info: info, error: error));
+        } catch (_) {
+          out.add(
+            _FolderFile(
+              path: f.path,
+              info: null,
+              error: 'Could not read this file.',
+            ),
+          );
+        }
       }
       return out;
     } catch (_) {
@@ -1379,6 +1396,235 @@ class _ModelsFolderSectionState
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The user's own models, as custom slots.
+///
+/// The same slots the chat picker shows under "My models", here on the
+/// Models screen: every model loaded from storage earns a slot (most
+/// recent first, max 8), tap one to load it, X removes just the slot —
+/// the file stays on the phone. The slots live in [StorageModelsStore]
+/// (the phone's database), so they show up even when the folder listing
+/// above cannot read the folder, and a slot survives a restart.
+class _MyModelsSection extends ConsumerStatefulWidget {
+  const _MyModelsSection({required this.onLoaded});
+
+  final VoidCallback onLoaded;
+
+  @override
+  ConsumerState<_MyModelsSection> createState() => _MyModelsSectionState();
+}
+
+class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
+  List<String> _storageModels = [];
+  String? _loadingPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStorageModels();
+  }
+
+  Future<void> _loadStorageModels() async {
+    final all = await StorageModelsStore.instance.entries();
+    final kept = <String>[];
+    for (final p in all) {
+      if (File(p).existsSync()) {
+        kept.add(p);
+      } else {
+        await StorageModelsStore.instance.remove(p);
+      }
+    }
+    if (!mounted) return;
+    setState(() => _storageModels = kept);
+  }
+
+  Future<void> _loadPath(String path) async {
+    setState(() => _loadingPath = path);
+    try {
+      final ram = await GpuService.detect();
+      final ok = await LlmService.getInstance().loadModel(
+        path,
+        totalRamMb: ram.totalRamMb,
+      );
+      if (!mounted) return;
+      if (ok) {
+        await ref
+            .read(settingsProvider.notifier)
+            .updateSetting('model_path', path);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Loaded ${ModelPreflight.friendlyName(path.split('/').last)}',
+            ),
+          ),
+        );
+        widget.onLoaded();
+        _loadStorageModels();
+      } else {
+        final reason = LlmService.getInstance().lastLoadError;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Could not load that model'
+              '${reason == null ? '' : ': $reason'}',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingPath = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final currentPath =
+        ref.watch(settingsProvider)['model_path'] as String?;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'My models',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Models you loaded from storage. Tap one to load it.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (_storageModels.isEmpty)
+                Text(
+                  'Empty — load a model from storage and it will sit here.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                )
+              else
+                for (var i = 0; i < _storageModels.length; i++) ...[
+                  const Divider(height: 16),
+                  _MyModelRow(
+                    filePath: _storageModels[i],
+                    isCurrent: currentPath == _storageModels[i],
+                    loading: _loadingPath == _storageModels[i],
+                    onLoad: () => _loadPath(_storageModels[i]),
+                    onRemove: () async {
+                      await StorageModelsStore.instance
+                          .remove(_storageModels[i]);
+                      if (!mounted) return;
+                      setState(
+                        () => _storageModels.removeAt(i),
+                      );
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Removed from My models. The file is still on the phone.',
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One "My models" slot: the file name, its size, whether it is the
+/// loaded one, and an X that removes just the slot.
+class _MyModelRow extends StatelessWidget {
+  const _MyModelRow({
+    required this.filePath,
+    required this.isCurrent,
+    required this.loading,
+    required this.onLoad,
+    required this.onRemove,
+  });
+
+  final String filePath;
+  final bool isCurrent;
+  final bool loading;
+  final VoidCallback onLoad;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final fileName = filePath.split('/').last;
+    final name = ModelPreflight.friendlyName(fileName);
+    String size = '';
+    try {
+      size = _ModelsScreenState._fmtBytes(File(filePath).lengthSync());
+    } catch (_) {
+      size = '';
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(
+            Icons.description_outlined,
+            size: 18,
+            color: isCurrent ? scheme.primary : scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name, style: theme.textTheme.bodyMedium),
+              const SizedBox(height: 2),
+              Text(
+                [
+                  if (size.isNotEmpty) size,
+                  isCurrent ? 'Loaded' : 'Tap to load this model',
+                ].join(' · '),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        if (loading)
+          const Padding(
+            padding: EdgeInsets.all(10),
+            child: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        else ...[
+          TextButton(onPressed: onLoad, child: const Text('Load')),
+          IconButton(
+            icon: const Icon(Icons.close, size: 20),
+            tooltip: 'Remove this slot (the file stays on the phone)',
+            onPressed: onRemove,
+          ),
+        ],
+      ],
     );
   }
 }
