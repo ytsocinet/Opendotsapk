@@ -76,6 +76,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// local path is stopped through `LlmService.stop()` instead.
   StreamSubscription<String>? _cloudSub;
 
+  /// The completer `_sendViaCloud` awaits. Held so Stop can release the wait:
+  /// cancelling the subscription alone never completes it (cancel does not
+  /// fire onDone/onError), so without this the cloud turn would hang at
+  /// `await completer.future` forever and the Stop button would stick.
+  Completer<void>? _cloudCompleter;
+
   /// Set when the user asks to stop. The token loop checks it and **keeps the
   /// partial text** rather than throwing away a half-finished reply.
   bool _stopRequested = false;
@@ -262,6 +268,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _wake?.onWakeWord = null;
     _flushTimer?.cancel();
     _cloudSub?.cancel();
+    if (_cloudCompleter != null && !_cloudCompleter!.isCompleted) {
+      _cloudCompleter!.complete();
+    }
     _controller.dispose();
     _composerFocus.dispose();
     _scrollController.dispose();
@@ -762,6 +771,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // Listen through a subscription rather than `await for` so Stop has
       // something it can actually cancel.
       final completer = Completer<void>();
+      _cloudCompleter = completer;
       _cloudSub = cloud
           .stream(
             provider: provider,
@@ -790,6 +800,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       } finally {
         await _cloudSub?.cancel();
         _cloudSub = null;
+        _cloudCompleter = null;
       }
 
       _flushNow();
@@ -998,6 +1009,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // through the service, which closes the stream the loop is awaiting.
     await _cloudSub?.cancel();
     _cloudSub = null;
+    // Cancelling the subscription does not complete the completer that
+    // `_sendViaCloud` is awaiting, so release it here — otherwise the cloud
+    // turn hangs at `await completer.future` and the Stop button sticks.
+    if (_cloudCompleter != null && !_cloudCompleter!.isCompleted) {
+      _cloudCompleter!.complete();
+    }
     try {
       await ref.read(llmServiceProvider).stop();
     } catch (e) {
