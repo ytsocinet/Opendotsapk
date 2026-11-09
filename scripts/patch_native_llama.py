@@ -408,6 +408,47 @@ def update_engine(package_root: Path) -> bool:
                         % cmake
                     )
 
+        # The new tree split mtmd's implementation into separate files
+        # (mtmd-graph.cpp, mtmd-model.cpp, mtmd-subcontext.cpp,
+        # mtmd-helper-gen.cpp) that the plugin's CMakeLists does not list.
+        # Without them the link fails with undefined mtmd_graph / mtmd_model
+        # / mtmd_subcontext symbols. Add the ones the new tree has, right
+        # after the mtmd.cpp line.
+        mtmd_new = (
+            "mtmd-graph.cpp",
+            "mtmd-model.cpp",
+            "mtmd-subcontext.cpp",
+            "mtmd-helper-gen.cpp",
+        )
+        cmake = (
+            package_root
+            / "android"
+            / "src"
+            / "main"
+            / "cpp"
+            / "CMakeLists.txt"
+        )
+        if cmake.is_file():
+            text = cmake.read_text()
+            anchor = '"${SHARED_CPP_DIR}/tools/mtmd/mtmd.cpp"\n'
+            missing = [
+                f
+                for f in mtmd_new
+                if (shared_cpp / "tools" / "mtmd" / f).is_file()
+                and f not in text
+            ]
+            if missing and anchor in text:
+                insert = "".join(
+                    '    "${SHARED_CPP_DIR}/tools/mtmd/%s"\n' % f
+                    for f in missing
+                )
+                text = text.replace(anchor, anchor + insert, 1)
+                cmake.write_text(text)
+                print(
+                    "added %s to %s (new mtmd sources)"
+                    % (", ".join(missing), cmake)
+                )
+
     print("engine updated to llama.cpp %s" % LLAMA_CPP_COMMIT)
     return True
 
