@@ -6,11 +6,38 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodChannel
+
+// Every Android plugin, registered explicitly (see registerPlugins below).
+import com.baseflow.geolocator.GeolocatorPlugin
+import com.baseflow.permissionhandler.PermissionHandlerPlugin
+import com.csdcorp.speech_to_text.SpeechToTextPlugin
+import com.eyedeadevelopment.fluttertts.FlutterTtsPlugin
+import com.github.dart_lang.jni.JniPlugin
+import com.github.dart_lang.jni_flutter.JniFlutterPlugin
+import com.it_nomads.fluttersecurestorage.FlutterSecureStoragePlugin
+import com.kasem.receive_sharing_intent.ReceiveSharingIntentPlugin
+import com.llfbandit.record.RecordPlugin
+import com.masicai.flutteronnxruntime.FlutterOnnxruntimePlugin
+import com.mr.flutter.plugin.filepicker.FilePickerPlugin
+import com.pravera.flutter_foreground_task.FlutterForegroundTaskPlugin
+import com.tekartik.sqflite.SqflitePlugin
+import com.timebox.native_llama.NativeLlamaPlugin
+import dev.fluttercommunity.plus.device_info.DeviceInfoPlusPlugin
+import dev.fluttercommunity.plus.packageinfo.PackageInfoPlugin
+import dev.fluttercommunity.plus.share.SharePlusPlugin
+import dev.fluttercommunity.workmanager.WorkmanagerPlugin
+import io.flutter.plugins.flutter_plugin_android_lifecycle.FlutterAndroidLifecyclePlugin
+import io.flutter.plugins.imagepicker.ImagePickerPlugin
+import io.flutter.plugins.localauth.LocalAuthPlugin
+import io.flutter.plugins.sharedpreferences.SharedPreferencesPlugin
+import io.flutter.plugins.webviewflutter.WebViewFlutterPlugin
 
 /**
  * Main activity for LocalMind.
@@ -114,7 +141,16 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
+        // Do NOT call super.configureFlutterEngine: the generated registrant
+        // aborts the whole registration when a single plugin throws an Error
+        // (it only catches Exception per plugin), leaving every later plugin
+        // unregistered. Seen Nov 8, 2026: the onnxruntime plugin's native
+        // load threw, so sqflite (and everything after it) never registered,
+        // the database was dead, settings never saved, and the app crashed
+        // on the real screens. Register each plugin here instead, one
+        // try/catch(Throwable) each, so a bad plugin can't block the rest.
+        // Keep this list in sync with the pubspec's Android plugins.
+        registerPlugins(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, secureScreenChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -199,6 +235,53 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /**
+     * Registers every Android plugin explicitly, one try/catch(Throwable)
+     * each, in the same order the generated registrant used. A plugin whose
+     * native load fails (e.g. onnxruntime's) is logged and skipped instead
+     * of aborting the rest — that abort is what killed the database in
+     * Nov 2026. If a plugin is added to or removed from pubspec.yaml,
+     * update this list to match.
+     */
+    private fun registerPlugins(flutterEngine: FlutterEngine) {
+        val plugins = listOf<FlutterPlugin>(
+            FilePickerPlugin(),
+            DeviceInfoPlusPlugin(),
+            FlutterForegroundTaskPlugin(),
+            FlutterOnnxruntimePlugin(),
+            FlutterAndroidLifecyclePlugin(),
+            FlutterSecureStoragePlugin(),
+            FlutterTtsPlugin(),
+            GeolocatorPlugin(),
+            ImagePickerPlugin(),
+            JniPlugin(),
+            JniFlutterPlugin(),
+            LocalAuthPlugin(),
+            NativeLlamaPlugin(),
+            PackageInfoPlugin(),
+            PermissionHandlerPlugin(),
+            ReceiveSharingIntentPlugin(),
+            RecordPlugin(),
+            SharePlusPlugin(),
+            SharedPreferencesPlugin(),
+            SpeechToTextPlugin(),
+            SqflitePlugin(),
+            WebViewFlutterPlugin(),
+            WorkmanagerPlugin(),
+        )
+        for (plugin in plugins) {
+            try {
+                flutterEngine.plugins.add(plugin)
+            } catch (t: Throwable) {
+                Log.e(
+                    "ClawzillaPlugins",
+                    "Failed to register ${plugin.javaClass.name}",
+                    t,
+                )
+            }
+        }
     }
 
     /** Open a connected app by package name. False when it has no launcher. */
