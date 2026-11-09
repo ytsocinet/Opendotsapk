@@ -91,10 +91,17 @@
             </intent-filter>
         </service>
 
-        <!-- NOTE (carried over from the original): the foreground service is
-             declared by the flutter_foreground_task plugin's own manifest.
-             A build-time merged-manifest check is still needed: plugins can
-             re-add permissions this draft removes. -->
+        <!-- flutter_foreground_task does NOT declare its service — the host
+             app must. Android 14+ requires android:foregroundServiceType
+             to be declared, and ours is microphone (wake-word listening).
+             Without this the service silently never starts: the toggle
+             flips on, then back off, with "foreground service did not
+             start". A build-time merged-manifest check is still needed:
+             plugins can re-add permissions this draft removes. -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
 
         <meta-data
             android:name="flutterEmbedding"

@@ -166,9 +166,18 @@ class WakeService {
   Future<void> _startForegroundService() async {
     // Notification permission first (Android 13+): without it the
     // foreground notification cannot show and the service cannot start.
-    final perm = await FlutterForegroundTask.checkNotificationPermission();
+    // The result is checked — a denied prompt used to fall through and
+    // fail later with a cryptic "foreground service did not start".
+    var perm = await FlutterForegroundTask.checkNotificationPermission();
     if (perm != NotificationPermission.granted) {
-      await FlutterForegroundTask.requestNotificationPermission();
+      perm = await FlutterForegroundTask.requestNotificationPermission();
+    }
+    if (perm != NotificationPermission.granted) {
+      throw StateError(
+        'Notifications are off — wake mode needs them to show the '
+        'listening notice. Turn on notifications for Clawzilla in '
+        'Settings and try again.',
+      );
     }
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
@@ -189,13 +198,19 @@ class WakeService {
         allowWifiLock: false,
       ),
     );
-    await FlutterForegroundTask.startService(
+    final startResult = await FlutterForegroundTask.startService(
       serviceId: 256,
       serviceTypes: [ForegroundServiceTypes.microphone],
       notificationTitle: 'Cypher is listening',
       notificationText: 'Say "Hey Cypher" to talk',
       callback: cypherWakeTaskCallback,
     );
+    // startService reports failure as a result, not a throw — read it,
+    // or the real reason (e.g. a service timeout) is hidden behind the
+    // generic check below.
+    if (startResult is ServiceRequestFailure) {
+      throw StateError('foreground service failed: ${startResult.error}');
+    }
     if (!await FlutterForegroundTask.isRunningService) {
       throw StateError('foreground service did not start');
     }
