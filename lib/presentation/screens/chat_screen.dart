@@ -1537,6 +1537,10 @@ class _HeaderPill extends StatelessWidget {
 class ModelSelectorDialog extends ConsumerWidget {
   const ModelSelectorDialog({super.key});
 
+  /// One file pick at a time across every showing of this dialog (see
+  /// [_loadModelFromStorage]).
+  static bool _isPickingFile = false;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return AlertDialog(
@@ -1737,6 +1741,12 @@ class ModelSelectorDialog extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
   ) async {
+    // One file pick at a time: the file picker throws `already_active` if a
+    // second pick starts while one is still open (e.g. a double-tap on
+    // "From storage"), and that error hides the first pick's result. Ignore
+    // the extra tap instead.
+    if (_isPickingFile) return;
+    _isPickingFile = true;
     // Pick any model file from the device and bind it directly — useful
     // for models the catalog does not know about.
     try {
@@ -1838,6 +1848,8 @@ class ModelSelectorDialog extends ConsumerWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not load that file: $e')),
       );
+    } finally {
+      _isPickingFile = false;
     }
   }
 }
