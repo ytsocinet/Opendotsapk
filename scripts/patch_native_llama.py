@@ -46,6 +46,15 @@ Usage:
     python3 scripts/patch_native_llama.py --gpu      # re-enable Vulkan if glslc is present
     python3 scripts/patch_native_llama.py --cpu      # force CPU-only (same as default)
     python3 scripts/patch_native_llama.py --require-gpu  # fail if glslc absent
+
+## MiniCPM5 tokenizer
+
+native_llama 1.0.1's vendored llama.cpp predates MiniCPM5 (Sept 2026), so its
+BPE pre-tokenizer list has no "minicpm5" entry and loading a MiniCPM5 GGUF
+throws "unknown pre-tokenizer type: 'minicpm5'" before any weight is touched.
+This script also mirrors the upstream llama.cpp MiniCPM5 support into the
+vendored tree (enum entry, pre-tokenizer regexes, and the "minicpm5" mapping
+with ignore_merges / clean_spaces flags) so those models load.
 """
 
 from __future__ import annotations
@@ -161,6 +170,101 @@ def patch_gradle(path: Path, enable_gpu: bool) -> bool:
     return True
 
 
+# ------------------------------------------------------- MiniCPM5 tokenizer
+
+VOCAB_H_ANCHOR = "    LLAMA_VOCAB_PRE_TYPE_GEMMA4          = 50,\n"
+VOCAB_H_INSERT = "    LLAMA_VOCAB_PRE_TYPE_MINICPM5         = 51,\n"
+
+VOCAB_CASE_ANCHOR = (
+    "                byte_encode = false; // uses raw UTF-8, not GPT-2 byte encoding\n"
+    "                break;\n"
+    "            default:\n"
+)
+
+# Upstream llama.cpp MINICPM5 pre-tokenizer regexes (from tokenizer.json,
+# openbmb/MiniCPM5-1B). byte_encode stays true (the default) — upstream's
+# MINICPM5 case does not touch it.
+VOCAB_CASE_INSERT = r"""            case LLAMA_VOCAB_PRE_TYPE_MINICPM5:
+                regex_exprs = {
+                    // original regex from tokenizer.json (openbmb/MiniCPM5-1B)
+                    "\\p{N}{1,3}",
+                    // "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}+| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+                    "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}+| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+                };
+                break;
+"""
+
+VOCAB_MAP_ANCHOR = (
+    '            } else if (tokenizer_pre == "default") {\n'
+    "                pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;\n"
+    "            } else if (\n"
+)
+
+VOCAB_MAP_INSERT = (
+    '            } else if (tokenizer_pre == "default") {\n'
+    "                pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;\n"
+    '            } else if (tokenizer_pre == "minicpm5") {\n'
+    "                pre_type = LLAMA_VOCAB_PRE_TYPE_MINICPM5;\n"
+    "                ignore_merges = true;\n"
+    "                clean_spaces = false;\n"
+    "            } else if (\n"
+)
+
+
+def patch_vocab(package_root: Path) -> int:
+    """Teach the vendored llama.cpp the MiniCPM5 pre-tokenizer.
+
+    Returns the number of files changed. Raises SystemExit if a vocab file
+    is missing or an anchor no longer matches, so CI fails loudly instead
+    of silently shipping an unpatched engine.
+    """
+    vocab_h = package_root / "ios" / "shared_cpp" / "src" / "llama-vocab.h"
+    vocab_cpp = package_root / "ios" / "shared_cpp" / "src" / "llama-vocab.cpp"
+    changed = 0
+
+    if not vocab_h.is_file() or not vocab_cpp.is_file():
+        raise SystemExit(
+            "::error::llama-vocab.h/.cpp not found under %s; cannot apply MiniCPM5 patch"
+            % package_root
+        )
+
+    text = vocab_h.read_text()
+    if "LLAMA_VOCAB_PRE_TYPE_MINICPM5" not in text:
+        if VOCAB_H_ANCHOR not in text:
+            raise SystemExit(
+                "::error::unrecognised vocab enum anchor in %s" % vocab_h
+            )
+        text = text.replace(VOCAB_H_ANCHOR, VOCAB_H_ANCHOR + VOCAB_H_INSERT, 1)
+        vocab_h.write_text(text)
+        changed += 1
+        print("patched %s (added MINICPM5 enum)" % vocab_h)
+
+    text = vocab_cpp.read_text()
+    if "LLAMA_VOCAB_PRE_TYPE_MINICPM5" not in text:
+        if VOCAB_CASE_ANCHOR not in text:
+            raise SystemExit(
+                "::error::unrecognised vocab regex anchor in %s" % vocab_cpp
+            )
+        text = text.replace(
+            VOCAB_CASE_ANCHOR,
+            "                byte_encode = false; // uses raw UTF-8, not GPT-2 byte encoding\n"
+            "                break;\n"
+            + VOCAB_CASE_INSERT
+            + "            default:\n",
+            1,
+        )
+        if VOCAB_MAP_ANCHOR not in text:
+            raise SystemExit(
+                "::error::unrecognised vocab mapping anchor in %s" % vocab_cpp
+            )
+        text = text.replace(VOCAB_MAP_ANCHOR, VOCAB_MAP_INSERT, 1)
+        vocab_cpp.write_text(text)
+        changed += 1
+        print("patched %s (added MINICPM5 regex + mapping)" % vocab_cpp)
+
+    return changed
+
+
 def main() -> int:
     args = set(sys.argv[1:])
     require_gpu = "--require-gpu" in args
@@ -224,6 +328,9 @@ def main() -> int:
                     GRADLE_FLAG,
                 )
             )
+
+        # MiniCPM5 tokenizer support (independent of the Vulkan mode).
+        patched += patch_vocab(base.parent)
 
     if patched == 0:
         print("native_llama already in the requested state; nothing to do")
