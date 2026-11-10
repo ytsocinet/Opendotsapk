@@ -29,7 +29,19 @@ import '../screens/browser_screen.dart';
 /// that chats first, then thinks) is kept as part of the answer.
 ({String thinking, String answer}) splitThinking(String content) {
   final open = content.indexOf('<think>');
-  if (open < 0) return (thinking: '', answer: content);
+  if (open < 0) {
+    // No opener. A lone closer still marks where the reasoning ends:
+    // everything before it is thinking, everything after is the answer.
+    // This covers replies whose opening tag was stripped before the
+    // stripper learned to preserve it, and models that only emit the
+    // closer.
+    final loneClose = content.indexOf('</think>');
+    if (loneClose < 0) return (thinking: '', answer: content);
+    return (
+      thinking: content.substring(0, loneClose).trim(),
+      answer: content.substring(loneClose + 8).trim(),
+    );
+  }
   final close = content.indexOf('</think>', open + 7);
   final before = content.substring(0, open).trim();
   if (close < 0) {

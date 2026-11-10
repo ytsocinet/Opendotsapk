@@ -87,9 +87,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     r'\[INST\]|\[/INST\]|<<SYS>>|<\</SYS>>',
   );
   static final _leadingToken =
-      RegExp(r'^(<\|[^|>]+\|>|</?[A-Za-z][A-Za-z0-9_]*>)');
+      RegExp(r'^(<\|[^|>]+\|>|</?(?!think>)[A-Za-z][A-Za-z0-9_]*>)');
   static final _trailingToken =
-      RegExp(r'(<\|[^|>]+\|>|</?[A-Za-z][A-Za-z0-9_]*>)$');
+      RegExp(r'(<\|[^|>]+\|>|</?(?!think>)[A-Za-z][A-Za-z0-9_]*>)$');
+
+  /// `<think>` and `</think>` are deliberately NOT stripped above: they are
+  /// structural, not special tokens. `splitThinking` needs both tags to hide
+  /// the model's reasoning in its collapsible section, and the stripper
+  /// used to eat a leading `<think>` — leaving the thinking text and a
+  /// bare `</think>` visible inline in the answer.
 
   static String _stripSpecialTokens(String text) {
     var out = text.trim();
