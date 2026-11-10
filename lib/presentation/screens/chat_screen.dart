@@ -381,23 +381,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                       itemCount: messages.length + (_isThinking ? 1 : 0),
                       itemBuilder: (context, index) {
-                        if (index == messages.length && _isThinking) {
+                        // The live thinking indicator sits at index 0 — the
+                        // bottom of the reversed list, directly above the
+                        // composer, exactly where the new reply will land.
+                        // It used to be appended at the end of the
+                        // newest-first list, which the reversed list
+                        // renders at the TOP of the chat, far from the
+                        // response it belongs to.
+                        if (index == 0 && _isThinking) {
                           return const ThinkingBubble();
                         }
-                        // Chronological order in a reversed list: the newest
-                        // message is last and sits at the bottom, like every
-                        // chat app — offset 0 is the latest end, so "scroll
-                        // to the latest" is a no-op instead of a jump to the
-                        // far end.
-                        final message = messages[index];
+                        // Messages are newest-first, so the bubble at
+                        // index 0 shifts every message by one while a
+                        // reply is generating.
+                        final messageIndex =
+                            _isThinking ? index - 1 : index;
+                        final message = messages[messageIndex];
                         return FadeSlideIn(
-                          // Stagger capped hard: the index runs oldest-first, so
-                          // without a cap the fifth item of a long transcript
-                          // would still be waiting 500 ms and the hundredth
-                          // five seconds. Five steps covers every message that
-                          // is actually on screen at insertion time.
+                          // Stagger capped hard: the index runs
+                          // newest-first, so without a cap the fifth item
+                          // of a long transcript would still be waiting
+                          // 500 ms and the hundredth five seconds. Five
+                          // steps covers every message that is actually on
+                          // screen at insertion time.
                           delay: Duration(
-                            milliseconds: (index > 5 ? 5 : index) * 50,
+                            milliseconds:
+                                (messageIndex > 5 ? 5 : messageIndex) * 50,
                           ),
                           child: ChatMessageTile(message: message),
                         );
@@ -1171,6 +1180,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _voiceStopRequested = false;
     if (mounted) setState(() => _isListening = true);
     final speech = ref.read(speechToTextProvider.notifier);
+    // The wake detector holds the mic while it listens, and speech
+    // recognition needs the mic to itself — if the detector is running,
+    // the recogniser hears nothing and every listen ends with "Didn't
+    // catch that". Pause the detector for the listen, then put it back
+    // if it was on.
+    final wasWakeRunning = _wake?.isRunning ?? false;
+    if (wasWakeRunning) await _wake?.stop();
     String? result;
     try {
       result = await speech.listenOnce();
@@ -1186,6 +1202,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (mounted && generation == _listenGeneration) {
         setState(() => _isListening = false);
       }
+      // Put wake listening back if it was on. Fire-and-forget: the mic
+      // result is what matters here, and the restart must not stall it.
+      if (wasWakeRunning) unawaited(_wake?.start());
     }
 
     if (result != null && result.isNotEmpty && mounted) {

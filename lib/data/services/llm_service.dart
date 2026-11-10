@@ -75,6 +75,14 @@ class LlmService {
   /// True while a generation is in flight, so the UI can offer "Stop".
   bool _isGenerating = false;
 
+  /// The in-flight generation's token bridge, when one is running. `stop()`
+  /// closes it so the `await for` in `generateStream` ends at once — the
+  /// native abort is supposed to close the plugin stream, but on the
+  /// patched engine it does not always do so promptly, and without this
+  /// the consumer waits forever, `_isThinking` stays true, and the Stop
+  /// button never flips back to Send.
+  StreamController<String>? _activeBridge;
+
   /// Fires for every generated token (same data as the stream).
   void Function(String token)? onToken;
 
@@ -384,6 +392,7 @@ class LlmService {
 
     // Bridge the plugin's stream so we can impose our own bounds on it.
     final bridge = StreamController<String>();
+    _activeBridge = bridge;
     StreamSubscription<String>? sub;
     Timer? silenceTimer;
     Timer? totalTimer;
@@ -505,6 +514,7 @@ class LlmService {
       if (consumerLeft) unawaited(stop());
       await sub?.cancel();
       if (!bridge.isClosed) await bridge.close();
+      if (identical(_activeBridge, bridge)) _activeBridge = null;
       _isGenerating = false;
     }
   }
@@ -546,6 +556,17 @@ class LlmService {
       // Nothing running.
     }
     _isGenerating = false;
+    // End the Dart-side stream as well. The native abort is supposed to
+    // close the plugin stream, but on the patched engine it does not
+    // always do so promptly — without this, the `await for` in
+    // `generateStream` never ends, the turn never finishes, and the Stop
+    // button never flips back to Send. Not awaited: closing the bridge
+    // only has to start, and awaiting it here could stall the caller
+    // while the consumer unwinds.
+    final bridge = _activeBridge;
+    if (bridge != null && !bridge.isClosed) {
+      unawaited(bridge.close());
+    }
   }
 
   /// Free native resources.
