@@ -47,6 +47,9 @@ dependencies:
   sqflite: ^2.3.3
   sqlite3: ^2.4.0
 
+  # ONNX embeddings (API verified for 1.4.x)
+  onnxruntime: ^1.4.1
+
   # Attachments: images for the vision model, files for document ingestion.
   image_picker: ^1.2.4
   file_picker: ^13.1.0
