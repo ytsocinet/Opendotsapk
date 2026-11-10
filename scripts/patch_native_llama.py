@@ -564,6 +564,51 @@ def patch_native_lib(package_root: Path) -> int:
     return changed
 
 
+def drop_stale_onnxruntime_so(roots: list[Path]) -> int:
+    """Delete the onnxruntime package's bundled libonnxruntime.so files.
+
+    The `onnxruntime` Dart package (v1.4.1, last updated 2024) ships a
+    prebuilt ONNX Runtime 1.15.1 .so in android/src/main/jniLibs/. The
+    wake-word detector (wake_word_flutter -> flutter_onnxruntime) ships
+    ONNX Runtime 1.28.0 via Maven. Both provide lib/arm64-v8a/
+    libonnxruntime.so, and Gradle's pickFirst takes the onnxruntime
+    package's 1.15.1 copy — verified in the build #57 APK (strings show
+    1.15.1). flutter_onnxruntime expects 1.28.0 APIs, so the detector
+    segfaults on start and the app closes to the home screen.
+
+    Removing the stale .so files here (after `flutter pub get`, before
+    the Gradle build) leaves flutter_onnxruntime's 1.28.0 .so as the only
+    copy in the APK. The embeddings service (embedding_service.dart,
+    which uses the onnxruntime package's Dart FFI) then loads 1.28.0 at
+    runtime; ONNX Runtime's C API is backward compatible, so the old
+    calls resolve against the newer library.
+
+    Idempotent (a missing file is already dropped) and never fatal: if
+    the package is not found, warn and continue so the build is not
+    blocked. Returns the number of files deleted.
+    """
+    deleted = 0
+    seen: set[Path] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for so in sorted(
+            root.glob("**/onnxruntime-*/android/src/main/jniLibs/*/libonnxruntime.so")
+        ):
+            if so in seen:
+                continue
+            seen.add(so)
+            try:
+                so.unlink()
+                deleted += 1
+                print("dropped stale onnxruntime .so: %s" % so)
+            except OSError as exc:
+                print("warning: could not drop %s: %s" % (so, exc))
+    if deleted == 0:
+        print("no stale onnxruntime .so found (already dropped or absent)")
+    return deleted
+
+
 def main() -> int:
     args = set(sys.argv[1:])
     require_gpu = "--require-gpu" in args
@@ -650,6 +695,11 @@ def main() -> int:
         # so the script still fixes the stock April 2026 tree if the engine
         # update is ever skipped.
         patched += patch_vocab(base.parent)
+
+    # Drop the onnxruntime package's stale 1.15.1 .so files so the APK
+    # ships only flutter_onnxruntime's 1.28.0 copy (wake-word detector
+    # crashes on 1.15.1). Runs every build; safe when already dropped.
+    drop_stale_onnxruntime_so(roots)
 
     if patched == 0:
         print("native_llama already in the requested state; nothing to do")
