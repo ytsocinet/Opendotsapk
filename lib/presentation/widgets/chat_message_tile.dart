@@ -208,10 +208,10 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (split.thinking.isNotEmpty) ...[
-                  ThinkingSection(thinking: split.thinking),
-                  const SizedBox(height: 8),
-                ],
+                // The reasoning is split out of the answer above and never
+                // rendered: Aaron does not want to see what the model was
+                // thinking, so only the answer shows. The thinking stays
+                // in the stored message; it is just never displayed.
                 if (split.answer.isNotEmpty)
                   MarkdownBody(
                     data: split.answer,
@@ -286,88 +286,6 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
     final at = DateTime.fromMillisecondsSinceEpoch(millisSinceEpoch);
     String two(int value) => value.toString().padLeft(2, '0');
     return '${two(at.hour)}:${two(at.minute)}';
-  }
-}
-
-/// The model's reasoning, shown as its own collapsible box above the answer.
-///
-/// Reasoning models emit `<think>...</think>` before the answer; the tile
-/// used to render that whole raw output in the answer bubble. This box keeps
-/// the thinking visible but out of the way — collapsed by default, tap the
-/// header to open or close it. It only renders when there IS thinking text.
-class ThinkingSection extends StatefulWidget {
-  const ThinkingSection({super.key, required this.thinking});
-
-  final String thinking;
-
-  @override
-  State<ThinkingSection> createState() => _ThinkingSectionState();
-}
-
-class _ThinkingSectionState extends State<ThinkingSection> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final text = theme.textTheme;
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: AppColors.brand.withValues(alpha: 0.25),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => setState(() => _expanded = !_expanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.psychology_outlined,
-                    size: 14,
-                    color: AppColors.accent.withValues(alpha: 0.8),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Thinking',
-                    style: text.labelMedium?.copyWith(
-                      color: AppColors.accent,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  Icon(
-                    _expanded
-                        ? Icons.keyboard_arrow_up
-                        : Icons.keyboard_arrow_down,
-                    size: 16,
-                    color: AppColors.accent.withValues(alpha: 0.8),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-              child: SelectableText(
-                widget.thinking,
-                style: text.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
   }
 }
 
