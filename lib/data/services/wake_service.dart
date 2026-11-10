@@ -69,9 +69,16 @@ class WakeService {
   static const String wakePhrase = 'Hey Cypher';
 
   /// Score (0–1) the detector needs before it counts as a detection.
-  /// 0.5 is openWakeWord's default; raise it if it fires on its own,
-  /// lower it if it misses the phrase.
-  static const double detectionThreshold = 0.5;
+  /// 0.5 is openWakeWord's default, but the hey_cypher model was trained
+  /// on synthetic speech (47.2% recall at 0.5) and scores a real voice
+  /// lower — 0.3 catches more real utterances. Raise it if it fires on
+  /// its own, lower it if it still misses the phrase.
+  static const double detectionThreshold = 0.3;
+
+  /// Digital gain applied to raw samples before feature extraction.
+  /// 2.0 doubles the amplitude, which helps a normal speaking distance
+  /// reach the model. Too high clips and distorts, so this stays modest.
+  static const double detectionGain = 2.0;
 
   WakeWordDetector? _detector;
   StreamSubscription<WakeWordDetection>? _detectionSub;
@@ -103,6 +110,7 @@ class WakeService {
       _detector = await WakeWordDetector.loadFromAsset(
         modelAsset,
         threshold: detectionThreshold,
+        gain: detectionGain,
       );
       _detectionSub = _detector!.detections.listen(
         (d) => _onWakeWord(d.score),
