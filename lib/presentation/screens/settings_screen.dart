@@ -781,7 +781,129 @@ class VoiceSettings extends ConsumerWidget {
             },
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: ListTile(
+            leading: ScreenRowIcon(
+              icon: Icons.record_voice_over_outlined,
+              color: scheme.primary,
+              size: 38,
+            ),
+            title: const Text('Voice'),
+            subtitle: Text(
+              (settings['tts_voice'] as String? ?? '').isEmpty
+                  ? 'System default'
+                  : settings['tts_voice'] as String,
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _showVoicePicker(context, ref),
+          ),
+        ),
       ],
+    );
+  }
+
+  /// Pick the voice Cypher speaks in. Tapping a voice previews it and
+  /// selects it in one step; the choice is saved and re-applied on the
+  /// next start. British (en-GB) voices are listed first — the closest
+  /// stock sound to a Geoffrey-style voice. This changes the voice only;
+  /// Cypher's persona stays Cypher.
+  Future<void> _showVoicePicker(BuildContext context, WidgetRef ref) async {
+    final tts = ref.read(textToSpeechProvider.notifier);
+    final voices = await tts.getVoices();
+    // British first, then US, then everything else, alphabetical inside
+    // each group.
+    int rank(String locale) => locale.startsWith('en-GB')
+        ? 0
+        : locale.startsWith('en-US')
+            ? 1
+            : 2;
+    voices.sort((a, b) {
+      final r = rank(a['locale'] ?? '').compareTo(rank(b['locale'] ?? ''));
+      if (r != 0) return r;
+      return (a['name'] ?? '').compareTo(b['name'] ?? '');
+    });
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final current =
+              ref.read(settingsProvider)['tts_voice'] as String? ?? '';
+          return AlertDialog(
+            title: const Text('Voice'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Tap a voice to hear it and use it. For a '
+                    'Geoffrey-style voice, pick a British (en-GB) voice. '
+                    'If no British voice is listed, install one in your '
+                    'phone’s text-to-speech settings.',
+                  ),
+                  const SizedBox(height: 8),
+                  if (voices.isEmpty)
+                    const Text(
+                      'No voices found. Check your phone’s text-to-speech '
+                      'settings and make sure a speech engine is installed.',
+                    )
+                  else
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          ListTile(
+                            title: const Text('System default'),
+                            trailing: current.isEmpty
+                                ? const Icon(Icons.check)
+                                : null,
+                            onTap: () async {
+                              await tts.clearVoice();
+                              await ref
+                                  .read(settingsProvider.notifier)
+                                  .updateSetting('tts_voice', '');
+                              setLocal(() {});
+                            },
+                          ),
+                          for (final voice in voices)
+                            ListTile(
+                              title: Text(voice['name'] ?? ''),
+                              subtitle: Text(voice['locale'] ?? ''),
+                              trailing: current == voice['name']
+                                  ? const Icon(Icons.check)
+                                  : null,
+                              onTap: () async {
+                                await tts.previewVoice(
+                                  voice,
+                                  'Hello, this is Cypher speaking.',
+                                );
+                                await ref
+                                    .read(settingsProvider.notifier)
+                                    .updateSetting(
+                                      'tts_voice',
+                                      voice['name'] ?? '',
+                                    );
+                                setLocal(() {});
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 }

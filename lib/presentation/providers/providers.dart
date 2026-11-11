@@ -159,21 +159,90 @@ class SpeechNotifier extends StateNotifier<bool> {
 
 // Text to Speech Provider
 final textToSpeechProvider = StateNotifierProvider<TtsNotifier, bool>((ref) {
-  return TtsNotifier();
+  return TtsNotifier(ref);
 });
 
 class TtsNotifier extends StateNotifier<bool> {
+  final Ref ref;
   final FlutterTts _tts = FlutterTts();
   bool _isReady = false;
 
-  TtsNotifier() : super(false);
+  /// Name of the voice currently applied to the engine, when the user
+  /// picked one. Null means the engine's own default for the language.
+  String? _voiceName;
+
+  TtsNotifier(this.ref) : super(false);
 
   Future<void> init() async {
     await _tts.setLanguage('en-US');
     await _tts.setPitch(1.0);
     await _tts.setSpeechRate(0.5);
+    // Re-apply the voice the user picked, if any. setVoice must come
+    // after setLanguage or the language call resets the engine to its
+    // default voice. A missing voice (engine changed, voice removed)
+    // falls back to the default instead of breaking speech.
+    final saved = ref.read(settingsProvider)['tts_voice'] as String?;
+    if (saved != null && saved.isNotEmpty) {
+      try {
+        await _applyVoiceByName(saved);
+      } catch (_) {
+        // Keep the default voice; speech still works.
+      }
+    }
     _isReady = true;
     state = true;
+  }
+
+  /// The voices the speech engine offers, as name + locale maps.
+  /// Entries without a name are skipped; the list is unfiltered so the
+  /// picker can sort British (en-GB) voices first.
+  Future<List<Map<String, String>>> getVoices() async {
+    final raw = await _tts.getVoices;
+    final voices = <Map<String, String>>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final name = entry['name']?.toString() ?? '';
+      final locale = entry['locale']?.toString() ?? '';
+      if (name.isEmpty) continue;
+      voices.add({'name': name, 'locale': locale});
+    }
+    return voices;
+  }
+
+  /// Apply [voice] to the engine right now and remember its name so
+  /// init() can re-apply it on the next start.
+  Future<void> setVoice(Map<String, String> voice) async {
+    if (!_isReady) await init();
+    await _tts.setVoice(voice);
+    _voiceName = voice['name'];
+  }
+
+  /// Hear [text] in [voice] and keep that voice selected. Used by the
+  /// voice picker so tapping a voice previews it and selects it in one
+  /// step. Does not use speak()'s completion tracking — a preview is
+  /// fire-and-forget, and a tap on another voice cuts it off.
+  Future<void> previewVoice(Map<String, String> voice, String text) async {
+    if (!_isReady) await init();
+    await _tts.stop();
+    await _tts.setVoice(voice);
+    _voiceName = voice['name'];
+    await _tts.speak(text);
+  }
+
+  /// Drop back to the engine's default voice for the language.
+  Future<void> clearVoice() async {
+    if (!_isReady) await init();
+    await _tts.setLanguage('en-US');
+    _voiceName = null;
+  }
+
+  /// Apply a saved voice by name, if the engine still offers it.
+  Future<void> _applyVoiceByName(String name) async {
+    final voices = await getVoices();
+    final match = voices.where((v) => v['name'] == name).toList();
+    if (match.isEmpty) return;
+    await _tts.setVoice(match.first);
+    _voiceName = name;
   }
 
   /// Speak [text] aloud, waiting until the utterance actually finishes.
@@ -421,6 +490,9 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     'context_size': 2048,
     'personality': 'professional',
     'tts_enabled': true,
+    // Name of the TTS voice the user picked in Settings. Empty means the
+    // engine's own default voice for the language.
+    'tts_voice': '',
     'voice_enabled': true,
     // Cypher always-listening ("Hey Cypher"). Off by default: it keeps
     // the mic warm and runs a foreground service, so it is opt-in.
@@ -521,6 +593,7 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'thinking_effort',
       'models_folder',
       'connected_apps',
+      'tts_voice',
     ]) {
       final raw = await _db.getPreference(key);
       if (raw != null && raw.isNotEmpty) {
