@@ -3308,60 +3308,63 @@ class _ModeBar extends StatelessWidget {
           ),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(8, 5, 8, 4),
-      // Two full-width rows: one shared row gave the effort segments
-      // ~44 dp each and Low / Med / High wrapped letter-by-letter even
-      // without the check icons. Full width gives each segment ~112 dp.
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+      // One row, six buttons: the mode segments and the effort segments
+      // sit side by side instead of stacking in two rows. Each
+      // SegmentedButton takes half the width; the 10pt labels fit in the
+      // ~60 dp each segment gets.
+      child: Row(
         children: [
-          SegmentedButton<String>(
-            style: _compact,
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(
-                value: 'chat',
-                label: Text('Chat'),
-                tooltip: 'Just chat',
-              ),
-              ButtonSegment(
-                value: 'plan',
-                label: Text('Plan'),
-                tooltip: 'Plan first, then act',
-              ),
-              ButtonSegment(
-                value: 'code',
-                label: Text('Code'),
-                tooltip: 'Code first, then explain',
-              ),
-            ],
-            selected: {mode},
-            onSelectionChanged: (s) => onModeChanged(s.first),
+          Expanded(
+            child: SegmentedButton<String>(
+              style: _compact,
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: 'chat',
+                  label: Text('Chat'),
+                  tooltip: 'Just chat',
+                ),
+                ButtonSegment(
+                  value: 'plan',
+                  label: Text('Plan'),
+                  tooltip: 'Plan first, then act',
+                ),
+                ButtonSegment(
+                  value: 'code',
+                  label: Text('Code'),
+                  tooltip: 'Code first, then explain',
+                ),
+              ],
+              selected: {mode},
+              onSelectionChanged: (s) => onModeChanged(s.first),
+            ),
           ),
-          const SizedBox(height: 4),
-          SegmentedButton<String>(
-            style: _compact,
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(
-                value: 'low',
-                label: Text('Low'),
-                tooltip: 'Short replies',
-              ),
-              ButtonSegment(
-                value: 'med',
-                label: Text('Med'),
-                tooltip: 'Normal replies',
-              ),
-              ButtonSegment(
-                value: 'high',
-                label: Text('High'),
-                tooltip: 'Long, step-by-step replies',
-              ),
-            ],
-            selected: {effort},
-            onSelectionChanged: (s) => onEffortChanged(s.first),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SegmentedButton<String>(
+              style: _compact,
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: 'low',
+                  label: Text('Low'),
+                  tooltip: 'Short replies',
+                ),
+                ButtonSegment(
+                  value: 'med',
+                  label: Text('Med'),
+                  tooltip: 'Normal replies',
+                ),
+                ButtonSegment(
+                  value: 'high',
+                  label: Text('High'),
+                  tooltip: 'Long, step-by-step replies',
+                ),
+              ],
+              selected: {effort},
+              onSelectionChanged: (s) => onEffortChanged(s.first),
+            ),
           ),
         ],
       ),
