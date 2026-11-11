@@ -3289,7 +3289,7 @@ class _ModeBar extends StatelessWidget {
 
   static const _compact = ButtonStyle(
     visualDensity: VisualDensity.compact,
-    textStyle: WidgetStatePropertyAll(TextStyle(fontSize: 12)),
+    textStyle: WidgetStatePropertyAll(TextStyle(fontSize: 10)),
     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
   );
 
@@ -3308,7 +3308,7 @@ class _ModeBar extends StatelessWidget {
           ),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+      padding: const EdgeInsets.fromLTRB(8, 5, 8, 4),
       // Two full-width rows: one shared row gave the effort segments
       // ~44 dp each and Low / Med / High wrapped letter-by-letter even
       // without the check icons. Full width gives each segment ~112 dp.
@@ -3339,7 +3339,7 @@ class _ModeBar extends StatelessWidget {
             selected: {mode},
             onSelectionChanged: (s) => onModeChanged(s.first),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           SegmentedButton<String>(
             style: _compact,
             showSelectedIcon: false,
