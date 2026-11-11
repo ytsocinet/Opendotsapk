@@ -1014,6 +1014,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     };
   }
 
+  /// The current date and time, so the model always knows what day it is.
+  /// A local model has no clock; without this it guesses (and hallucinates)
+  /// when asked the date. Built by hand — no intl dependency — from the
+  /// phone's own clock, so it is always the user's local date and time.
+  String _nowLine() {
+    const weekdays = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    final now = DateTime.now();
+    final hour12 = now.hour % 12 == 0 ? 12 : now.hour % 12;
+    final ampm = now.hour < 12 ? 'AM' : 'PM';
+    final minute = now.minute.toString().padLeft(2, '0');
+    return 'Today is ${weekdays[now.weekday - 1]}, '
+        '${months[now.month - 1]} ${now.day}, ${now.year}. '
+        'The current time is $hour12:$minute $ampm.';
+  }
+
   /// Builds the system prompt, the question, and the history to send.
   ///
   /// [priorHistory] must be the conversation **before** the current message.
@@ -1035,11 +1072,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final personality = settings['personality'] as String?;
     final nCtx = ref.read(llmServiceProvider).contextSize;
 
-    // The system prompt is the personality plus the mode's instruction,
+    // The system prompt is the date and time first — the model has no
+    // clock of its own — then the personality plus the mode's instruction,
     // when the mode has one. Chat mode adds nothing.
     final modeInstruction =
         _modeInstruction(settings['chat_mode'] as String? ?? 'chat');
     final systemParts = <String>[
+      _nowLine(),
       if (personality != null && personality.trim().isNotEmpty) personality,
       if (modeInstruction != null) modeInstruction,
     ];
