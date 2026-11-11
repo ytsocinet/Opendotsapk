@@ -43,7 +43,14 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
     final tools = AppConstants.defaultPermissions.keys.toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Tools')),
+      appBar: AppBar(
+        title: const Text('Tools'),
+        leading: IconButton(
+          icon: const Icon(Icons.menu),
+          tooltip: 'Menu',
+          onPressed: () => Scaffold.of(context).openDrawer(),
+        ),
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [

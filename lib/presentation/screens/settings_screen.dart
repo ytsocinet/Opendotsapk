@@ -76,6 +76,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
       appBar: AppBar(
         title: const Text('Settings'),
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.menu),
+          tooltip: 'Menu',
+          onPressed: () => Scaffold.of(context).openDrawer(),
+        ),
         actions: [
           if (_lastChangedSetting != null)
             Center(

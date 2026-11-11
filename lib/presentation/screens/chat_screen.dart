@@ -369,6 +369,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               alwaysListening:
                   settings['always_listening'] as bool? ?? false,
               onToggleWake: _toggleWakeListening,
+              onOpenMenu: () => Scaffold.of(context).openDrawer(),
               onManageModels: _showModelSelector,
               onClear: _clearChat,
               onExport: _exportChat,
@@ -441,32 +442,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             if (_attachedImages.isNotEmpty || _attachedDocs.isNotEmpty)
               _buildAttachmentStrip(),
 
-            // Mode + effort switcher, above the composer.
-            _ModeBar(
-              mode: settings['chat_mode'] as String? ?? 'chat',
-              effort: settings['thinking_effort'] as String? ?? 'med',
-              onModeChanged: (mode) => ref
-                  .read(settingsProvider.notifier)
-                  .updateSetting('chat_mode', mode),
-              onEffortChanged: (effort) => ref
-                  .read(settingsProvider.notifier)
-                  .updateSetting('thinking_effort', effort),
-            ),
-
-            ChatComposer(
-              controller: _controller,
-              focusNode: _composerFocus,
-              isGenerating: _isThinking,
-              isListening: _isListening,
-              onSend: _sendMessage,
-              onStop: _stopGeneration,
-              onAttachImage: _pickImage,
-              onAttachDocument: _pickDocument,
-              onVoice: _startVoiceInput,
-              onStopVoice: _stopVoiceInput,
-              imageTooltip: 'Attach an image (needs a vision model)',
-              documentTooltip:
-                  'Attach a document: ${DocumentService.supportedSummary}',
+            // Composer first, mode + effort switcher below it: the switcher
+            // used to sit above the composer; it now lives under the typing
+            // box instead. One SafeArea for both, so the bottom system
+            // inset is applied once, below the switcher.
+            SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ChatComposer(
+                    controller: _controller,
+                    focusNode: _composerFocus,
+                    isGenerating: _isThinking,
+                    isListening: _isListening,
+                    onSend: _sendMessage,
+                    onStop: _stopGeneration,
+                    onAttachImage: _pickImage,
+                    onAttachDocument: _pickDocument,
+                    onVoice: _startVoiceInput,
+                    onStopVoice: _stopVoiceInput,
+                    imageTooltip: 'Attach an image (needs a vision model)',
+                    documentTooltip:
+                        'Attach a document: ${DocumentService.supportedSummary}',
+                  ),
+                  _ModeBar(
+                    mode: settings['chat_mode'] as String? ?? 'chat',
+                    effort: settings['thinking_effort'] as String? ?? 'med',
+                    onModeChanged: (mode) => ref
+                        .read(settingsProvider.notifier)
+                        .updateSetting('chat_mode', mode),
+                    onEffortChanged: (effort) => ref
+                        .read(settingsProvider.notifier)
+                        .updateSetting('thinking_effort', effort),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -1361,6 +1372,7 @@ class _ChatHeader extends StatefulWidget {
     required this.isGenerating,
     required this.alwaysListening,
     required this.onToggleWake,
+    required this.onOpenMenu,
     required this.onManageModels,
     required this.onClear,
     required this.onExport,
@@ -1376,6 +1388,10 @@ class _ChatHeader extends StatefulWidget {
   /// Tapping the WAKE pill toggles always-listening (same toggle as the
   /// Settings → Voice switch).
   final VoidCallback onToggleWake;
+
+  /// Opens the navigation drawer (the slide-out panel that replaced the
+  /// bottom bar).
+  final VoidCallback onOpenMenu;
 
   final VoidCallback onManageModels;
   final VoidCallback onClear;
@@ -1443,6 +1459,21 @@ class _ChatHeaderState extends State<_ChatHeader>
                     children: [
                       Row(
                         children: [
+                      // Menu button for the navigation drawer (the
+                      // slide-out panel that replaced the bottom bar).
+                      IconButton(
+                        icon: const Icon(Icons.menu),
+                        tooltip: 'Menu',
+                        iconSize: 22,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 36,
+                          height: 36,
+                        ),
+                        color: scheme.onSurfaceVariant,
+                        onPressed: widget.onOpenMenu,
+                      ),
+                      const SizedBox(width: 2),
                       ScaleTransition(
                         scale: CurvedAnimation(
                           parent: _controller,
@@ -3353,7 +3384,7 @@ class _ModeBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       // Clawziod look: a thin green top border frames the mode strip as a
-      // terminal panel, matching the composer's own top border below it.
+      // terminal panel, matching the composer's own top border above it.
       decoration: BoxDecoration(
         color: AppColors.surfaceHigh,
         border: Border(

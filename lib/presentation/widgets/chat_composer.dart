@@ -140,8 +140,12 @@ class _ChatComposerState extends State<ChatComposer>
                 ),
             ],
           ),
+          // No bottom inset here: the chat screen wraps the composer and
+          // the mode bar below it in one SafeArea, so the inset is applied
+          // once, under the mode bar, instead of twice.
           child: SafeArea(
             top: false,
+            bottom: false,
             child: ListenableBuilder(
               listenable: widget.controller,
               builder: (context, _) {

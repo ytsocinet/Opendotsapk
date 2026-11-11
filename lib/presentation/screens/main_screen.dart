@@ -1,14 +1,17 @@
-/// Main screen with bottom navigation.
+/// Main screen with a left slide-out drawer.
 ///
 /// Six destinations. Chat and the model list are separate because picking a
 /// model is a settings-shaped task, while Memory and Activity are read-mostly.
 /// Browser is last on purpose: the original five keep their indices, so
-/// nothing that addressed a tab by number moves.
+/// nothing that addressed a tab by number moves. The drawer opens from the
+/// menu button in the chat header, from the menu button on the other tabs'
+/// app bars, or by swiping in from the left edge.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/motion.dart';
 import '../providers/providers.dart';
 import 'browser_screen.dart';
@@ -57,6 +60,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     });
 
     return Scaffold(
+      drawer: _buildDrawer(context),
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -71,73 +75,134 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             ),
         ],
       ),
-      bottomNavigationBar: DecoratedBox(
-        decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(
-              color: Theme.of(context).colorScheme.outlineVariant
-                  .withValues(alpha: 0.5),
+    );
+  }
+
+  /// The slide-out navigation drawer: the six destinations that used to
+  /// live in a fixed bottom bar. Tapping one closes the drawer and switches
+  /// to that tab; the tab bodies stay mounted either way, so switching
+  /// never drops a half-typed message.
+  Widget _buildDrawer(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: AppColors.brand.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/clawzilla-mark.png',
+                        width: 36,
+                        height: 36,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('CLAWZILLA', style: textTheme.titleLarge),
+                      Text(
+                        'LOCAL AGENT',
+                        style: textTheme.labelSmall?.copyWith(
+                          letterSpacing: 2.0,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ),
-        child: NavigationBarTheme(
-          data: NavigationBarThemeData(
-            // Selected label at 11 px so it fits the ~60 dp slot; colours
-            // match the app theme (primary when selected, muted otherwise).
-            labelTextStyle: WidgetStateProperty.resolveWith((states) {
-              final scheme = Theme.of(context).colorScheme;
-              final base = Theme.of(context).textTheme.labelMedium;
-              return base?.copyWith(
-                fontSize: states.contains(WidgetState.selected) ? 11 : null,
-                color: states.contains(WidgetState.selected)
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant,
-              );
-            }),
-          ),
-          child: NavigationBar(
-            // Label on the selected tab only: six labels never fit a
-            // 360 dp bar, and the icons alone say enough for the rest.
-            labelBehavior:
-                NavigationDestinationLabelBehavior.onlyShowSelected,
-            selectedIndex: _currentIndex,
-            onDestinationSelected: (index) =>
-                setState(() => _currentIndex = index),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.chat_bubble_outline),
-                selectedIcon: Icon(Icons.chat_bubble),
-                label: 'Chat',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.psychology_outlined),
-                selectedIcon: Icon(Icons.psychology),
-                label: 'Memory',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.handyman_outlined),
-                selectedIcon: Icon(Icons.handyman),
-                label: 'Tools',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.history_outlined),
-                selectedIcon: Icon(Icons.history),
-                label: 'Activity',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
-                label: 'Settings',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.public_outlined),
-                selectedIcon: Icon(Icons.public),
-                label: 'Browser',
-              ),
-            ],
-          ),
+            const Divider(height: 1),
+            _drawerTile(
+              index: 0,
+              icon: Icons.chat_bubble_outline,
+              selectedIcon: Icons.chat_bubble,
+              label: 'Chat',
+            ),
+            _drawerTile(
+              index: 1,
+              icon: Icons.psychology_outlined,
+              selectedIcon: Icons.psychology,
+              label: 'Memory',
+            ),
+            _drawerTile(
+              index: 2,
+              icon: Icons.handyman_outlined,
+              selectedIcon: Icons.handyman,
+              label: 'Tools',
+            ),
+            _drawerTile(
+              index: 3,
+              icon: Icons.history_outlined,
+              selectedIcon: Icons.history,
+              label: 'Activity',
+            ),
+            _drawerTile(
+              index: 4,
+              icon: Icons.settings_outlined,
+              selectedIcon: Icons.settings,
+              label: 'Settings',
+            ),
+            _drawerTile(
+              index: 5,
+              icon: Icons.public_outlined,
+              selectedIcon: Icons.public,
+              label: 'Browser',
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  /// One destination row in the drawer. Same icons and labels as the old
+  /// bottom bar; the selected row is tinted so the current tab is visible
+  /// at a glance.
+  Widget _drawerTile({
+    required int index,
+    required IconData icon,
+    required IconData selectedIcon,
+    required String label,
+  }) {
+    final selected = index == _currentIndex;
+    final scheme = Theme.of(context).colorScheme;
+    return ListTile(
+      leading: Icon(
+        selected ? selectedIcon : icon,
+        color: selected ? scheme.primary : scheme.onSurfaceVariant,
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: selected ? scheme.primary : null,
+          fontWeight: selected ? FontWeight.w600 : null,
+        ),
+      ),
+      selected: selected,
+      selectedTileColor: scheme.primary.withValues(alpha: 0.12),
+      onTap: () {
+        Navigator.of(context).pop();
+        if (!selected) setState(() => _currentIndex = index);
+      },
     );
   }
 }

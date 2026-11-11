@@ -133,6 +133,11 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_pageTitle),
+        leading: IconButton(
+          icon: const Icon(Icons.menu),
+          tooltip: 'Menu',
+          onPressed: () => Scaffold.of(context).openDrawer(),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),

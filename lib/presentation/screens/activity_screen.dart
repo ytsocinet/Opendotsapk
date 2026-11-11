@@ -35,6 +35,11 @@ class ActivityScreen extends ConsumerWidget {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Activity'),
+          leading: IconButton(
+            icon: const Icon(Icons.menu),
+            tooltip: 'Menu',
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Tool activity'),
