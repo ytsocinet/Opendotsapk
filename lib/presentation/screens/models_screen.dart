@@ -1512,7 +1512,8 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
   /// integrity manifest for an arbitrary link, so no SHA check happens here.
   /// The file is still verified when it is loaded (the GGUF header check),
   /// and Aaron's bring-along-scan gates still apply before use. The file
-  /// lands in the app's models folder as `<name>.part` first and is only
+  /// lands in the models folder he pointed the app at (or the app's own
+  /// models folder when none is set) as `<name>.part` first and is only
   /// renamed once the download completes, so an interrupted import never
   /// leaves a file the loader would trip over. It is then registered in
   /// "My models" so it shows up here with a Load button.
@@ -1549,7 +1550,22 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
           'That link does not point to a .gguf file.',
         );
       }
-      final dir = await ModelManager.getInstance().modelsDir();
+      // Download target: the models folder he pointed the app at, when one
+      // is set — so the file lands where his other models live and shows up
+      // in the folder list. Otherwise the app's own models folder, straight
+      // into the app. Either way it is registered in "My models" below so
+      // it shows up here with a Load button right away.
+      final folder = ref.read(settingsProvider)['models_folder'] as String?;
+      Directory dir;
+      if (folder != null && folder.isNotEmpty) {
+        dir = Directory(folder);
+        if (!await dir.exists()) {
+          // The pointed-to folder vanished; fall back to the app's folder.
+          dir = await ModelManager.getInstance().modelsDir();
+        }
+      } else {
+        dir = await ModelManager.getInstance().modelsDir();
+      }
       final target = File('${dir.path}/$fileName');
       if (await target.exists()) {
         throw const FormatException(
@@ -1689,7 +1705,9 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
               const SizedBox(height: 4),
               Text(
                 'Paste a file link from Hugging Face and the app pulls the '
-                'model in. Use the file\'s download link, not the model page.',
+                'model in. It lands in your models folder when one is set, '
+                'otherwise straight into the app. Use the file\'s download '
+                'link, not the model page.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: scheme.onSurfaceVariant,
                 ),
