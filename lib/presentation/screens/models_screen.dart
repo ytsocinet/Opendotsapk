@@ -25,6 +25,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 
 import '../../core/theme/app_theme.dart';
 import '../../data/services/gpu_service.dart';
@@ -1421,10 +1422,28 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
   List<String> _storageModels = [];
   String? _loadingPath;
 
+  /// Hugging Face import (Nov 11, 2026): paste a file link, the app pulls
+  /// the GGUF in. The link field, download progress, and cancel live here
+  /// so a finished import can refresh this card's list directly.
+  final TextEditingController _hfController = TextEditingController();
+  bool _hfDownloading = false;
+  int _hfReceived = 0;
+  int? _hfTotal;
+  String? _hfError;
+  http.Client? _hfClient;
+  bool _hfCancelRequested = false;
+
   @override
   void initState() {
     super.initState();
     _loadStorageModels();
+  }
+
+  @override
+  void dispose() {
+    _hfController.dispose();
+    _hfClient?.close();
+    super.dispose();
   }
 
   Future<void> _loadStorageModels() async {
@@ -1478,6 +1497,126 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
     } finally {
       if (mounted) setState(() => _loadingPath = null);
     }
+  }
+
+  /// Pull a GGUF in straight from Hugging Face (Nov 11, 2026 — Aaron asked
+  /// for a paste-a-link import).
+  ///
+  /// The link must be a direct file link — the one from the file's download
+  /// button on Hugging Face, `huggingface.co/<owner>/<repo>/resolve/<branch>
+  /// /<file>.gguf`. A file *page* link (`/blob/`) is rewritten to `/resolve/`;
+  /// a model *page* link has no file to pull in, so it is refused with a
+  /// message saying which link to copy. Only `.gguf` files are accepted.
+  ///
+  /// This is a direct download, not a catalog download: there is no pinned
+  /// integrity manifest for an arbitrary link, so no SHA check happens here.
+  /// The file is still verified when it is loaded (the GGUF header check),
+  /// and Aaron's bring-along-scan gates still apply before use. The file
+  /// lands in the app's models folder as `<name>.part` first and is only
+  /// renamed once the download completes, so an interrupted import never
+  /// leaves a file the loader would trip over. It is then registered in
+  /// "My models" so it shows up here with a Load button.
+  Future<void> _importFromHuggingFace() async {
+    final raw = _hfController.text.trim();
+    if (raw.isEmpty || _hfDownloading) return;
+    File? tmp;
+    setState(() {
+      _hfError = null;
+      _hfDownloading = true;
+      _hfReceived = 0;
+      _hfTotal = null;
+      _hfCancelRequested = false;
+    });
+    try {
+      final uri = Uri.tryParse(raw);
+      if (uri == null || uri.host != 'huggingface.co') {
+        throw const FormatException('That is not a Hugging Face link.');
+      }
+      var path = uri.path;
+      if (path.contains('/blob/')) {
+        path = path.replaceFirst('/blob/', '/resolve/');
+      }
+      if (!path.contains('/resolve/')) {
+        throw const FormatException(
+          'That is a model page, not a file. Open the file on Hugging Face '
+          'and copy its download link instead.',
+        );
+      }
+      final fileName = path.split('/').last;
+      if (fileName.isEmpty ||
+          !fileName.toLowerCase().endsWith('.gguf')) {
+        throw const FormatException(
+          'That link does not point to a .gguf file.',
+        );
+      }
+      final dir = await ModelManager.getInstance().modelsDir();
+      final target = File('${dir.path}/$fileName');
+      if (await target.exists()) {
+        throw const FormatException(
+          'That file is already in the models folder.',
+        );
+      }
+      tmp = File('${target.path}.part');
+      final client = http.Client();
+      _hfClient = client;
+      final response = await client.send(
+        http.Request('GET', uri.replace(path: path)),
+      );
+      if (response.statusCode != 200) {
+        throw HttpException(
+          'Hugging Face answered ${response.statusCode}.',
+        );
+      }
+      if (mounted) setState(() => _hfTotal = response.contentLength);
+      final sink = tmp.openWrite();
+      try {
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          if (!mounted) break;
+          setState(() => _hfReceived += chunk.length);
+        }
+      } finally {
+        await sink.close();
+      }
+      if (_hfCancelRequested) return;
+      await tmp.rename(target.path);
+      tmp = null;
+      await StorageModelsStore.instance.add(target.path);
+      if (!mounted) return;
+      _hfController.clear();
+      await _loadStorageModels();
+      widget.onLoaded();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported $fileName')),
+      );
+    } catch (e) {
+      // A failed or cancelled import never leaves a partial file behind.
+      try {
+        if (tmp != null && await tmp.exists()) await tmp.delete();
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _hfError = _hfCancelRequested
+              ? 'Download cancelled.'
+              : e is FormatException
+                  ? e.message
+                  : 'Download failed: $e';
+        });
+      }
+    } finally {
+      _hfClient?.close();
+      _hfClient = null;
+      if (mounted) setState(() => _hfDownloading = false);
+    }
+  }
+
+  /// Cancel an in-flight Hugging Face import. Closing the client aborts the
+  /// request; the import catches it, deletes the partial file, and reports
+  /// it as a cancellation, not an error.
+  void _cancelHuggingFaceImport() {
+    _hfCancelRequested = true;
+    _hfClient?.close();
   }
 
   @override
@@ -1539,6 +1678,85 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
                     },
                   ),
                 ],
+              // Import from Hugging Face: paste a file link, the app pulls
+              // the GGUF in (Nov 11, 2026). It lands in the models folder
+              // and shows up here with a Load button.
+              const Divider(height: 24),
+              Text(
+                'Import from Hugging Face',
+                style: theme.textTheme.titleSmall,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Paste a file link from Hugging Face and the app pulls the '
+                'model in. Use the file\'s download link, not the model page.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _hfController,
+                      decoration: const InputDecoration(
+                        hintText:
+                            'https://huggingface.co/.../resolve/.../*.gguf',
+                        border: OutlineInputBorder(),
+                        contentPadding:
+                            EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      keyboardType: TextInputType.url,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => _importFromHuggingFace(),
+                      enabled: !_hfDownloading,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed:
+                        _hfDownloading ? null : _importFromHuggingFace,
+                    child: const Text('Import'),
+                  ),
+                ],
+              ),
+              if (_hfDownloading) ...[
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: _hfTotal != null && _hfTotal! > 0
+                      ? _hfReceived / _hfTotal!
+                      : null,
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _hfTotal != null && _hfTotal! > 0
+                            ? '${_ModelsScreenState._fmtBytes(_hfReceived)} / ${_ModelsScreenState._fmtBytes(_hfTotal!)}'
+                            : '${_ModelsScreenState._fmtBytes(_hfReceived)} downloaded',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _cancelHuggingFaceImport,
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ),
+              ],
+              if (_hfError != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _hfError!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.error,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
