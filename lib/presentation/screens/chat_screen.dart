@@ -387,15 +387,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                       itemCount: messages.length + (_isThinking ? 1 : 0),
                       itemBuilder: (context, index) {
-                        // The live thinking indicator sits at index 0 — the
-                        // bottom of the reversed list, directly above the
-                        // composer, exactly where the new reply will land.
-                        // It used to be appended at the end of the
-                        // newest-first list, which the reversed list
-                        // renders at the TOP of the chat, far from the
-                        // response it belongs to.
+                        // While a reply is generating, index 0 is the live
+                        // reply. Before the answer starts — the model is
+                        // still inside its <think> block — there is nothing
+                        // to show yet, so the thinking spinner stays. Once
+                        // answer text arrives it types out live in a normal
+                        // assistant bubble: splitThinking strips the
+                        // reasoning out, so the thinking never shows even
+                        // while it streams. A stable key keeps the tile
+                        // (and its enter animation) alive across chunk
+                        // rebuilds instead of re-animating on every token.
                         if (index == 0 && _isThinking) {
-                          return const ThinkingBubble();
+                          final liveAnswer =
+                              splitThinking(_currentResponse).answer;
+                          if (liveAnswer.trim().isEmpty) {
+                            return const ThinkingBubble();
+                          }
+                          return ChatMessageTile(
+                            key: const ValueKey('live-response'),
+                            message: ChatMessage(
+                              id: 'live-response',
+                              role: 'assistant',
+                              content: liveAnswer,
+                              timestamp:
+                                  DateTime.now().millisecondsSinceEpoch,
+                            ),
+                          );
                         }
                         // Messages are newest-first, so the bubble at
                         // index 0 shifts every message by one while a
