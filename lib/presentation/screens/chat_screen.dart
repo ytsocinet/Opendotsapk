@@ -382,6 +382,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               onManageModels: _showModelSelector,
               onClear: _clearChat,
               onExport: _exportChat,
+              onStopSpeaking: () => ref
+                  .read(textToSpeechProvider.notifier)
+                  .stop(),
             ),
 
             // Messages list
@@ -1402,6 +1405,7 @@ class _ChatHeader extends StatefulWidget {
     required this.onManageModels,
     required this.onClear,
     required this.onExport,
+    required this.onStopSpeaking,
   });
 
   final String? modelPath;
@@ -1422,6 +1426,11 @@ class _ChatHeader extends StatefulWidget {
   final VoidCallback onManageModels;
   final VoidCallback onClear;
   final VoidCallback onExport;
+
+  /// Cuts off the voice reading a reply aloud, right now. The button is
+  /// always there so it can be hit the moment the voice is unwanted —
+  /// stopping an idle engine is a harmless no-op.
+  final VoidCallback onStopSpeaking;
 
   @override
   State<_ChatHeader> createState() => _ChatHeaderState();
@@ -1596,6 +1605,25 @@ class _ChatHeaderState extends State<_ChatHeader>
                             onTap: widget.onManageModels,
                           ),
                         ),
+                      ),
+                      const SizedBox(width: 4),
+                      // Stop voice: cuts off the voice reading a reply
+                      // aloud, right now (Nov 11, 2026 — Aaron asked for a
+                      // way to cut it off mid-speech, e.g. while listening
+                      // to something else). It sits in the header so it is
+                      // always one tap away, and stopping an idle engine
+                      // is a harmless no-op.
+                      IconButton(
+                        icon: const Icon(Icons.volume_off_outlined),
+                        tooltip: 'Stop voice',
+                        iconSize: 20,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 36,
+                          height: 36,
+                        ),
+                        color: scheme.onSurfaceVariant,
+                        onPressed: widget.onStopSpeaking,
                       ),
                       const SizedBox(width: 4),
                       // One overflow menu for everything that is not the
