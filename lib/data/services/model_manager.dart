@@ -44,6 +44,7 @@ import '../../core/constants/app_constants.dart';
 import '../../core/utils/log.dart';
 import '../../domain/models/local_model.dart';
 import 'model_file_cache.dart';
+import 'model_preflight.dart';
 
 // =============================================================== integrity model
 
@@ -714,7 +715,12 @@ class ModelManager {
   }
 
   /// Absolute path of a model's main weight file (whether or not it exists).
-  Future<String> weightPath(LocalModel m) => pathForFile(m.fileName);
+  ///
+  /// For an imported model the id IS the file path, so it is returned as-is.
+  Future<String> weightPath(LocalModel m) async {
+    if (_isImportedId(m.id) && await File(m.id).exists()) return m.id;
+    return pathForFile(m.fileName);
+  }
 
   /// Absolute path of a vision model's projector, or null for text models.
   Future<String?> projectorPath(LocalModel m) async {
@@ -740,7 +746,55 @@ class ModelManager {
   /// Resolves the models directory once and then answers every file from
   /// [_fileCache], so a rebuild of a list of rows costs one directory lookup
   /// and no syscalls at all while the cache is warm.
+  /// Whether [id] names an imported model file rather than a catalog entry.
+  /// Imported models are stored by their absolute file path; catalog ids
+  /// never contain a slash.
+  static bool _isImportedId(String id) => id.contains('/');
+
+  /// Build a [LocalModel] for an imported model file (a model the user loaded
+  /// from storage or imported from Hugging Face), so it can fill a role slot
+  /// (thinking, visual, embedding) exactly like a catalog model.
+  ///
+  /// The id IS the file path. The architecture comes from the GGUF header
+  /// (ModelPreflight), which is what the vision-projector pairing check
+  /// needs. Returns null when the file is gone or is not a GGUF the loader
+  /// can read.
+  Future<LocalModel?> _importedModelFor(String path, ModelKind role) async {
+    final file = File(path);
+    if (!await file.exists()) return null;
+    final info = await ModelPreflight.inspect(path);
+    if (info == null) return null;
+    final name = path.split('/').last;
+    final size = await file.length().catchError((_) => 0);
+    return LocalModel(
+      id: path,
+      displayName: ModelPreflight.friendlyName(name),
+      description: 'Imported model',
+      kind: role,
+      fileName: name,
+      url: '',
+      approxBytes: size,
+      llmArch: info.architecture.isEmpty ? null : info.architecture,
+    );
+  }
+
+  /// Resolve one stored id to a [LocalModel]: a catalog entry first, then an
+  /// imported model file. Used by the role resolvers below so an imported
+  /// model assigned to a role is actually picked up for that job.
+  Future<LocalModel?> _resolveId(String id, ModelKind role) async {
+    final catalog = ModelCatalog.byId(id);
+    if (catalog != null) return catalog;
+    return _importedModelFor(id, role);
+  }
+
   Future<bool> isInstalled(LocalModel m) async {
+    // Imported model: the id is its file path. Check that file directly
+    // instead of looking for the catalog file name in the models folder.
+    if (_isImportedId(m.id)) {
+      final file = File(m.id);
+      if (!await file.exists()) return false;
+      return await file.length() >= m.minBytes;
+    }
     final floors = _floorsFor(m);
     final integrity = integrityFor(m);
     final dir = await modelsDir();
@@ -1289,7 +1343,7 @@ class ModelManager {
     final ids = await activeLlmIds();
     Log.d('ModelManager.activeLlm: prefActiveLlmIds = $ids');
     for (final id in ids) {
-      final m = ModelCatalog.byId(id);
+      final m = await _resolveId(id, ModelKind.llm);
       if (m != null && ModelCatalog.isChatCapable(m) && await isInstalled(m)) {
         Log.d('ModelManager.activeLlm: returning selected model ${m.id}');
         return m;
@@ -1298,7 +1352,7 @@ class ModelManager {
     // fallback to single legacy key
     final legacyId = await activeLlmId();
     if (legacyId != null) {
-      final m = ModelCatalog.byId(legacyId);
+      final m = await _resolveId(legacyId, ModelKind.llm);
       if (m != null && ModelCatalog.isChatCapable(m) && await isInstalled(m)) {
         Log.d(
           'ModelManager.activeLlm: returning legacy selected model ${m.id}',
@@ -1327,13 +1381,13 @@ class ModelManager {
   Future<LocalModel?> activeVision() async {
     final ids = await activeVisionIds();
     for (final id in ids) {
-      final m = ModelCatalog.byId(id);
+      final m = await _resolveId(id, ModelKind.vision);
       if (m != null && m.isVision && await isInstalled(m)) return m;
     }
     // fallback to legacy single key
     final legacyId = await activeVisionId();
     if (legacyId != null) {
-      final m = ModelCatalog.byId(legacyId);
+      final m = await _resolveId(legacyId, ModelKind.vision);
       if (m != null && m.isVision && await isInstalled(m)) return m;
     }
     return null;
@@ -1346,13 +1400,13 @@ class ModelManager {
   Future<LocalModel?> activeEmbedding() async {
     final ids = await activeEmbeddingIds();
     for (final id in ids) {
-      final m = ModelCatalog.byId(id);
+      final m = await _resolveId(id, ModelKind.embedding);
       if (m != null && m.isEmbedding && await isInstalled(m)) return m;
     }
     // fallback to legacy single key
     final legacyId = await activeEmbeddingId();
     if (legacyId != null) {
-      final m = ModelCatalog.byId(legacyId);
+      final m = await _resolveId(legacyId, ModelKind.embedding);
       if (m != null && m.isEmbedding && await isInstalled(m)) return m;
     }
     return null;

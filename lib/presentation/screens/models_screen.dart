@@ -1422,6 +1422,16 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
   List<String> _storageModels = [];
   String? _loadingPath;
 
+  /// Role slots for imported models (Nov 11, 2026 — Aaron asked for the
+  /// same multi-select the catalog models have: one imported model for
+  /// thinking, one for visual, one for embedding). A role is just the file
+  /// path sitting in that role's active-ids list in ModelManager; the
+  /// resolvers there already know how to pick an imported path back up for
+  /// the job. One role per imported model.
+  Set<String> _llmPaths = {};
+  Set<String> _visionPaths = {};
+  Set<String> _embeddingPaths = {};
+
   /// Hugging Face import (Nov 11, 2026): paste a file link, the app pulls
   /// the GGUF in. The link field, download progress, and cancel live here
   /// so a finished import can refresh this card's list directly.
@@ -1437,6 +1447,7 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
   void initState() {
     super.initState();
     _loadStorageModels();
+    _loadRoles();
   }
 
   @override
@@ -1444,6 +1455,52 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
     _hfController.dispose();
     _hfClient?.close();
     super.dispose();
+  }
+
+  /// Read which imported model sits in each role slot.
+  Future<void> _loadRoles() async {
+    final manager = ModelManager.getInstance();
+    final llm = await manager.activeLlmIds();
+    final vision = await manager.activeVisionIds();
+    final embed = await manager.activeEmbeddingIds();
+    if (!mounted) return;
+    setState(() {
+      _llmPaths = llm.toSet();
+      _visionPaths = vision.toSet();
+      _embeddingPaths = embed.toSet();
+    });
+  }
+
+  /// The role [path] currently fills, or null when it has none.
+  ModelKind? _roleFor(String path) {
+    if (_llmPaths.contains(path)) return ModelKind.llm;
+    if (_visionPaths.contains(path)) return ModelKind.vision;
+    if (_embeddingPaths.contains(path)) return ModelKind.embedding;
+    return null;
+  }
+
+  /// Put [path] in a role slot (or take it out with null). One role per
+  /// imported model: it is removed from every slot first, then added to the
+  /// chosen one at the front, so it is the first pick for that job.
+  Future<void> _setRole(String path, ModelKind? role) async {
+    final manager = ModelManager.getInstance();
+    var llm = (await manager.activeLlmIds())
+        .where((x) => x != path)
+        .toList();
+    var vision = (await manager.activeVisionIds())
+        .where((x) => x != path)
+        .toList();
+    var embed = (await manager.activeEmbeddingIds())
+        .where((x) => x != path)
+        .toList();
+    if (role == ModelKind.llm) llm = [path, ...llm];
+    if (role == ModelKind.vision) vision = [path, ...vision];
+    if (role == ModelKind.embedding) embed = [path, ...embed];
+    await manager.setActiveLlmIds(llm);
+    await manager.setActiveVisionIds(vision);
+    await manager.setActiveEmbeddingIds(embed);
+    await _loadRoles();
+    widget.onLoaded();
   }
 
   Future<void> _loadStorageModels() async {
@@ -1655,7 +1712,9 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Models you loaded from storage. Tap one to load it.',
+                'Models you loaded from storage. Tap one to load it. '
+                'Set a role — Thinking, Visual, or Embedding — and the app '
+                'uses it for that job, the same as the models below.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: scheme.onSurfaceVariant,
                 ),
@@ -1675,7 +1734,9 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
                     filePath: _storageModels[i],
                     isCurrent: currentPath == _storageModels[i],
                     loading: _loadingPath == _storageModels[i],
+                    role: _roleFor(_storageModels[i]),
                     onLoad: () => _loadPath(_storageModels[i]),
+                    onRole: (role) => _setRole(_storageModels[i], role),
                     onRemove: () async {
                       await StorageModelsStore.instance
                           .remove(_storageModels[i]);
@@ -1790,15 +1851,37 @@ class _MyModelRow extends StatelessWidget {
     required this.filePath,
     required this.isCurrent,
     required this.loading,
+    required this.role,
     required this.onLoad,
+    required this.onRole,
     required this.onRemove,
   });
 
   final String filePath;
   final bool isCurrent;
   final bool loading;
+
+  /// The role slot this imported model fills (thinking, visual, embedding),
+  /// or null when it has none. One role per imported model.
+  final ModelKind? role;
+
   final VoidCallback onLoad;
+
+  /// Called when the user picks a role for this model (or clears it).
+  final ValueChanged<ModelKind?> onRole;
+
   final VoidCallback onRemove;
+
+  static String _roleLabel(ModelKind role) {
+    switch (role) {
+      case ModelKind.llm:
+        return 'Thinking';
+      case ModelKind.vision:
+        return 'Visual';
+      case ModelKind.embedding:
+        return 'Embedding';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1837,6 +1920,43 @@ class _MyModelRow extends StatelessWidget {
                 ].join(' · '),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: scheme.onSurfaceVariant,
+                ),
+              ),
+              // Role slot: which job this imported model fills — thinking,
+              // visual, or embedding — the same multi-select the catalog
+              // models have. Tap to change it; picking a role moves the
+              // model out of any other slot, since it holds one job.
+              PopupMenuButton<ModelKind?>(
+                tooltip: 'Set role',
+                onSelected: onRole,
+                padding: EdgeInsets.zero,
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: ModelKind.llm,
+                    child: Text('Thinking'),
+                  ),
+                  PopupMenuItem(
+                    value: ModelKind.vision,
+                    child: Text('Visual'),
+                  ),
+                  PopupMenuItem(
+                    value: ModelKind.embedding,
+                    child: Text('Embedding'),
+                  ),
+                  PopupMenuItem(
+                    value: null,
+                    child: Text('No role'),
+                  ),
+                ],
+                child: Text(
+                  role == null
+                      ? 'Role: none — tap to set'
+                      : 'Role: ${_roleLabel(role!)}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: role == null
+                        ? scheme.onSurfaceVariant
+                        : scheme.primary,
+                  ),
                 ),
               ),
             ],
