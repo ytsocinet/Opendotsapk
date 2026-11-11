@@ -110,12 +110,13 @@ void main() {
       expect(offered, contains('open_app'));
       expect(offered, contains('share_to_app'));
 
+      // Live location left the v1 gate (Nov 11, 2026): Aaron approved it
+      // so the model can know where he is and the temperature.
+      expect(offered, contains('get_location'));
+
       // These do nothing yet, so the model must not see them.
       expect(offered, isNot(contains('send_sms')));
       expect(offered, isNot(contains('add_contact')));
-
-      // Implemented, but blocked in v1, so the model must not see it.
-      expect(offered, isNot(contains('get_location')));
 
       // v1 gate: implemented tools blocked for v1 are also not offered.
       final expectedOffered = registry.tools.values

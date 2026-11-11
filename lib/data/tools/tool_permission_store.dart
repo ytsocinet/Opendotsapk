@@ -37,8 +37,12 @@ class ToolPermissionStore {
   /// apps landed (Nov 7, 2026). It is gated per-app instead — the model
   /// may only open an app Aaron picked in Settings → Connected apps, and
   /// the registry refuses anything else at execution time.
+  ///
+  /// `get_location` is NOT here any more either: it left the gate when
+  /// Aaron approved live location (Nov 11, 2026) so the model can know
+  /// where he is and the temperature. It defaults to ask, and the
+  /// location permission itself is requested at runtime.
   static const Set<String> v1GatedTools = {
-    'get_location',
     'send_sms',
     'create_calendar_event',
     'add_contact',

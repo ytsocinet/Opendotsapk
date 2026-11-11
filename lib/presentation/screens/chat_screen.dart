@@ -29,6 +29,7 @@ import '../../data/services/cloud_service.dart';
 import '../../data/services/model_manager.dart';
 import '../../data/services/model_preflight.dart';
 import '../../data/services/embedding_service.dart';
+import '../../data/services/location_weather_service.dart';
 import '../../data/services/router_service.dart';
 import '../../data/services/storage_models_store.dart';
 import '../../data/services/wake_service.dart';
@@ -62,6 +63,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final Uuid _uuid = const Uuid();
   bool _isThinking = false;
   String _currentResponse = '';
+
+  /// Where the user is and what the temperature is, for the system prompt.
+  /// Fetched in the background (free Open-Meteo + Nominatim, no key) and
+  /// cached 30 minutes; null until the first fetch lands or when the
+  /// location permission is off, so the prompt just omits it.
+  final _locationWeather = LocationWeatherService();
+  String? _locationLine;
 
   /// Special tokens the model may emit as ordinary text. They are
   /// end-of-turn markers for the machine, not words for the user —
@@ -180,6 +188,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       _restoreLastModel();
       _restoreWakeListening();
       _checkAssistantLaunch();
+      _refreshLocationWeather();
     });
   }
 
@@ -692,6 +701,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // Only the mic passes text; the composer sends with no argument.
     // This is what gates auto-listen after the reply.
     _voiceExchange = text != null;
+    // Refresh location + temperature in the background; the cached line
+    // (if any) is what this send's system prompt carries.
+    unawaited(_refreshLocationWeather());
     final messageText = text ?? _controller.text.trim();
     final hasImages = _attachedImages.isNotEmpty;
     if (messageText.isEmpty && !hasImages && _attachedDocs.isEmpty) return;
@@ -1025,6 +1037,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     };
   }
 
+  /// Refreshes the location + temperature line in the background. The
+  /// service caches for 30 minutes, so this is cheap to call on every
+  /// send; a null result (no permission, no network) just leaves the
+  /// prompt without a location line. Fire-and-forget — it never blocks
+  /// sending.
+  Future<void> _refreshLocationWeather() async {
+    final line = await _locationWeather.getLine();
+    if (mounted && line != _locationLine) {
+      setState(() => _locationLine = line);
+    }
+  }
+
   /// The current date and time, so the model always knows what day it is.
   /// A local model has no clock; without this it guesses (and hallucinates)
   /// when asked the date. Built by hand — no intl dependency — from the
@@ -1084,12 +1108,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final nCtx = ref.read(llmServiceProvider).contextSize;
 
     // The system prompt is the date and time first — the model has no
-    // clock of its own — then the personality plus the mode's instruction,
-    // when the mode has one. Chat mode adds nothing.
+    // clock of its own — then where the user is and the temperature,
+    // then the personality plus the mode's instruction, when the mode
+    // has one. Chat mode adds nothing.
     final modeInstruction =
         _modeInstruction(settings['chat_mode'] as String? ?? 'chat');
     final systemParts = <String>[
       _nowLine(),
+      if (_locationLine != null) _locationLine!,
       if (personality != null && personality.trim().isNotEmpty) personality,
       if (modeInstruction != null) modeInstruction,
     ];

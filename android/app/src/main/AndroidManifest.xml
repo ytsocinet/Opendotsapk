@@ -10,12 +10,20 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Live location (added back Nov 11, 2026, when Aaron approved it so
+         the model can know where he is and the temperature). Requested at
+         runtime by the location service; coarse covers city-level weather
+         when fine is declined. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <!-- Removed for v1 (held until testing is done):
          SEND_SMS, READ_CONTACTS, WRITE_CONTACTS, READ_CALENDAR, WRITE_CALENDAR,
-         ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, SET_ALARM, USE_EXACT_ALARM,
+         SET_ALARM, USE_EXACT_ALARM,
          QUERY_ALL_PACKAGES, WAKE_LOCK
          (FOREGROUND_SERVICE, FOREGROUND_SERVICE_MICROPHONE and POST_NOTIFICATIONS
-         came back for Cypher always-listening.) -->
+         came back for Cypher always-listening; ACCESS_FINE_LOCATION and
+         ACCESS_COARSE_LOCATION came back for live location.) -->
     <application
         android:label="Clawzilla"
         android:icon="@mipmap/ic_launcher"
