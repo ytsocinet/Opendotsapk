@@ -710,6 +710,9 @@ class VoiceSettings extends ConsumerWidget {
     final settings = ref.watch(settingsProvider);
     final ttsEnabled = settings['tts_enabled'] as bool? ?? true;
     final alwaysListening = settings['always_listening'] as bool? ?? false;
+    // Pitch lives in settings (a double, default 1.0) so the slider
+    // rebuilds live as setPitch saves each step.
+    final pitch = settings['tts_pitch'] as double? ?? 1.0;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
@@ -802,6 +805,57 @@ class VoiceSettings extends ConsumerWidget {
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _showVoicePicker(context, ref),
+          ),
+        ),
+        // Pitch: how deep Cypher's voice sounds. 1.0 is normal, lower is
+        // deeper. The slider applies live and saves each step; releasing
+        // it speaks a sample so the pitch is heard right away, and the
+        // play button re-hears it on demand. The pitch rides along with
+        // whichever voice is picked — it deepens that voice, it does not
+        // change the accent.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text('Pitch'),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Lower is deeper',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    pitch.toStringAsFixed(1),
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.play_arrow_outlined),
+                    tooltip: 'Hear it',
+                    onPressed: () => ref
+                        .read(textToSpeechProvider.notifier)
+                        .previewPitch(),
+                  ),
+                ],
+              ),
+              Slider(
+                value: pitch,
+                min: 0.5,
+                max: 1.5,
+                divisions: 10,
+                label: pitch.toStringAsFixed(1),
+                onChanged: (value) {
+                  ref.read(textToSpeechProvider.notifier).setPitch(value);
+                },
+                onChangeEnd: (value) {
+                  ref.read(textToSpeechProvider.notifier).previewPitch();
+                },
+              ),
+            ],
           ),
         ),
       ],

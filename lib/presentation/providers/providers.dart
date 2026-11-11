@@ -171,11 +171,25 @@ class TtsNotifier extends StateNotifier<bool> {
   /// picked one. Null means the engine's own default for the language.
   String? _voiceName;
 
+  /// Pitch currently applied to the engine. 1.0 is normal, lower is
+  /// deeper. The user picks it with the Pitch slider in Settings.
+  double _pitch = 1.0;
+
+  /// The pitch currently applied to the engine.
+  double get pitch => _pitch;
+
   TtsNotifier(this.ref) : super(false);
 
   Future<void> init() async {
     await _tts.setLanguage('en-US');
-    await _tts.setPitch(1.0);
+    // Apply the saved pitch (default 1.0). Read defensively: the stored
+    // form is a string, and a stale value falls back to normal.
+    final rawPitch = ref.read(settingsProvider)['tts_pitch'];
+    final savedPitch = rawPitch is double
+        ? rawPitch
+        : double.tryParse(rawPitch.toString()) ?? 1.0;
+    _pitch = savedPitch.clamp(0.5, 2.0).toDouble();
+    await _tts.setPitch(_pitch);
     await _tts.setSpeechRate(0.5);
     // Re-apply the voice the user picked, if any. setVoice must come
     // after setLanguage or the language call resets the engine to its
@@ -243,6 +257,29 @@ class TtsNotifier extends StateNotifier<bool> {
     if (match.isEmpty) return;
     await _tts.setVoice(match.first);
     _voiceName = name;
+  }
+
+  /// Apply [pitch] to the engine right now and remember it so init() can
+  /// re-apply it on the next start. Clamped to the engine's 0.5–2.0
+  /// range; below 1.0 is deeper. Called by the Pitch slider on every
+  /// move, so it saves each step — a local key-value write, cheap enough
+  /// for a drag.
+  Future<void> setPitch(double pitch) async {
+    if (!_isReady) await init();
+    final clamped = pitch.clamp(0.5, 2.0).toDouble();
+    _pitch = clamped;
+    await _tts.setPitch(clamped);
+    await ref
+        .read(settingsProvider.notifier)
+        .updateSetting('tts_pitch', clamped);
+  }
+
+  /// Hear a sample in the current voice at the current pitch. Fire-and-
+  /// forget like previewVoice: a tap on another control cuts it off.
+  Future<void> previewPitch() async {
+    if (!_isReady) await init();
+    await _tts.stop();
+    await _tts.speak('Hello, this is Cypher speaking.');
   }
 
   /// Speak [text] aloud, waiting until the utterance actually finishes.
@@ -493,6 +530,9 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // Name of the TTS voice the user picked in Settings. Empty means the
     // engine's own default voice for the language.
     'tts_voice': '',
+    // TTS pitch the user picked in Settings (1.0 is normal, lower is
+    // deeper). The engine clamps it to 0.5–2.0.
+    'tts_pitch': 1.0,
     'voice_enabled': true,
     // Cypher always-listening ("Hey Cypher"). Off by default: it keeps
     // the mic warm and runs a foreground service, so it is opt-in.
@@ -554,6 +594,14 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     final contextSize = await _db.getPreference('context_size');
     if (contextSize != null) {
       state = Map.from(state)..['context_size'] = int.parse(contextSize);
+    }
+
+    // Pitch is a double; stored as its string form, parsed back here.
+    // tryParse so a stale or hand-edited value falls back to normal.
+    final ttsPitch = await _db.getPreference('tts_pitch');
+    if (ttsPitch != null) {
+      state = Map.from(state)
+        ..['tts_pitch'] = double.tryParse(ttsPitch) ?? 1.0;
     }
 
     final personality = await _db.getPreference('personality');
@@ -623,6 +671,8 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     if (value is String) {
       await _db.savePreference(key, value);
     } else if (value is int) {
+      await _db.savePreference(key, value.toString());
+    } else if (value is double) {
       await _db.savePreference(key, value.toString());
     } else if (value is bool) {
       await _db.savePreference(key, value.toString());
