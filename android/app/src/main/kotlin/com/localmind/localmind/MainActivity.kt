@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import android.view.WindowManager
-import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -43,19 +42,17 @@ import io.flutter.plugins.webviewflutter.WebViewFlutterPlugin
  * Main activity for LocalMind.
  *
  * Extends the v2 embedding FlutterFragmentActivity (the FragmentActivity-based
- * host) rather than plain FlutterActivity: the system app picker uses the
- * Activity Result API (`registerForActivityResult`), which only exists on
- * ComponentActivity, and plain FlutterActivity extends android.app.Activity.
- * The v1 embedding was removed from Flutter, so importing
- * `io.flutter.app.FlutterActivity` (v1) fails the build with "use of deleted
- * Android v1 embedding".
+ * host) rather than plain FlutterActivity: plain FlutterActivity extends
+ * android.app.Activity, and the v1 embedding was removed from Flutter, so
+ * importing `io.flutter.app.FlutterActivity` (v1) fails the build with
+ * "use of deleted Android v1 embedding".
  *
  * It also owns three MethodChannels:
  * - `com.localmind.localmind/secure_screen`: while the app's lock is on, notes
  *   must not be captured into screenshots or the recents thumbnail, and that
  *   is a window flag only native code can set.
- * - `clawzilla/apps`: opening and sharing to connected apps, and the system
- *   app picker for adding one. Only packages Aaron connected in Settings
+ * - `clawzilla/apps`: opening and sharing to connected apps, and the list of
+ *   launchable apps for adding one. Only packages Aaron connected in Settings
  *   are ever launched or shared to — the Dart side enforces that, this side
  *   just runs the Intent.
  * - `clawzilla/assistant`: the side-button / deep-link launch flag. A
@@ -76,40 +73,6 @@ class MainActivity : FlutterFragmentActivity() {
      * (`consumeListenRequest`); a later resume must not re-trigger it.
      */
     private var listenRequested = false
-
-    private var pickAppResult: MethodChannel.Result? = null
-
-    private val pickAppLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val pending = pickAppResult
-            pickAppResult = null
-            if (pending == null) return@registerForActivityResult
-            if (result.resultCode != RESULT_OK) {
-                pending.success(null)
-                return@registerForActivityResult
-            }
-            val component = result.data?.component
-            if (component == null) {
-                pending.success(null)
-                return@registerForActivityResult
-            }
-            val label = try {
-                val appInfo =
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        packageManager.getApplicationInfo(
-                            component.packageName,
-                            PackageManager.ApplicationInfoFlags.of(0),
-                        )
-                    } else {
-                        @Suppress("DEPRECATION")
-                        packageManager.getApplicationInfo(component.packageName, 0)
-                    }
-                packageManager.getApplicationLabel(appInfo).toString()
-            } catch (e: PackageManager.NameNotFoundException) {
-                component.packageName
-            }
-            pending.success(mapOf("package" to component.packageName, "label" to label))
-        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -212,25 +175,15 @@ class MainActivity : FlutterFragmentActivity() {
                         }
                         result.success(shareToApp(pkg, text))
                     }
-                    "pickApp" -> {
-                        // The system shows the list of launchable apps; the
-                        // app only learns the one package Aaron chose.
-                        // No QUERY_ALL_PACKAGES needed.
-                        if (pickAppResult != null) {
-                            result.error("pick_in_progress", "An app pick is already open", null)
-                            return@setMethodCallHandler
-                        }
-                        pickAppResult = result
-                        val launcher = Intent(Intent.ACTION_MAIN).apply {
-                            addCategory(Intent.CATEGORY_LAUNCHER)
-                        }
-                        val chooser = Intent.createChooser(launcher, "Pick an app")
-                        try {
-                            pickAppLauncher.launch(chooser)
-                        } catch (e: ActivityNotFoundException) {
-                            pickAppResult = null
-                            result.error("no_chooser", e.message, null)
-                        }
+                    "listApps" -> {
+                        // Our own list, not the system chooser: the chooser
+                        // only showed a short grid (10 apps on Aaron's S23
+                        // FE, no scroll, YouTube never offered), so it could
+                        // never add the apps he actually uses. The manifest
+                        // <queries> entry for the launcher intent is what
+                        // makes this return every launchable app — no
+                        // QUERY_ALL_PACKAGES needed.
+                        result.success(listLaunchableApps())
                     }
                     else -> result.notImplemented()
                 }
@@ -295,6 +248,36 @@ class MainActivity : FlutterFragmentActivity() {
         } catch (e: ActivityNotFoundException) {
             false
         }
+    }
+
+    /**
+     * Every launchable app on the phone, sorted by label, for the Connected
+     * apps picker. Clawzilla itself is left out — connecting it to itself
+     * would be nonsense.
+     */
+    private fun listLaunchableApps(): List<Map<String, String>> {
+        val launcher = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val infos =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.queryIntentActivities(
+                    launcher,
+                    PackageManager.ResolveInfoFlags.of(0),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.queryIntentActivities(launcher, 0)
+            }
+        return infos
+            .mapNotNull { info ->
+                val pkg = info.activityInfo?.packageName ?: return@mapNotNull null
+                if (pkg == packageName) return@mapNotNull null
+                val label = info.loadLabel(packageManager).toString()
+                mapOf("package" to pkg, "label" to label)
+            }
+            .distinctBy { it["package"] }
+            .sortedBy { (it["label"] ?: it["package"] ?: "").lowercase() }
     }
 
     /**

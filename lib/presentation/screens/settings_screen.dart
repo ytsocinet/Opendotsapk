@@ -1700,7 +1700,79 @@ class _ConnectedAppsSectionState
   }
 
   Future<void> _addApp() async {
-    final picked = await ConnectedAppsStore.pickApp();
+    final apps = await ConnectedAppsStore.listApps();
+    if (!mounted) return;
+    if (apps.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No launchable apps found.'),
+        ),
+      );
+      return;
+    }
+    final picked =
+        await showDialog<({String packageName, String label})>(
+      context: context,
+      builder: (dialogContext) {
+        var query = '';
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            final visible = query.isEmpty
+              ? apps
+              : apps
+                  .where(
+                    (a) =>
+                        a.label.toLowerCase().contains(query) ||
+                        a.packageName.toLowerCase().contains(query),
+                  )
+                  .toList();
+          return AlertDialog(
+            title: const Text('Pick an app'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      hintText: 'Search apps',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onChanged: (v) => setLocal(
+                      () => query = v.toLowerCase(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: visible.length,
+                      itemBuilder: (context, i) {
+                        final app = visible[i];
+                        return ListTile(
+                          title: Text(app.label),
+                          subtitle: Text(app.packageName),
+                          onTap: () =>
+                              Navigator.of(dialogContext).pop(app),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+            ],
+          );
+          },
+        );
+      },
+    );
     if (picked == null || !mounted) return;
     await ConnectedAppsStore.instance.add(
       picked.packageName,

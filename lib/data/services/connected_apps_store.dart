@@ -65,26 +65,32 @@ class ConnectedAppsStore {
 
   final DatabaseHelper _db = DatabaseHelper.instance;
 
-  /// The native app picker: Android shows the system list of launchable
-  /// apps and returns the one Aaron picked, or null when he backs out.
-  /// No permission is needed — the system shows the list, the app only
-  /// learns the one package he chose.
+  /// The full list of launchable apps, from the native side, sorted by
+  /// label. The system chooser only showed a short grid (10 apps on
+  /// Aaron's S23 FE, no scroll, YouTube never offered), so the picker is
+  /// our own list now — this returns all of them, and the Settings screen
+  /// shows them in a searchable dialog.
   static const MethodChannel _appsChannel = MethodChannel('clawzilla/apps');
 
-  static Future<({String packageName, String label})?> pickApp() async {
+  static Future<List<({String packageName, String label})>> listApps() async {
     try {
-      final result = await _appsChannel
-          .invokeMethod<Map<Object?, Object?>>('pickApp');
-      if (result == null) return null;
-      final packageName = result['package'] as String?;
-      if (packageName == null || packageName.isEmpty) return null;
-      final label = result['label'] as String?;
-      return (
-        packageName: packageName,
-        label: label ?? packageName,
-      );
+      final result =
+          await _appsChannel.invokeMethod<List<Object?>>('listApps');
+      if (result == null) return <({String packageName, String label})>[];
+      final apps = <({String packageName, String label})>[];
+      for (final raw in result) {
+        if (raw is! Map) continue;
+        final packageName = raw['package'] as String?;
+        if (packageName == null || packageName.isEmpty) continue;
+        final label = raw['label'] as String?;
+        apps.add((
+          packageName: packageName,
+          label: label ?? packageName,
+        ));
+      }
+      return apps;
     } catch (_) {
-      return null;
+      return <({String packageName, String label})>[];
     }
   }
 

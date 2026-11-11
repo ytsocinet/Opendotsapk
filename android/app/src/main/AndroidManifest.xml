@@ -17,6 +17,17 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
+    <!-- Package visibility (Android 11+): listing launchable apps for the
+         Connected apps picker needs this narrow queries entry for the
+         launcher intent. It is NOT the broad QUERY_ALL_PACKAGES permission,
+         which stays out for v1. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <!-- Removed for v1 (held until testing is done):
          SEND_SMS, READ_CONTACTS, WRITE_CONTACTS, READ_CALENDAR, WRITE_CALENDAR,
          SET_ALARM, USE_EXACT_ALARM,
