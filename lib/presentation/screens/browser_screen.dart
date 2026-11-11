@@ -190,6 +190,33 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
               ],
             ),
           ),
+          // One-tap shortcuts to Aaron's creative tools (Nov 11, 2026):
+          // Artistly for images, VideoExpress for video. They are plain
+          // websites — the app just opens them here, it does not drive
+          // them. Sign-in is the site's own; this is a fresh browser, so
+          // he signs in again the first time.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Row(
+              children: [
+                ActionChip(
+                  label: const Text('Artistly'),
+                  avatar: const Icon(Icons.image_outlined, size: 18),
+                  tooltip: 'Open Artistly (images)',
+                  onPressed: () =>
+                      unawaited(_openUrl('https://artistly.ai')),
+                ),
+                const SizedBox(width: 8),
+                ActionChip(
+                  label: const Text('VideoExpress'),
+                  avatar: const Icon(Icons.movie_outlined, size: 18),
+                  tooltip: 'Open VideoExpress (video)',
+                  onPressed: () =>
+                      unawaited(_openUrl('https://videoexpress.ai')),
+                ),
+              ],
+            ),
+          ),
           if (_progress < 100)
             LinearProgressIndicator(
               value: _progress / 100,
