@@ -144,8 +144,8 @@ the Performance screen states plainly that it is not being used.
 ## Verifying a build
 
 ```bash
-unzip -l localmind-release.apk | grep libggml-vulkan        # shipped?
-unzip -o -q localmind-release.apk "lib/arm64-v8a/libggml-vulkan.so" -d /tmp/v
+unzip -l clawzilla-release.apk | grep libggml-vulkan        # shipped?
+unzip -o -q clawzilla-release.apk "lib/arm64-v8a/libggml-vulkan.so" -d /tmp/v
 nm -D --defined-only /tmp/v/lib/arm64-v8a/libggml-vulkan.so | grep vk_reg
 readelf -d /tmp/v/lib/arm64-v8a/libggml-vulkan.so | grep vulkan
 ```

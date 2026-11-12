@@ -1,4 +1,4 @@
-# LocalMind — Build Options
+# Clawzilla — Build Options
 
 The VPS cannot build this APK (see the bottom of this file for the exact
 numbers). Here are the working alternatives, best first.
@@ -14,17 +14,17 @@ A workflow is already committed at `.github/workflows/build-apk.yml`.
 2. Push this project to it:
 
    ```bash
-   cd localmind_project
+   cd clawzilla_project
    git init
    git add .
-   git commit -m "LocalMind: local-first AI agent"
+   git commit -m "Clawzilla: local-first AI agent"
    git branch -M main
-   git remote add origin https://github.com/<YOUR_USER>/localmind.git
+   git remote add origin https://github.com/<YOUR_USER>/clawzilla.git
    git push -u origin main
    ```
 
 3. Open the repo → **Actions** tab → **Build APK** → wait ~10 minutes.
-4. Download **localmind-apk** from the run's *Artifacts* section.
+4. Download **clawzilla-apk** from the run's *Artifacts* section.
 5. Install on the phone (enable *Install from unknown sources*).
 
 You can also trigger it manually from the Actions tab (`workflow_dispatch`),
@@ -73,7 +73,7 @@ Free, includes 5 GB persistent disk. Flutter must be installed first:
 git clone https://github.com/flutter/flutter.git -b stable ~/flutter
 export PATH="$PATH:$HOME/flutter/bin"
 flutter doctor --android-licenses
-cd localmind_project && flutter pub get && flutter build apk --release
+cd clawzilla_project && flutter pub get && flutter build apk --release
 ```
 
 Note: Cloud Shell has ~1.7 GB RAM, so Gradle may still be tight. Add swap or use
@@ -109,7 +109,7 @@ The project was reviewed for compile errors and the following were corrected:
 
 | Issue | Was | Now |
 |---|---|---|
-| `main.dart` and `app.dart` both defined `LocalMindApp` and `main()` | duplicate symbol error | `main.dart` is the only entry point, `app.dart` holds the widget |
+| `main.dart` and `app.dart` both defined `ClawzillaApp` and `main()` | duplicate symbol error | `main.dart` is the only entry point, `app.dart` holds the widget |
 | `database_helper.dart` referenced undefined `$vectorDimension` | compile error | uses `AppConstants.vectorDimension` |
 | `database_helper.dart` imported `speech_to_text` / `dart:io` unused | lint noise | removed |
 | `SpeechNotifier.startListening()` returned the void result of `listen()` | never compiled | `listenOnce()` captures recognition via callback + `Completer` |

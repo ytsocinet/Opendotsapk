@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="docs/logo.svg" alt="LocalMind" width="128" height="128">
+<img src="docs/logo.svg" alt="Clawzilla" width="128" height="128">
 
-# LocalMind
+# Clawzilla
 
 **Privacy-first, fully local AI agent for Android.** 
 
-Inference, retrieval, and documents stay entirely on your device. Powered by `llama.cpp`, LocalMind brings high-performance LLMs to your pocket without the cloud.
+Inference, retrieval, and documents stay entirely on your device. Powered by `llama.cpp`, Clawzilla brings high-performance LLMs to your pocket without the cloud.
 
 [![Build APK](https://github.com/skullrex0987-ctrl/Opendotsapk/actions/workflows/build-apk.yml/badge.svg)](https://github.com/skullrex0987-ctrl/Opendotsapk/actions/workflows/build-apk.yml)
 [![Release](https://img.shields.io/github/v/release/skullrex0987-ctrl/Opendotsapk?style=flat&color=6366F1&logo=github)](https://github.com/skullrex0987-ctrl/Opendotsapk/releases/latest)
@@ -25,7 +25,7 @@ Inference, retrieval, and documents stay entirely on your device. Powered by `ll
 
 ## 🌟 Key Features
 
-LocalMind is designed for speed, privacy, and flexibility.
+Clawzilla is designed for speed, privacy, and flexibility.
 
 | | Feature | Description |
 |---|---|---|
@@ -83,7 +83,7 @@ This release focuses on **multimodal stability**, **UI/UX refinements**, and **p
 
 ## 🏗️ Architecture & Development
 
-LocalMind is built with a clean, decoupled architecture:
+Clawzilla is built with a clean, decoupled architecture:
 - **Presentation:** Flutter + Riverpod for reactive UI and state management.
 - **Domain:** Pure Dart logic for model catalogs and agent orchestration (fully testable).
 - **Data:** Native bindings for `llama.cpp`, `ONNX Runtime`, and `SQLite` (Vector).

@@ -5,7 +5,7 @@ Date: 2026-10-11
 
 ## Context
 
-LocalMind runs inference through `native_llama` 1.0.1, a pub package that vendors a
+Clawzilla runs inference through `native_llama` 1.0.1, a pub package that vendors a
 whole `llama.cpp` tree. `pubspec.yaml` records why it was chosen: it is the only
 candidate that ships `tools/mtmd` (mmproj vision) *and* a complete
 `ggml/src/ggml-vulkan` backend. The Android plugin's

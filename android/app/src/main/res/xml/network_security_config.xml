@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Network security policy for LocalMind.
+  Network security policy for Clawzilla.
 
   Cleartext (plain http) is OFF for every host by default. The previous
   manifest set android:usesCleartextTraffic="true" app-wide, which meant a

@@ -14,7 +14,7 @@
   Only <exclude> is used, so everything else the app owns is still backed up.
 -->
 <full-backup-content>
-    <!-- localmind.db (plus its -journal/-wal sidecars): every encrypted
+    <!-- clawzilla.db (plus its -journal/-wal sidecars): every encrypted
          message, note, memory and document chunk lives here. -->
     <exclude domain="database" path="." />
 

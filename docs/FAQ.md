@@ -11,7 +11,7 @@ the tool permission system are entirely on-device. The only network paths are a
 cloud provider you configure yourself and the `web_search` tool.
 
 **Do I need an account?**
-No. There is no LocalMind server, no sign-up and no shared quota.
+No. There is no Clawzilla server, no sign-up and no shared quota.
 
 **Is there telemetry?**
 None. The app makes no analytics call of any kind.
@@ -123,7 +123,7 @@ has to happen before anything here is called verified.
 ## Project
 
 **Why is the repo called Opendotsapk?**
-That is the repository's name on GitHub. The app is LocalMind.
+That is the repository's name on GitHub. The app is Clawzilla.
 
 **Where do the design decisions live?**
 `docs/` — one document per decision, each with the evidence that settled it:

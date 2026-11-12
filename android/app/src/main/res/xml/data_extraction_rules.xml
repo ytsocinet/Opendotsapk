@@ -13,7 +13,7 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- localmind.db: all encrypted messages, notes, memories, chunks. -->
+        <!-- clawzilla.db: all encrypted messages, notes, memories, chunks. -->
         <exclude domain="database" path="." />
         <!-- shared_prefs, including the flutter_secure_storage entries. -->
         <exclude domain="sharedpref" path="." />

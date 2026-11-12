@@ -72,7 +72,7 @@ if (releaseKeyPassword == null) releaseKeyPassword = System.getenv("ANDROID_KEY_
 // means the same single secret works for a local `flutter build` with no
 // key.properties, without writing the keystore anywhere in the repo.
 if (releaseStoreFile == null && System.getenv("ANDROID_KEYSTORE_B64")) {
-    def decodedKeystore = File.createTempFile("localmind-release-", ".jks")
+    def decodedKeystore = File.createTempFile("clawzilla-release-", ".jks")
     decodedKeystore.bytes = System.getenv("ANDROID_KEYSTORE_B64").decodeBase64()
     releaseStoreFile = decodedKeystore.absolutePath
 }
@@ -100,7 +100,7 @@ if (buildingRelease && !hasReleaseKeystore) {
 }
 
 android {
-    namespace = "com.localmind.localmind"
+    namespace = "com.clawzilla.clawzilla"
     // flutter_tts / geolocator_android / shared_preferences_android /
     // sqflite_android all compile against SDK 36; 36 is backward compatible.
     compileSdk = 36
@@ -117,7 +117,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.localmind.localmind"
+        applicationId = "com.clawzilla.clawzilla"
         // 28, not 26: native_llama declares minSdk 28 because its inference
         // path uses SharedMemory (API 27+). Forcing 26 would produce an app
         // that installs on Android 8 and then fails when the model is loaded.
