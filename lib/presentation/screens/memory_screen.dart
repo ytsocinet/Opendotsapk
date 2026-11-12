@@ -24,7 +24,11 @@ import '../widgets/screen_empty_state.dart';
 /// The colour is what distinguishes a card at a glance in a list, so the map
 /// lives in one place rather than being re-derived in the card, the badge and
 /// the accent bar.
-const Map<String, Color> _typeAccent = {
+///
+/// Not `const`: `brand` stopped being a constant when the theme-colour
+/// setting landed (build #85) — it is set from the setting before the theme
+/// is built, so a const map naming it cannot compile.
+final Map<String, Color> _typeAccent = {
   'preference': AppColors.brand,
   'conversation': AppColors.accent,
   'profile': AppColors.success,

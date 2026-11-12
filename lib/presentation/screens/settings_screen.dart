@@ -1173,7 +1173,7 @@ class _AboutSectionState extends State<AboutSection> {
                   Container(
                     width: 38,
                     height: 38,
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
