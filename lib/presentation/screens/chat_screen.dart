@@ -16,7 +16,6 @@ import '../providers/providers.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/chat_empty_state.dart';
 import '../widgets/chat_message_tile.dart';
-import '../widgets/chat_status_chip.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/motion.dart';
 import '../../core/utils/log.dart';
@@ -375,7 +374,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           children: [
             _ChatHeader(
               modelPath: modelPath,
-              isGenerating: _isThinking,
               alwaysListening:
                   settings['always_listening'] as bool? ?? false,
               onToggleWake: _toggleWakeListening,
@@ -1430,46 +1428,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 }
 
-/// Short display name for the model in memory, taken from its file name.
-///
-/// The previous chip said only "Loaded", which meant the user had to open
-/// Models to find out *which* model was live — the one piece of
-/// information that decides whether the answers are any good.
-String _modelDisplayName(String path) {
-  final file = path.split('/').last;
-  final stem = ModelPreflight.friendlyName(file);
-  // Chip label: family + size only ("Qwen 0.5B", "Llama 3.2 3B"). The
-  // full friendly name stays visible in the weights line and the Models
-  // screen; the chip has room for roughly this much before it starts
-  // pushing the header actions off-screen.
-  // Case-insensitive: some file names spell the size lowercase ("4b").
-  final sizeMatch = RegExp(
-    r'\d+(?:\.\d+)?[BM]\b',
-    caseSensitive: false,
-  ).firstMatch(stem);
-  if (sizeMatch == null) {
-    if (stem.length <= 12) return stem;
-    return '${stem.substring(0, 11).trimRight()}…';
-  }
-  final words = stem.substring(0, sizeMatch.end).split(' ');
-  // A dotted version glued to the family name ("Qwen2.5") reads as the
-  // family alone; a version standing on its own ("Llama 3.2") stays.
-  final family = words.first.replaceAll(RegExp(r'\d+\.\d+$'), '');
-  final short = ([family, ...words.sublist(1)]).join(' ');
-  if (short.length <= 12) return short;
-  return '${short.substring(0, 11).trimRight()}…';
-}
-
 /// The header above the transcript.
 ///
-/// App identity on the left, the live model chip on the right. The chip leads to
-/// the same Models sheet the old overflow menu's "Change model" item
-/// did, promoted to a single tap because "what am I running" and "change what
-/// I'm running" are the same question asked constantly.
+/// App identity on the left, stop-voice and the overflow menu on the right.
+/// The live model used to sit here as a chip; it was removed Nov 12, 2026
+/// because it crowded the header and pushed the stop-voice button
+/// off-screen. The weights line below still shows which model is loaded,
+/// and "Change model" still lives in the overflow menu.
 class _ChatHeader extends StatefulWidget {
   const _ChatHeader({
     required this.modelPath,
-    required this.isGenerating,
     required this.alwaysListening,
     required this.onToggleWake,
     required this.onOpenMenu,
@@ -1480,7 +1448,6 @@ class _ChatHeader extends StatefulWidget {
   });
 
   final String? modelPath;
-  final bool isGenerating;
 
   /// Drives the WAKE: ON/OFF pill. Read from settings by the parent so the
   /// header itself stays a plain StatefulWidget.
@@ -1648,36 +1615,10 @@ class _ChatHeaderState extends State<_ChatHeader>
                         ),
                       ),
                       const Spacer(),
-                      ScaleTransition(
-                        scale: CurvedAnimation(
-                          parent: _controller,
-                          curve: const Interval(
-                            0.4,
-                            0.9,
-                            curve: Curves.easeOutBack,
-                          ),
-                        ),
-                        child: FadeTransition(
-                          opacity: CurvedAnimation(
-                            parent: _controller,
-                            curve: const Interval(
-                              0.4,
-                              1.0,
-                              curve: Curves.easeOut,
-                            ),
-                          ),
-                          child: ChatStatusChip(
-                            loaded: loaded,
-                            label: loaded
-                                ? _modelDisplayName(path)
-                                : (widget.isGenerating
-                                      ? 'Working…'
-                                      : 'No model loaded'),
-                            onTap: widget.onManageModels,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
+                      // No model chip here any more (Nov 12, 2026 — Aaron
+                      // asked for it gone): it crowded the header and pushed
+                      // the stop-voice button off-screen. The weights line
+                      // below still shows which model is loaded.
                       // Stop voice: cuts off the voice reading a reply
                       // aloud, right now (Nov 11, 2026 — Aaron asked for a
                       // way to cut it off mid-speech, e.g. while listening
@@ -1698,10 +1639,10 @@ class _ChatHeaderState extends State<_ChatHeader>
                         onPressed: widget.onStopSpeaking,
                       ),
                       const SizedBox(width: 4),
-                      // One overflow menu for everything that is not the
-                      // status chip: Change model, Clear chat, Export.
-                      // Clear used to have its own button next to the chip;
-                      // it now lives here so the header stays quiet.
+                      // One overflow menu for the rest: Change model,
+                      // Clear chat, Export. Clear used to have its own
+                      // button in the header; it now lives here so the
+                      // header stays quiet.
                       ScaleTransition(
                         scale: CurvedAnimation(
                           parent: _controller,
@@ -1748,8 +1689,9 @@ class _ChatHeaderState extends State<_ChatHeader>
                       const SizedBox(height: 6),
                       // Weights line: what is actually loaded, on its own
                       // full-width row so it is never squeezed to "WEIG…".
-                      // Full friendly name here; the chip above shows the
-                      // short family + size form.
+                      // Full friendly name here — this is now the only
+                      // place the header shows the loaded model, since the
+                      // chip is gone.
                       Text(
                         loaded
                             ? 'WEIGHTS: ${ModelPreflight.friendlyName(path.split('/').last)}'
