@@ -17,8 +17,11 @@ class AppColors {
   AppColors._();
 
   /// Phosphor green brand — Clawziod look (was Matrix 0xFF00FF41, indigo
-  /// before that).
-  static const Color brand = AppConstants.primaryColor;
+  /// before that). Mutable on purpose: the theme-colour setting in
+  /// Settings writes this before the app theme is built, so the theme and
+  /// every brand-coloured widget follow the picked colour. Defaults to the
+  /// Matrix green.
+  static Color brand = AppConstants.primaryColor;
 
   /// Secondary accent for AI-authored surfaces and progress: Clawziod's
   /// emerald green, which reads as "machine" against the brand green without
@@ -47,8 +50,6 @@ class AppColors {
 class AppTheme {
   AppTheme._();
 
-  static const Color _seed = AppConstants.primaryColor;
-
   /// Corner radius used everywhere. 16 for containers, 12 for controls —
   /// large enough to feel soft, small enough not to look like a toy.
   static const double radiusLarge = 16;
@@ -57,18 +58,25 @@ class AppTheme {
 
   /// The dark theme.
   ///
+  /// The seed is [AppColors.brand], which the app root sets from the
+  /// theme-colour setting before building the theme — Matrix green unless
+  /// the user picked another colour. Everything derived from the seed
+  /// (buttons, sliders, card borders, selected states) follows it; the
+  /// fixed near-black surfaces stay put.
+  ///
   /// Dark is not a preference here: the app is a long-session chat client and
   /// a model download progress screen, both of which people run at night. The
   /// surfaces are stepped (`background < surface < surfaceHigh`) instead of
   /// relying on elevation shadows, because shadows on near-black are invisible
   /// and elevation then carries no information.
   static ThemeData get dark {
+    final seed = AppColors.brand;
     final scheme =
         ColorScheme.fromSeed(
-          seedColor: _seed,
+          seedColor: seed,
           brightness: Brightness.dark,
         ).copyWith(
-          primary: _seed,
+          primary: seed,
           secondary: AppColors.accent,
           surface: AppColors.surface,
           surfaceContainerLowest: AppColors.background,

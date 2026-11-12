@@ -135,6 +135,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
             const SizedBox(height: 24),
 
             FadeSlideIn(
+              delay: const Duration(milliseconds: 33),
+              child: ScreenSection(
+                title: 'Appearance',
+                subtitle: 'The colour that seeds buttons, highlights and the logo.',
+                padding: EdgeInsets.zero,
+                child: _ThemeColorSection(
+                  onChanged: () => _triggerFeedback('theme_color'),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            FadeSlideIn(
               delay: const Duration(milliseconds: 45),
               child: ScreenSection(
                 title: 'Assistant & Behavior',
@@ -1855,6 +1868,75 @@ class _ConnectedAppsSectionState
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Theme-colour picker: six accent colours, one tap to re-seed the app.
+///
+/// The pick is stored as the colour's ARGB int under the `theme_color`
+/// setting; the app root reads it on every rebuild and writes it to
+/// [AppColors.brand], so the change applies immediately with no restart.
+class _ThemeColorSection extends ConsumerWidget {
+  const _ThemeColorSection({required this.onChanged});
+
+  final VoidCallback onChanged;
+
+  static const _choices = <(String, int)>[
+    ('Matrix green', 0xFF00FF66),
+    ('Sky blue', 0xFF38BDF8),
+    ('Violet', 0xFFA78BFA),
+    ('Orange', 0xFFFB923C),
+    ('Amber', 0xFFFBBF24),
+    ('Rose', 0xFFF472B6),
+  ];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider);
+    final current = settings['theme_color'] as int? ?? 0xFF00FF66;
+
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        for (final (name, value) in _choices)
+          Tooltip(
+            message: name,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () {
+                ref
+                    .read(settingsProvider.notifier)
+                    .updateSetting('theme_color', value);
+                onChanged();
+              },
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Color(value),
+                  shape: BoxShape.circle,
+                  border: value == current
+                      ? Border.all(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          width: 2,
+                        )
+                      : null,
+                ),
+                child: value == current
+                    ? Icon(
+                        Icons.check,
+                        size: 22,
+                        color: Color(value).computeLuminance() > 0.5
+                            ? Colors.black87
+                            : Colors.white,
+                      )
+                    : null,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

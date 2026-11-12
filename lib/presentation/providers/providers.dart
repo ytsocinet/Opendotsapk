@@ -754,6 +754,10 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // picked in Settings. Null means "no folder picked yet".
     'models_folder': null,
 
+    // Theme colour: the accent the whole app is seeded from, stored as
+    // the colour's ARGB int. Matrix green by default.
+    'theme_color': 0xFF00FF66,
+
     // Connected apps (opt-in, off by default): a JSON list of Android
     // package names Cypher may open or share to. Empty means none.
     'connected_apps': '[]',

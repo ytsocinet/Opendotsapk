@@ -10,11 +10,23 @@ import 'core/theme/app_theme.dart';
 import 'core/theme/motion.dart';
 
 /// Root application widget.
-class LocalMindApp extends StatelessWidget {
+///
+/// A [ConsumerWidget] so the theme follows the theme-colour setting: the
+/// picked colour is written to [AppColors.brand] here, before the theme is
+/// built, and the whole [MaterialApp] rebuilds when the setting changes.
+class LocalMindApp extends ConsumerWidget {
   const LocalMindApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // The accent colour the user picked in Settings (Matrix green by
+    // default, stored as an ARGB int). Setting AppColors.brand here is
+    // what makes the theme — and every widget that names brand directly —
+    // follow the pick.
+    final settings = ref.watch(settingsProvider);
+    final seedValue = settings['theme_color'] as int? ?? 0xFF00FF66;
+    AppColors.brand = Color(seedValue);
+
     return MaterialApp(
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,

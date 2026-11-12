@@ -520,11 +520,17 @@ class LlmService {
   }
 
   /// Convenience wrapper that collects the whole response.
+  /// One-shot generation. Sampling parameters default to the chat
+  /// defaults; the Prompt Lab passes its own sliders through here, which
+  /// is what makes them actually affect the model.
   Future<String> generate({
     required String prompt,
     int maxTokens = 512,
     String? systemPrompt,
     List<Map<String, String>> history = const [],
+    double temperature = 0.7,
+    double topP = 0.9,
+    int topK = 40,
     String? imagePath,
   }) async {
     final buffer = StringBuffer();
@@ -533,6 +539,9 @@ class LlmService {
       maxTokens: maxTokens,
       systemPrompt: systemPrompt,
       history: history,
+      temperature: temperature,
+      topP: topP,
+      topK: topK,
       imagePath: imagePath,
     )) {
       buffer.write(token);
