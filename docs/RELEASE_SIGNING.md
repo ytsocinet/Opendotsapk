@@ -23,19 +23,19 @@ file holding one signing key:
 
 ```bash
 keytool -genkeypair -v \
-  -keystore localmind-release.jks \
+  -keystore clawzilla-release.jks \
   -storetype JKS \
   -keyalg RSA -keysize 4096 -validity 10000 \
   -alias localmind \
   -storepass 'CHANGE_ME_STORE_PASSWORD' \
   -keypass 'CHANGE_ME_KEY_PASSWORD' \
-  -dname "CN=LocalMind, OU=Android, O=LocalMind, L=Unknown, ST=Unknown, C=IN"
+  -dname "CN=Clawzilla, OU=Android, O=Clawzilla, L=Unknown, ST=Unknown, C=IN"
 ```
 
 Field notes, so nobody has to look them up:
 
 - `-keystore` — the output file. Name and location are yours; the examples below
-  assume `localmind-release.jks`.
+  assume `clawzilla-release.jks`.
 - `-storetype JKS` — the format Flutter's documentation uses. `PKCS12` (keytool's
   own default since JDK 9) works too; `apksigner` accepts either.
 - `-keyalg RSA -keysize 4096` and `-validity 10000` (~27 years) — Google Play
@@ -61,7 +61,7 @@ secret**. Add all four:
 
 | Secret | Value |
 |---|---|
-| `ANDROID_KEYSTORE_B64` | the base64 of `localmind-release.jks` (see below) |
+| `ANDROID_KEYSTORE_B64` | the base64 of `clawzilla-release.jks` (see below) |
 | `ANDROID_KEYSTORE_PASSWORD` | the `-storepass` value |
 | `ANDROID_KEY_ALIAS` | the `-alias` value (`localmind`) |
 | `ANDROID_KEY_PASSWORD` | the `-keypass` value |
@@ -74,13 +74,13 @@ flags differ by platform:
 ```bash
 # Linux (GNU coreutils). -w0 disables line wrapping, which matters here: the
 # whole keystore must end up on one line.
-base64 -w0 localmind-release.jks > keystore.b64
+base64 -w0 clawzilla-release.jks > keystore.b64
 
 # macOS (BSD base64). It uses -i / -o, not -w.
-base64 -i localmind-release.jks -o keystore.b64
+base64 -i clawzilla-release.jks -o keystore.b64
 ```
 
-On macOS, if you write `base64 localmind-release.jks` by hand instead, check the
+On macOS, if you write `base64 clawzilla-release.jks` by hand instead, check the
 result is a single line — some builds insert newlines. Paste the entire contents
 of `keystore.b64` (one long line) into `ANDROID_KEYSTORE_B64`.
 
@@ -101,7 +101,7 @@ In `.github/workflows/build-apk.yml`:
 
 When the secret is not set (a fork, or a repo that has not configured signing),
 the build still succeeds but uses the debug key, prints a loud warning, and the
-artifact is renamed `localmind-<version>-DEBUGSIGNED-NOT-UPDATABLE.apk`. Such a
+artifact is renamed `clawzilla-<version>-DEBUGSIGNED-NOT-UPDATABLE.apk`. Such a
 build cannot be installed as an update — the name says so on purpose.
 
 ## One-time uninstall for existing users
@@ -124,7 +124,7 @@ After that single uninstall, every subsequent release installs in place.
 Without CI, either export the four variables:
 
 ```bash
-export ANDROID_KEYSTORE_PATH="$PWD/localmind-release.jks"
+export ANDROID_KEYSTORE_PATH="$PWD/clawzilla-release.jks"
 export ANDROID_KEYSTORE_PASSWORD='...'
 export ANDROID_KEY_ALIAS='localmind'
 export ANDROID_KEY_PASSWORD='...'
@@ -135,7 +135,7 @@ or write `android/key.properties` (path may be absolute or relative to
 `android/app`):
 
 ```properties
-storeFile=/absolute/path/to/localmind-release.jks
+storeFile=/absolute/path/to/clawzilla-release.jks
 storePassword=...
 keyAlias=localmind
 keyPassword=...
@@ -147,10 +147,10 @@ keyPassword=...
 
 ```bash
 AAPT2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
-"$AAPT2" dump badging localmind-1.2.0.apk | sed -n 's/^package: //p'
+"$AAPT2" dump badging clawzilla-1.2.0.apk | sed -n 's/^package: //p'
 
 APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
-"$APKSIGNER" verify --print-certs localmind-1.2.0.apk
+"$APKSIGNER" verify --print-certs clawzilla-1.2.0.apk
 
 sha256sum -c SHA256SUMS
 ```

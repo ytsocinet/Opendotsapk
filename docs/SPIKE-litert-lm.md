@@ -3,7 +3,7 @@
 Status: **spike / decision input**. Owner task: **C8 (LiteRT-LM backend)** in
 `docs/AUDIT_PROGRESS.md`.
 
-Scope: decide whether LocalMind should add Google LiteRT-LM as a second inference
+Scope: decide whether Clawzilla should add Google LiteRT-LM as a second inference
 backend, primarily to reach **MediaTek NPUs** through the LiteRT NeuroPilot
 accelerator, and secondarily as a GPU path. This document is a go/no-go, not an
 implementation plan.
@@ -93,7 +93,7 @@ Note the AAR ships **only `arm64-v8a` and `x86_64`** — no `armeabi-v7a`. That 
 fine for this app (arm64-v8a, and NPU is arm64-v8a-only anyway per
 <https://developers.google.com/edge/litert/next/npu>).
 
-For LocalMind (arm64-v8a only), the engine adds roughly:
+For Clawzilla (arm64-v8a only), the engine adds roughly:
 
 - **~21 MB installed** (the uncompressed `.so`; modern AGP with the default
   `extractNativeLibs=false` maps native libs directly, so this lands in the APK
@@ -140,7 +140,7 @@ product/chipset. This is exactly why Google routes NPU runtimes through **Play
 Feature Delivery** rather than the base APK
 (<https://developers.google.com/edge/litert/next/npu>) — it keeps us inside the
 vendor terms and off the hook for shipping another vendor's binaries to a device
-that cannot use them. Whether LocalMind's own licence and the app-store listing
+that cannot use them. Whether Clawzilla's own licence and the app-store listing
 are compatible with bundling MediaTek NeuroPilot objects directly is **unverified**
 and must be checked before any MediaTek NPU build ships.
 
@@ -224,7 +224,7 @@ one.
   assumes API 31+. Reaching MediaTek NPU at minSdk 28 via bundled dispatch
   libraries is plausible but **unverified** — it is the un-sanctioned path.
 
-If LocalMind keeps minSdk 28, the safe reading is: **CPU/GPU work at 28; NPU is a
+If Clawzilla keeps minSdk 28, the safe reading is: **CPU/GPU work at 28; NPU is a
 31+ feature**, so NPU becomes a per-device capability that must degrade to GPU/CPU
 below 31.
 
@@ -431,4 +431,4 @@ chose, on a model specifically recompiled for that NPU. Decode — the number a 
 user perceives — is **28 tok/s**, which is not 12× anything, and the community
 numbers show single-digit decode differences on mainstream hardware. Vendor ratios
 describe one chip, one model and one benchmark harness; they are not a transferable
-expectation for LocalMind's fleet.
+expectation for Clawzilla's fleet.

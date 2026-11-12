@@ -3,7 +3,7 @@
 Android has always mapped memory in pages, and for most of Android's life the
 page size on 64-bit ARM devices was 4 KB (`0x1000`). Android 15 makes 16 KB
 (`0x4000`) pages a supported configuration, and any app with native code must
-work with both. This document records what that means for LocalMind, what CI
+work with both. This document records what that means for Clawzilla, what CI
 now enforces, the current status of every native library the APK ships, and
 what remains for a human to do.
 
@@ -35,7 +35,7 @@ Google Play requires 16 KB support for apps that target Android 15 (API 35) or
 higher. Google's May 2025 announcement set November 1, 2025 for new apps and
 updates; the current Android compatibility documentation gives February 1, 2027
 as the date after which non-compliant *updates* are blocked. Either way, a
-non-compliant app cannot ship to a 16 KB device, and LocalMind's `targetSdk` is
+non-compliant app cannot ship to a 16 KB device, and Clawzilla's `targetSdk` is
 35, so the app is in scope.
 
 Sources:

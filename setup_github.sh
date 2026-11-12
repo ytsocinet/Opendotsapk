@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# LocalMind -> GitHub -> Codespaces, in one shot.
+# Clawzilla -> GitHub -> Codespaces, in one shot.
 #
 # Usage:  bash setup_github.sh [repo-name]
-# Default repo name: localmind
+# Default repo name: clawzilla
 #
 # What it does:
 #   1. Checks GitHub CLI auth (prompts you to log in once if needed)
@@ -13,10 +13,10 @@
 # Nothing is sent anywhere except to your own GitHub account.
 set -euo pipefail
 
-REPO_NAME="${1:-localmind}"
+REPO_NAME="${1:-clawzilla}"
 
 echo "================================================"
-echo " LocalMind -> GitHub setup"
+echo " Clawzilla -> GitHub setup"
 echo "================================================"
 echo ""
 
@@ -53,7 +53,7 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   git add -A
   git -c user.email="${GH_USER}@users.noreply.github.com" \
       -c user.name="$GH_USER" \
-      commit -q -m "LocalMind: fully local privacy-first AI agent for Android"
+      commit -q -m "Clawzilla: fully local privacy-first AI agent for Android"
 fi
 
 if gh repo view "$GH_USER/$REPO_NAME" >/dev/null 2>&1; then

@@ -32,6 +32,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -51,7 +52,7 @@ class DatabaseHelper {
 
   static Database? _database;
 
-  static const String _dbName = 'localmind.db';
+  static const String _dbName = 'clawzilla.db';
 
   /// Bumped from 1: the schema changed from a broken `vec0` table to real
   /// tables. `onUpgrade` rebuilds the vector store and keeps messages.
@@ -140,6 +141,27 @@ class DatabaseHelper {
   Future<Database> _init() async {
     final dir = await getDatabasesPath();
     final path = join(dir, _dbName);
+
+    // Build #87 renamed the database file (localmind.db -> clawzilla.db).
+    // A reinstall starts fresh, but an update over an existing install keeps
+    // the old file: move it (and its -journal/-wal/-shm sidecars) once so
+    // existing chats, notes and memories survive the rename. The encryption
+    // key is unchanged — same `localmind.db.key` keystore alias, deliberately,
+    // so the moved database still decrypts.
+    const legacyName = 'localmind.db';
+    if (legacyName != _dbName) {
+      final legacyPath = join(dir, legacyName);
+      if (await File(legacyPath).exists() &&
+          !await File(path).exists()) {
+        await File(legacyPath).rename(path);
+        for (final suffix in ['-journal', '-wal', '-shm']) {
+          final sidecar = File('$legacyPath$suffix');
+          if (await sidecar.exists()) {
+            await sidecar.rename('$path$suffix');
+          }
+        }
+      }
+    }
 
     return openDatabase(
       path,

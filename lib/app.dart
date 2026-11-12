@@ -14,8 +14,8 @@ import 'core/theme/motion.dart';
 /// A [ConsumerWidget] so the theme follows the theme-colour setting: the
 /// picked colour is written to [AppColors.brand] here, before the theme is
 /// built, and the whole [MaterialApp] rebuilds when the setting changes.
-class LocalMindApp extends ConsumerWidget {
-  const LocalMindApp({super.key});
+class ClawzillaApp extends ConsumerWidget {
+  const ClawzillaApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

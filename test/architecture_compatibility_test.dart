@@ -6,7 +6,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/domain/models/local_model.dart';
+import 'package:clawzilla/domain/models/local_model.dart';
 
 void main() {
   group('Architecture compatibility', () {

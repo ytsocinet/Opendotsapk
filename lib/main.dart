@@ -147,7 +147,7 @@ Future<void> main() async {
   }
 
   runZonedGuarded(
-    () => runApp(const ProviderScope(child: LocalMindApp())),
+    () => runApp(const ProviderScope(child: ClawzillaApp())),
     (error, stack) {
       try {
         crashLog?.writeAsStringSync(

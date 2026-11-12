@@ -1,4 +1,4 @@
-name: localmind
+name: clawzilla
 description: A fully local, privacy-first AI agent that runs entirely on-device.
 publish_to: 'none'
 # The version name must equal the release tag (v1.2.0 -> 1.2.0): the release

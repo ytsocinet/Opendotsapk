@@ -71,7 +71,7 @@ class AppConstants {
   static const int embeddingDimension = 384;
 
   // ------------------------------------------------------------------ database
-  static const String databaseName = 'localmind.db';
+  static const String databaseName = 'clawzilla.db';
   static const int vectorDimension = 384;
 
   // ---------------------------------------------------------------------- RAG

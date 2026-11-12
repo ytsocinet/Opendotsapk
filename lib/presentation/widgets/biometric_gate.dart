@@ -20,7 +20,7 @@ import 'package:local_auth/local_auth.dart';
 
 import '../../core/utils/log.dart';
 
-/// Dart side of the `com.localmind.localmind/secure_screen` platform channel.
+/// Dart side of the `com.clawzilla.clawzilla/secure_screen` platform channel.
 ///
 /// Sets `FLAG_SECURE` (and, on API 33+, `setRecentsScreenshotEnabled(false)`)
 /// so the OS keeps note contents out of screenshots and the recents thumbnail.
@@ -31,7 +31,7 @@ class SecureScreen {
   SecureScreen._();
 
   static const MethodChannel _channel = MethodChannel(
-    'com.localmind.localmind/secure_screen',
+    'com.clawzilla.clawzilla/secure_screen',
   );
 
   /// Block screenshots and the recents thumbnail.

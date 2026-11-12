@@ -1,4 +1,4 @@
-# LocalMind Architecture — v1.6.1
+# Clawzilla Architecture — v1.6.1
 
 ## Stack
 

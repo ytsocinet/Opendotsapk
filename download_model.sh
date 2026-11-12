@@ -1,5 +1,5 @@
 #!/bin/bash
-# Model downloader for LocalMind (desktop helper — the app can also download
+# Model downloader for Clawzilla (desktop helper — the app can also download
 # models itself from Settings -> Models).
 #
 # Downloads the GGUF models listed in lib/domain/models/local_model.dart.
@@ -32,7 +32,7 @@ MOON_MMPROJ_URL="$HF/cjpais/moondream2-llamafile/resolve/main/$MOON_MMPROJ_NAME"
 
 usage() {
   cat <<EOF
-LocalMind model downloader
+Clawzilla model downloader
 
 Usage: $0 [target]
 
