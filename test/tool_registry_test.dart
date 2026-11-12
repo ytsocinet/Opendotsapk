@@ -114,6 +114,12 @@ void main() {
       // so the model can know where he is and the temperature.
       expect(offered, contains('get_location'));
 
+      // Project files left the gate (Nov 12, 2026, build #86): Aaron
+      // said Cypher can edit code too, so the model may read and write
+      // inside the Projects folder — and nowhere else.
+      expect(offered, contains('read_project_file'));
+      expect(offered, contains('write_project_file'));
+
       // These do nothing yet, so the model must not see them.
       expect(offered, isNot(contains('send_sms')));
       expect(offered, isNot(contains('add_contact')));

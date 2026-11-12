@@ -1,9 +1,11 @@
 /// Main screen with a left slide-out drawer.
 ///
-/// Six destinations. Chat and the model list are separate because picking a
+/// Nine destinations. Chat and the model list are separate because picking a
 /// model is a settings-shaped task, while Memory and Activity are read-mostly.
 /// Browser is last on purpose: the original five keep their indices, so
-/// nothing that addressed a tab by number moves. The drawer opens from the
+/// nothing that addressed a tab by number moves. Tasks, Goals and Projects
+/// sit after Settings for the same reason — they were added later (build
+/// #86) without shifting the original five. The drawer opens from the
 /// menu button in the chat header, from the menu button on the other tabs'
 /// app bars, or by swiping in from the left edge.
 library;
@@ -16,9 +18,12 @@ import '../../core/theme/motion.dart';
 import '../providers/providers.dart';
 import 'browser_screen.dart';
 import 'chat_screen.dart';
+import 'goals_screen.dart';
 import 'memory_screen.dart';
 import 'activity_screen.dart';
+import 'projects_screen.dart';
 import 'settings_screen.dart';
+import 'tasks_screen.dart';
 import 'tools_screen.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
@@ -34,7 +39,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   /// The Browser tab's index. A link tapped in chat writes
   /// [browserOpenRequestProvider]; this shell switches to the tab and the
   /// BrowserScreen loads the URL.
-  static const int _browserIndex = 5;
+  static const int _browserIndex = 8;
 
   // The tab bodies are held in a const list and never rebuilt, which is what
   // preserves each tab's state: rebuilding Chat would drop a half-typed
@@ -45,6 +50,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     ToolsScreen(),
     ActivityScreen(),
     SettingsScreen(),
+    TasksScreen(),
+    GoalsScreen(),
+    ProjectsScreen(),
     BrowserScreen(),
   ];
 
@@ -256,6 +264,24 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             ),
             _drawerTile(
               index: 5,
+              icon: Icons.checklist_outlined,
+              selectedIcon: Icons.checklist,
+              label: 'Tasks',
+            ),
+            _drawerTile(
+              index: 6,
+              icon: Icons.flag_outlined,
+              selectedIcon: Icons.flag,
+              label: 'Goals',
+            ),
+            _drawerTile(
+              index: 7,
+              icon: Icons.folder_outlined,
+              selectedIcon: Icons.folder,
+              label: 'Projects',
+            ),
+            _drawerTile(
+              index: 8,
               icon: Icons.public_outlined,
               selectedIcon: Icons.public,
               label: 'Browser',

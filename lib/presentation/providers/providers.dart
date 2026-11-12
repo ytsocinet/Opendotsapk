@@ -754,6 +754,12 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // picked in Settings. Null means "no folder picked yet".
     'models_folder': null,
 
+    // Projects folder: a folder on the phone that holds the user's
+    // project files, picked in Settings. Null means "no folder picked
+    // yet". The IDE edits files here, and Cypher may read and write
+    // inside it too.
+    'projects_folder': null,
+
     // Theme colour: the accent the whole app is seeded from, stored as
     // the colour's ARGB int. Matrix green by default.
     'theme_color': 0xFF00FF66,
@@ -819,6 +825,7 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'chat_mode',
       'thinking_effort',
       'models_folder',
+      'projects_folder',
       'connected_apps',
       'tts_voice',
     ]) {
@@ -826,6 +833,16 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       if (raw != null && raw.isNotEmpty) {
         state = Map.from(state)..[key] = raw;
       }
+    }
+
+    // Theme colour is an int (ARGB), stored as its decimal string form.
+    // It was missing from the load list when the setting landed (build
+    // #85), so a picked colour reset to green on the next launch; fixed
+    // in build #86.
+    final themeColor = await _db.getPreference('theme_color');
+    if (themeColor != null) {
+      state = Map.from(state)
+        ..['theme_color'] = int.tryParse(themeColor) ?? 0xFF00FF66;
     }
 
     // Mirror private mode onto the router *before* any probe runs, so the

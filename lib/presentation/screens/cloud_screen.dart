@@ -377,115 +377,6 @@ class _CloudModelsScreenState extends ConsumerState<CloudModelsScreen> {
       ),
     );
   }
-
-  /// Health check: one minimal request against every provider that has a
-  /// key (plus the key-optional ones, e.g. Ollama-LAN). Providers without
-  /// a key are listed as skipped, not failed. A saved model id that the
-  /// provider has since retired is flagged and the provider default is
-  /// tested instead — the same fallback the router applies.
-  Future<void> _runHealthCheck() async {
-    setState(() {
-      _healthBusy = true;
-      _healthResults = null;
-    });
-    final results = <({String name, String status, String note})>[];
-    for (final p in CloudCatalog.providers) {
-      final has = await SecureStore.instance.hasApiKey(p.id);
-      final optional = CloudCatalog.keyOptional.contains(p.id);
-      if (!has && !optional) {
-        results.add((
-          name: p.displayName,
-          status: 'skip',
-          note: 'No key saved',
-        ));
-        continue;
-      }
-      final cfg = await SecureStore.instance.providerConfig(p.id);
-      final stored = cfg['model'] as String?;
-      final retired = stored != null && p.modelById(stored) == null;
-      final modelId = retired ? p.defaultModel.id : (stored ?? p.defaultModel.id);
-      try {
-        await CloudService.instance.testConnection(
-          provider: p,
-          modelId: modelId,
-        );
-        results.add((
-          name: p.displayName,
-          status: 'ok',
-          note: retired
-              ? 'Saved model retired — tested '
-                  '${p.defaultModel.displayName} instead'
-              : 'Key works · ${p.modelById(modelId)?.displayName ?? modelId}',
-        ));
-      } catch (e) {
-        results.add((name: p.displayName, status: 'fail', note: '$e'));
-      }
-    }
-    if (!mounted) return;
-    setState(() {
-      _healthBusy = false;
-      _healthResults = results;
-    });
-  }
-
-  Widget _healthCard() {
-    final theme = Theme.of(context);
-    return ScreenSection(
-      title: 'Health check',
-      subtitle:
-          'One tap tests every saved key and flags retired models.',
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          FilledButton.icon(
-            onPressed: _healthBusy ? null : _runHealthCheck,
-            icon: _healthBusy
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.health_and_safety_outlined, size: 18),
-            label: Text(_healthBusy ? 'Testing…' : 'Test all saved keys'),
-          ),
-          if (_healthResults != null) ...[
-            const SizedBox(height: 12),
-            for (final r in _healthResults!)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      switch (r.status) {
-                        'ok' => Icons.check_circle_outline,
-                        'fail' => Icons.error_outline,
-                        _ => Icons.remove_circle_outline,
-                      },
-                      size: 18,
-                      color: switch (r.status) {
-                        'ok' => AppColors.success,
-                        'fail' => AppColors.danger,
-                        _ => theme.colorScheme.onSurfaceVariant,
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${r.name} — ${r.note}',
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-
 }
 
 /// The on-device / cloud contrast at the top of the screen.
@@ -991,5 +882,113 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
     }
     RouterService.instance.setCandidates(candidates);
     Log.i('cloud: router now has ${candidates.length} candidate(s)');
+  }
+
+  /// Health check: one minimal request against every provider that has a
+  /// key (plus the key-optional ones, e.g. Ollama-LAN). Providers without
+  /// a key are listed as skipped, not failed. A saved model id that the
+  /// provider has since retired is flagged and the provider default is
+  /// tested instead — the same fallback the router applies.
+  Future<void> _runHealthCheck() async {
+    setState(() {
+      _healthBusy = true;
+      _healthResults = null;
+    });
+    final results = <({String name, String status, String note})>[];
+    for (final p in CloudCatalog.providers) {
+      final has = await SecureStore.instance.hasApiKey(p.id);
+      final optional = CloudCatalog.keyOptional.contains(p.id);
+      if (!has && !optional) {
+        results.add((
+          name: p.displayName,
+          status: 'skip',
+          note: 'No key saved',
+        ));
+        continue;
+      }
+      final cfg = await SecureStore.instance.providerConfig(p.id);
+      final stored = cfg['model'] as String?;
+      final retired = stored != null && p.modelById(stored) == null;
+      final modelId = retired ? p.defaultModel.id : (stored ?? p.defaultModel.id);
+      try {
+        await CloudService.instance.testConnection(
+          provider: p,
+          modelId: modelId,
+        );
+        results.add((
+          name: p.displayName,
+          status: 'ok',
+          note: retired
+              ? 'Saved model retired — tested '
+                  '${p.defaultModel.displayName} instead'
+              : 'Key works · ${p.modelById(modelId)?.displayName ?? modelId}',
+        ));
+      } catch (e) {
+        results.add((name: p.displayName, status: 'fail', note: '$e'));
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _healthBusy = false;
+      _healthResults = results;
+    });
+  }
+
+  Widget _healthCard() {
+    final theme = Theme.of(context);
+    return ScreenSection(
+      title: 'Health check',
+      subtitle:
+          'One tap tests every saved key and flags retired models.',
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FilledButton.icon(
+            onPressed: _healthBusy ? null : _runHealthCheck,
+            icon: _healthBusy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.health_and_safety_outlined, size: 18),
+            label: Text(_healthBusy ? 'Testing…' : 'Test all saved keys'),
+          ),
+          if (_healthResults != null) ...[
+            const SizedBox(height: 12),
+            for (final r in _healthResults!)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      switch (r.status) {
+                        'ok' => Icons.check_circle_outline,
+                        'fail' => Icons.error_outline,
+                        _ => Icons.remove_circle_outline,
+                      },
+                      size: 18,
+                      color: switch (r.status) {
+                        'ok' => AppColors.success,
+                        'fail' => AppColors.danger,
+                        _ => theme.colorScheme.onSurfaceVariant,
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${r.name} — ${r.note}',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
   }
 }

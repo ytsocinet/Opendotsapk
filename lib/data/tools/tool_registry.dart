@@ -23,6 +23,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
@@ -211,6 +212,50 @@ class ToolRegistry {
         implemented: true,
       ),
     );
+
+    add(
+      ToolDefinition(
+        name: 'read_project_file',
+        description:
+            'Read a text file inside the user\'s Projects folder — the '
+            'folder picked in Settings → Projects folder. The path is '
+            'relative to that folder, e.g. "lib/main.dart". Use it when '
+            'asked about code or files in the project. Nothing outside '
+            'the Projects folder can be read.',
+        parameters: {
+          'path': {
+            'type': 'string',
+            'description': 'Path relative to the Projects folder',
+          },
+        },
+        required: ['path'],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'write_project_file',
+        description:
+            'Write or create a text file inside the user\'s Projects '
+            'folder — the folder picked in Settings → Projects folder. '
+            'The path is relative to that folder, e.g. '
+            '"lib/main.dart". Parent folders are created as needed. '
+            'Nothing outside the Projects folder can be written.',
+        parameters: {
+          'path': {
+            'type': 'string',
+            'description': 'Path relative to the Projects folder',
+          },
+          'content': {
+            'type': 'string',
+            'description': 'The full text to write into the file',
+          },
+        },
+        required: ['path', 'content'],
+        implemented: true,
+      ),
+    );
   }
 
   /// Every registered definition, implemented or not.
@@ -312,8 +357,135 @@ class ToolRegistry {
         return _executeOpenApp(params);
       case 'share_to_app':
         return _executeShareToApp(params);
+      case 'read_project_file':
+        return _executeReadProjectFile(params);
+      case 'write_project_file':
+        return _executeWriteProjectFile(params);
       default:
         return ToolResult.unsupported('No implementation for "$toolName".');
+    }
+  }
+
+  /// The Projects folder, or null when none is picked.
+  ///
+  /// Read straight from the preferences table — the registry is not a
+  /// Riverpod consumer, and this is the same store the settings screen
+  /// writes to. An empty string means "removed", same as null.
+  Future<String?> _projectsRoot() async {
+    final raw =
+        await DatabaseHelper.instance.getPreference('projects_folder');
+    if (raw == null || raw.trim().isEmpty) return null;
+    return raw.trim();
+  }
+
+  /// Resolve [relativePath] inside [root], or null when it escapes.
+  ///
+  /// Absolute paths and `..` segments are refused: a model that guesses
+  /// a path must never reach outside the folder the user pointed at.
+  /// Returns the resolved absolute path when it stays inside [root].
+  String? _resolveInside(String root, String relativePath) {
+    final rel = relativePath.trim();
+    if (rel.isEmpty || p.isAbsolute(rel)) return null;
+    final resolved = p.normalize(p.join(root, rel));
+    if (!p.isWithin(root, resolved)) return null;
+    return resolved;
+  }
+
+  /// Read a text file inside the Projects folder. Content over the cap
+  /// is truncated with a note rather than handed to the model whole —
+  /// a small model drowns in a 200 KB file either way.
+  static const int _projectReadCap = 50000;
+
+  Future<ToolResult> _executeReadProjectFile(
+    Map<String, dynamic> params,
+  ) async {
+    final rel = (params['path'] as String?)?.trim();
+    if (rel == null || rel.isEmpty) {
+      return ToolResult.failed(
+        'read_project_file requires a "path" relative to the Projects folder.',
+      );
+    }
+    final root = await _projectsRoot();
+    if (root == null) {
+      return ToolResult.unsupported(
+        'No Projects folder is picked yet. Ask the user to pick one in '
+        'Settings → Projects folder first.',
+      );
+    }
+    final resolved = _resolveInside(root, rel);
+    if (resolved == null) {
+      return ToolResult.failed(
+        'That path is outside the Projects folder — refused.',
+      );
+    }
+    final file = File(resolved);
+    if (!await file.exists()) {
+      return ToolResult.failed('No such file in the Projects folder: $rel');
+    }
+    try {
+      final text = await file.readAsString();
+      final truncated = text.length > _projectReadCap;
+      final shown = truncated
+          ? text.substring(0, _projectReadCap)
+          : text;
+      return ToolResult.success(
+        truncated
+            ? 'Read $rel (first $_projectReadCap characters — the file is longer).'
+            : 'Read $rel.',
+        data: {'path': rel, 'content': shown, 'truncated': truncated},
+      );
+    } catch (e) {
+      return ToolResult.failed('Could not read $rel: $e');
+    }
+  }
+
+  /// Write a text file inside the Projects folder, creating parent
+  /// folders as needed. Content over the cap is refused outright rather
+  /// than half-written.
+  static const int _projectWriteCap = 200000;
+
+  Future<ToolResult> _executeWriteProjectFile(
+    Map<String, dynamic> params,
+  ) async {
+    final rel = (params['path'] as String?)?.trim();
+    if (rel == null || rel.isEmpty) {
+      return ToolResult.failed(
+        'write_project_file requires a "path" relative to the Projects folder.',
+      );
+    }
+    final content = params['content'] as String?;
+    if (content == null) {
+      return ToolResult.failed('write_project_file requires "content".');
+    }
+    if (content.length > _projectWriteCap) {
+      return ToolResult.failed(
+        'That content is over $_projectWriteCap characters — too big to '
+        'write in one go. Split it into smaller files.',
+      );
+    }
+    final root = await _projectsRoot();
+    if (root == null) {
+      return ToolResult.unsupported(
+        'No Projects folder is picked yet. Ask the user to pick one in '
+        'Settings → Projects folder first.',
+      );
+    }
+    final resolved = _resolveInside(root, rel);
+    if (resolved == null) {
+      return ToolResult.failed(
+        'That path is outside the Projects folder — refused.',
+      );
+    }
+    try {
+      final file = File(resolved);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(content);
+      return ToolResult.success(
+        'Wrote $rel (${content.length} characters).',
+        data: {'path': rel, 'characters': content.length},
+      );
+    } catch (e) {
+      return ToolResult.failed('Could not write $rel: $e');
     }
   }
 

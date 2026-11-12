@@ -135,6 +135,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
             const SizedBox(height: 24),
 
             FadeSlideIn(
+              delay: const Duration(milliseconds: 28),
+              child: ScreenSection(
+                title: 'Projects folder',
+                subtitle: 'Where your project files live. The IDE and Cypher edit code here.',
+                padding: EdgeInsets.zero,
+                child: _ProjectsFolderSetting(
+                  onChanged: () => _triggerFeedback('projects_folder'),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            FadeSlideIn(
               delay: const Duration(milliseconds: 33),
               child: ScreenSection(
                 title: 'Appearance',
@@ -1668,6 +1681,84 @@ class _ModelsFolderSetting extends ConsumerWidget {
                 await ref
                     .read(settingsProvider.notifier)
                     .updateSetting('models_folder', '');
+                onChanged();
+              },
+              child: const Text('Remove folder'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Projects folder: the folder the IDE opens and Cypher may read and
+/// write inside. Same picker pattern as the models folder.
+class _ProjectsFolderSetting extends ConsumerWidget {
+  const _ProjectsFolderSetting({required this.onChanged});
+
+  final VoidCallback onChanged;
+
+  Future<void> _pickFolder(BuildContext context, WidgetRef ref) async {
+    final path = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Pick your projects folder',
+    );
+    if (path == null) return;
+    await ref
+        .read(settingsProvider.notifier)
+        .updateSetting('projects_folder', path);
+    onChanged();
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final folderRaw =
+        ref.watch(settingsProvider)['projects_folder'] as String?;
+    final folder =
+        (folderRaw == null || folderRaw.isEmpty) ? null : folderRaw;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.folder_outlined,
+                size: 20,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  folder ??
+                      'No folder picked yet — point Cypher at a folder to edit code in it.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: folder == null
+                        ? scheme.onSurfaceVariant
+                        : null,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonal(
+                onPressed: () => _pickFolder(context, ref),
+                child: Text(folder == null ? 'Pick a folder' : 'Change'),
+              ),
+            ],
+          ),
+          if (folder != null) ...[
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () async {
+                await ref
+                    .read(settingsProvider.notifier)
+                    .updateSetting('projects_folder', '');
                 onChanged();
               },
               child: const Text('Remove folder'),

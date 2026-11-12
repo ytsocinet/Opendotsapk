@@ -146,7 +146,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                   child: Container(
                     padding: const EdgeInsets.all(26),
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
+                      gradient: const LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: [AppColors.brand, AppColors.accent],

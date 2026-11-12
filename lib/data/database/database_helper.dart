@@ -57,10 +57,14 @@ class DatabaseHelper {
   /// tables. `onUpgrade` rebuilds the vector store and keeps messages.
   /// Bumped to 3: side chats — a `conversations` table, and every message
   /// belongs to one conversation.
-  static const int _schemaVersion = 3;
+  /// Bumped to 4: Tasks and Goals — two plain tables for the in-app
+  /// task and goal lists (build #86).
+  static const int _schemaVersion = 4;
 
   static const String tableMessages = 'messages';
   static const String tableConversations = 'conversations';
+  static const String tableTasks = 'tasks';
+  static const String tableGoals = 'goals';
 
   /// The conversation pre-existing messages are assigned to on upgrade.
   /// A fixed id (not a generated one) so the migration is deterministic
@@ -167,6 +171,7 @@ class DatabaseHelper {
     await _createVectorTables(db);
     await _createDocumentTables(db);
     await _createConversationTables(db);
+    await _createTaskTables(db);
 
     // Messages written before conversations existed have no conversation.
     // They belong to the default one, so no history is lost by the upgrade.
@@ -257,6 +262,41 @@ class DatabaseHelper {
     await _createConversationTables(db);
     await _createVectorTables(db);
     await _createDocumentTables(db);
+    await _createTaskTables(db);
+  }
+
+  /// Tasks and Goals (build #86): two plain tables, no encryption — a
+  /// task title and a goal note are short labels, like conversation
+  /// titles, not message bodies. Created with IF NOT EXISTS so both a
+  /// fresh install and the v4 upgrade land on the same schema.
+  Future<void> _createTaskTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableTasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        done INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableGoals (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        done INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_tasks_created '
+      'ON $tableTasks(created_at)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_goals_created '
+      'ON $tableGoals(created_at)',
+    );
   }
 
   /// The memory store: one row per embedded passage.
@@ -476,6 +516,104 @@ class DatabaseHelper {
       where: 'conversation_id = ?',
       whereArgs: [conversationId],
     );
+  }
+
+  // ------------------------------------------------------------- tasks
+
+  Future<String> insertTask({
+    required String id,
+    required String title,
+    required int timestamp,
+  }) async {
+    final db = await database;
+    await db.insert(tableTasks, {
+      'id': id,
+      'title': title,
+      'done': 0,
+      'created_at': timestamp,
+      'updated_at': timestamp,
+    });
+    return id;
+  }
+
+  /// All tasks, newest first. `done` reads back as 0/1.
+  Future<List<Map<String, dynamic>>> getTasks() async {
+    final db = await database;
+    return db.query(tableTasks, orderBy: 'created_at DESC');
+  }
+
+  Future<int> setTaskDone({
+    required String id,
+    required bool done,
+  }) async {
+    final db = await database;
+    return db.update(
+      tableTasks,
+      {
+        'done': done ? 1 : 0,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<int> deleteTask(String id) async {
+    final db = await database;
+    return db.delete(tableTasks, where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ------------------------------------------------------------- goals
+
+  Future<String> insertGoal({
+    required String id,
+    required String title,
+    String notes = '',
+    required int timestamp,
+  }) async {
+    final db = await database;
+    await db.insert(tableGoals, {
+      'id': id,
+      'title': title,
+      'notes': notes,
+      'done': 0,
+      'created_at': timestamp,
+      'updated_at': timestamp,
+    });
+    return id;
+  }
+
+  /// All goals, newest first.
+  Future<List<Map<String, dynamic>>> getGoals() async {
+    final db = await database;
+    return db.query(tableGoals, orderBy: 'created_at DESC');
+  }
+
+  /// Update any subset of a goal's fields. Only the supplied ones change.
+  Future<int> updateGoal({
+    required String id,
+    String? title,
+    String? notes,
+    bool? done,
+  }) async {
+    final db = await database;
+    final values = <String, Object?>{
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    };
+    if (title != null) values['title'] = title;
+    if (notes != null) values['notes'] = notes;
+    if (done != null) values['done'] = done ? 1 : 0;
+    return db.update(
+      tableGoals,
+      values,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<int> deleteGoal(String id) async {
+    final db = await database;
+    return db.delete(tableGoals, where: 'id = ?', whereArgs: [id]);
   }
 
   // ------------------------------------------------------------- memories
@@ -1127,6 +1265,8 @@ class DatabaseHelper {
       tableVectors,
       tableMessages,
       tableNotes,
+      tableTasks,
+      tableGoals,
       tableActivityLog,
       tableUserPreferences,
     ]) {
