@@ -9,6 +9,16 @@
 ///    providers (Anthropic, Gemini) get their own wire format.
 ///  * **Local stays the default.** Nothing here is contacted unless the user
 ///    adds a key *and* the router selects cloud for a given turn.
+///
+/// Model IDs are refreshed Nov 12, 2026 — the old lists had gone stale and
+/// the APIs were failing: `gemini-2.0-flash` shut down June 1, 2026,
+/// `gemini-2.5-pro` was deprecated Nov 2, 2026 (routed to `gemini-3.8-flash`
+/// from Dec 1), and Groq shut both Llama models down for free/developer
+/// keys on Aug 16, 2026. A saved model that is no longer in its provider's
+/// list falls back to that provider's default (see `_refreshRouter` in
+/// the Cloud screen), so a stale pick fails over instead of 404ing.
+/// Prices marked 0 were not pinned when the list was written; the UI hides
+/// them rather than showing a made-up number.
 library;
 
 enum CloudWireFormat {
@@ -94,6 +104,21 @@ class CloudCatalog {
       keyHint: 'sk-',
       models: [
         CloudModel(
+          id: 'gpt-5.6-sol',
+          displayName: 'GPT-5.6 Sol',
+          contextTokens: 128000,
+          // Promotional pricing until Nov 30, 2026; check before trusting it.
+          inputPricePerM: 4.00,
+          outputPricePerM: 20.00,
+          supportsVision: true,
+        ),
+        CloudModel(
+          id: 'gpt-5.6-terra',
+          displayName: 'GPT-5.6 Terra',
+          contextTokens: 128000,
+          supportsVision: true,
+        ),
+        CloudModel(
           id: 'gpt-4o-mini',
           displayName: 'GPT-4o mini',
           contextTokens: 128000,
@@ -119,20 +144,20 @@ class CloudCatalog {
       keyUrl: 'https://console.anthropic.com/settings/keys',
       keyHint: 'sk-ant-',
       models: [
+        // Sonnet 4.5 retires Nov 30, 2026; Sonnet 5-5 is Anthropic's named
+        // replacement.
+        CloudModel(
+          id: 'claude-sonnet-5-5',
+          displayName: 'Claude Sonnet 5-5',
+          contextTokens: 200000,
+          supportsVision: true,
+        ),
         CloudModel(
           id: 'claude-3-5-haiku-latest',
           displayName: 'Claude 3.5 Haiku',
           contextTokens: 200000,
           inputPricePerM: 0.80,
           outputPricePerM: 4.00,
-          supportsVision: true,
-        ),
-        CloudModel(
-          id: 'claude-sonnet-4-20250514',
-          displayName: 'Claude Sonnet 4',
-          contextTokens: 200000,
-          inputPricePerM: 3.00,
-          outputPricePerM: 15.00,
           supportsVision: true,
         ),
       ],
@@ -144,20 +169,19 @@ class CloudCatalog {
       defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       keyUrl: 'https://aistudio.google.com/app/apikey',
       models: [
+        // Google's own advice for new projects (Nov 2026): 3.8 Flash for
+        // everyday work, 3.5 Flash-Lite for the cheap seat. The free AI
+        // Studio tier is $0, so no prices are shown.
         CloudModel(
-          id: 'gemini-2.0-flash',
-          displayName: 'Gemini 2.0 Flash',
+          id: 'gemini-3.8-flash',
+          displayName: 'Gemini 3.8 Flash',
           contextTokens: 1000000,
-          inputPricePerM: 0.10,
-          outputPricePerM: 0.40,
           supportsVision: true,
         ),
         CloudModel(
-          id: 'gemini-2.5-pro',
-          displayName: 'Gemini 2.5 Pro',
+          id: 'gemini-3.5-flash-lite',
+          displayName: 'Gemini 3.5 Flash-Lite',
           contextTokens: 1000000,
-          inputPricePerM: 1.25,
-          outputPricePerM: 10.00,
           supportsVision: true,
         ),
       ],
@@ -170,19 +194,21 @@ class CloudCatalog {
       keyUrl: 'https://console.groq.com/keys',
       keyHint: 'gsk_',
       models: [
+        // Groq's own replacements for the Llama models it shut down for
+        // free/developer keys on Aug 16, 2026.
         CloudModel(
-          id: 'llama-3.3-70b-versatile',
-          displayName: 'Llama 3.3 70B',
-          contextTokens: 128000,
-          inputPricePerM: 0.59,
-          outputPricePerM: 0.79,
+          id: 'openai/gpt-oss-120b',
+          displayName: 'GPT-OSS 120B',
+          contextTokens: 131072,
+          inputPricePerM: 0.15,
+          outputPricePerM: 0.60,
         ),
         CloudModel(
-          id: 'llama-3.1-8b-instant',
-          displayName: 'Llama 3.1 8B Instant',
-          contextTokens: 128000,
-          inputPricePerM: 0.05,
-          outputPricePerM: 0.08,
+          id: 'openai/gpt-oss-20b',
+          displayName: 'GPT-OSS 20B',
+          contextTokens: 131072,
+          inputPricePerM: 0.075,
+          outputPricePerM: 0.30,
         ),
       ],
     ),

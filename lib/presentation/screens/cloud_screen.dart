@@ -863,7 +863,14 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
       if (!has && !CloudCatalog.keyOptional.contains(p.id)) continue;
 
       final cfg = await SecureStore.instance.providerConfig(p.id);
-      final modelId = cfg['model'] ?? p.defaultModel.id;
+      // A saved model can die underneath the app — providers retire IDs
+      // (Gemini 2.0 Flash, Groq's Llamas) — so a stored id that is no
+      // longer in the provider's list falls back to the default instead
+      // of sending a 404 to the API on every cloud turn.
+      final stored = cfg['model'] as String?;
+      final modelId = stored != null && p.modelById(stored) != null
+          ? stored
+          : p.defaultModel.id;
       candidates.add((provider: p, modelId: modelId));
     }
     RouterService.instance.setCandidates(candidates);

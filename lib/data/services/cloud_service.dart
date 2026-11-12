@@ -212,7 +212,12 @@ class CloudService {
       'model': turn.modelId,
       'messages': messages,
       'temperature': turn.temperature,
-      'max_tokens': turn.maxTokens,
+      // `max_completion_tokens`, not `max_tokens`: newer OpenAI models
+      // (GPT-5 and later) reject `max_tokens` outright, while every model
+      // on this path — OpenAI, Groq, DeepSeek, OpenRouter, Ollama — accepts
+      // `max_completion_tokens`. The Anthropic body below keeps
+      // `max_tokens`; that API requires it.
+      'max_completion_tokens': turn.maxTokens,
       'stream': true,
       if (turn.tools.isNotEmpty) 'tools': turn.tools,
     };

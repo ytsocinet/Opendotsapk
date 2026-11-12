@@ -30,6 +30,7 @@ import '../../core/utils/json_extract.dart';
 import '../../domain/models/tool_result.dart';
 import '../services/connected_apps_store.dart';
 import '../services/llm_service.dart';
+import '../services/location_weather_service.dart';
 import 'tool_permission_store.dart';
 import '../database/database_helper.dart';
 
@@ -159,7 +160,9 @@ class ToolRegistry {
     add(
       ToolDefinition(
         name: 'get_location',
-        description: 'Get the device current location.',
+        description:
+            'Get the device current location: city and temperature. '
+            'Use it when asked where the user is or what the weather is.',
         parameters: {},
         required: const [],
         implemented: true,
@@ -502,13 +505,31 @@ class ToolRegistry {
     try {
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+      // A stale last-known fix is a fix from somewhere else; refuse it
+      // rather than reporting the wrong city and temperature.
+      if (DateTime.now().difference(position.timestamp) >
+          const Duration(minutes: 2)) {
+        return ToolResult.failed(
+          'Could not get a fresh location fix. Say the location is '
+          'unknown rather than guessing.',
+        );
+      }
+      // A raw lat/lon plus a timestamp is what a small model answers with
+      // when asked "where am I?" — it reads the timestamp as the location.
+      // Hand it the city and the temperature instead, and leave the
+      // timestamp out entirely so there is nothing to mistake it for.
+      final place = await LocationWeatherService().getLineAt(
+        position.latitude,
+        position.longitude,
       );
       return ToolResult.success(
         'Location acquired.',
         data: {
           'latitude': position.latitude,
           'longitude': position.longitude,
-          'timestamp': position.timestamp.toIso8601String(),
+          if (place != null) 'place': place,
         },
       );
     } catch (e) {

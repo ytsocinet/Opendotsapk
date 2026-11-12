@@ -2,9 +2,17 @@
 ///
 /// Free, no API key: Open-Meteo for the current temperature (Fahrenheit)
 /// and Nominatim (OpenStreetMap) for the city/state name. Both calls are
-/// cached for 30 minutes, and every failure returns null — the prompt just
-/// omits the location line instead of breaking the send, and a denied
+/// cached for 10 minutes, and every failure returns null — the prompt then
+/// says the location is unknown instead of breaking the send, and a denied
 /// location permission means the line never appears at all.
+///
+/// The line is labeled, not prose — `LOCATION: ...` / `WEATHER: ...` —
+///
+/// because a small model asked "where am I?" used to answer with the time
+/// from the date line when this line was missing or worded like a sentence.
+/// Labels keep the two apart, and a line built from only half the lookups
+/// (place without weather, or the reverse) still says something true
+/// instead of dropping everything.
 library;
 
 import 'dart:convert';
@@ -14,13 +22,13 @@ import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 
 class LocationWeatherService {
-  static const _cacheTtl = Duration(minutes: 30);
+  static const _cacheTtl = Duration(minutes: 10);
 
   String? _cachedLine;
   DateTime? _cachedAt;
 
-  /// A one-line summary for the system prompt, e.g.
-  /// "You are in Indianapolis, Indiana. It is 45°F and cloudy."
+  /// A labeled summary for the system prompt, e.g.
+  /// "LOCATION: Indianapolis, Indiana\nWEATHER: 45°F and cloudy."
   /// Returns the cached line when fresh, null when unavailable.
   Future<String?> getLine() async {
     if (_cachedLine != null &&
@@ -36,23 +44,63 @@ class LocationWeatherService {
     return line;
   }
 
+  /// The same line for coordinates the caller already has (the
+  /// `get_location` tool): city and temperature, without another GPS fix.
+  /// No caching here — the caller asked for this moment's answer.
+  Future<String?> getLineAt(double lat, double lon) async {
+    try {
+      return await _lineFor(lat, lon);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<String?> _fetchLine() async {
     try {
       final granted = await Permission.location.request().isGranted;
       if (!granted) return null;
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-      );
-      final lat = position.latitude;
-      final lon = position.longitude;
-      final place = await _reverseGeocode(lat, lon);
-      final weather = await _currentWeather(lat, lon);
-      if (weather == null) return null;
-      final placeText = place ?? 'your current location';
-      return 'You are in $placeText. It is $weather.';
+      final position = await _freshPosition();
+      if (position == null) return null;
+      return await _lineFor(position.latitude, position.longitude);
     } catch (_) {
       return null;
     }
+  }
+
+  /// A fresh GPS fix, or null. Medium accuracy used to be enough, but a
+  /// coarse fix near a town boundary flips between two cities (Speedway
+  /// vs Indianapolis), and the platform hands back its last-known position
+  /// when it cannot get a fresh one — which is how the temperature ends up
+  /// "way off": it is the temperature of wherever that old fix was. So the
+  /// fix must be high-accuracy, bounded by a timeout, and no older than
+  /// two minutes.
+  Future<Position?> _freshPosition() async {
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+      if (DateTime.now().difference(position.timestamp) >
+          const Duration(minutes: 2)) {
+        return null;
+      }
+      return position;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// City + temperature for coordinates, from whichever lookup succeeds.
+  /// Null only when both fail.
+  Future<String?> _lineFor(double lat, double lon) async {
+    final place = await _reverseGeocode(lat, lon);
+    final weather = await _currentWeather(lat, lon);
+    if (place == null && weather == null) return null;
+    final parts = <String>[
+      'LOCATION: ${place ?? 'your current location'}',
+      if (weather != null) 'WEATHER: $weather',
+    ];
+    return parts.join('\n');
   }
 
   /// City + state, e.g. "Indianapolis, Indiana". Null when the lookup fails.

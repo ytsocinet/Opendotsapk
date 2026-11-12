@@ -1094,10 +1094,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   /// Refreshes the location + temperature line in the background. The
-  /// service caches for 30 minutes, so this is cheap to call on every
-  /// send; a null result (no permission, no network) just leaves the
-  /// prompt without a location line. Fire-and-forget — it never blocks
-  /// sending.
+  /// service caches for 10 minutes, so this is cheap to call on every
+  /// send; a null result (no permission, no fresh fix, no network) just
+  /// leaves the prompt with the "unknown" guard line below.
+  /// Fire-and-forget — it never blocks sending.
   Future<void> _refreshLocationWeather() async {
     final line = await _locationWeather.getLine();
     if (mounted && line != _locationLine) {
@@ -1174,6 +1174,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final systemParts = <String>[
       _nowLine(),
       if (_locationLine != null) _locationLine!,
+      // When the location line is missing, say so outright. A small model
+      // asked "where am I?" with no location in the prompt used to answer
+      // with the time from the line above — or invent a temperature. An
+      // honest "unknown" beats a confident wrong answer.
+      if (_locationLine == null)
+        'LOCATION: unknown — if asked where the user is or what the '
+        'temperature is, say you do not know; do not guess.',
       if (personality != null && personality.trim().isNotEmpty) personality,
       if (modeInstruction != null) modeInstruction,
       if (toolsSection != null && toolsSection.trim().isNotEmpty)

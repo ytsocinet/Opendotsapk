@@ -20,6 +20,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -1557,13 +1558,18 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
   }
 
   /// Pull a GGUF in straight from Hugging Face (Nov 11, 2026 — Aaron asked
-  /// for a paste-a-link import).
+  /// for a paste-a-link import; Nov 12, 2026 — a model name is enough).
   ///
-  /// The link must be a direct file link — the one from the file's download
-  /// button on Hugging Face, `huggingface.co/<owner>/<repo>/resolve/<branch>
-  /// /<file>.gguf`. A file *page* link (`/blob/`) is rewritten to `/resolve/`;
-  /// a model *page* link has no file to pull in, so it is refused with a
-  /// message saying which link to copy. Only `.gguf` files are accepted.
+  /// Three shapes are accepted, so he never has to hunt for a download
+  /// link:
+  ///   1. a full file link, `huggingface.co/<owner>/<repo>/resolve/<branch>
+  ///      /<file>.gguf` (a file *page* link, `/blob/`, is rewritten);
+  ///   2. a model name, `<owner>/<repo>` — the app lists the repo's
+  ///      `.gguf` files and lets him pick when there is more than one;
+  ///   3. a bare name with no owner — searched on Hugging Face, pick the
+  ///      repo, then the file.
+  /// A `<owner>/<repo>/<file>.gguf` name skips the listing and pulls that
+  /// file directly. Only `.gguf` files are accepted.
   ///
   /// This is a direct download, not a catalog download: there is no pinned
   /// integrity manifest for an arbitrary link, so no SHA check happens here.
@@ -1577,6 +1583,25 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
   Future<void> _importFromHuggingFace() async {
     final raw = _hfController.text.trim();
     if (raw.isEmpty || _hfDownloading) return;
+    // Resolve what he pasted into a file URL + file name first. This step
+    // may ask him which file (or which repo) — so it runs before the
+    // progress UI starts, and a cancelled picker just stops here.
+    ({Uri url, String fileName})? resolved;
+    try {
+      resolved = await _resolveHuggingFaceInput(raw);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hfError = e is FormatException
+              ? e.message
+              : 'Could not look that up: $e';
+        });
+      }
+      return;
+    }
+    if (resolved == null) return;
+    final downloadUrl = resolved.url;
+    final fileName = resolved.fileName;
     File? tmp;
     setState(() {
       _hfError = null;
@@ -1586,27 +1611,6 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
       _hfCancelRequested = false;
     });
     try {
-      final uri = Uri.tryParse(raw);
-      if (uri == null || uri.host != 'huggingface.co') {
-        throw const FormatException('That is not a Hugging Face link.');
-      }
-      var path = uri.path;
-      if (path.contains('/blob/')) {
-        path = path.replaceFirst('/blob/', '/resolve/');
-      }
-      if (!path.contains('/resolve/')) {
-        throw const FormatException(
-          'That is a model page, not a file. Open the file on Hugging Face '
-          'and copy its download link instead.',
-        );
-      }
-      final fileName = path.split('/').last;
-      if (fileName.isEmpty ||
-          !fileName.toLowerCase().endsWith('.gguf')) {
-        throw const FormatException(
-          'That link does not point to a .gguf file.',
-        );
-      }
       // Download target: the models folder he pointed the app at, when one
       // is set — so the file lands where his other models live and shows up
       // in the folder list. Otherwise the app's own models folder, straight
@@ -1633,7 +1637,7 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
       final client = http.Client();
       _hfClient = client;
       final response = await client.send(
-        http.Request('GET', uri.replace(path: path)),
+        http.Request('GET', downloadUrl),
       );
       if (response.statusCode != 200) {
         throw HttpException(
@@ -1682,6 +1686,198 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
       _hfClient = null;
       if (mounted) setState(() => _hfDownloading = false);
     }
+  }
+
+  /// Turns pasted text into the one file to download: (url, file name).
+  /// Null when he cancels a picker. Throws [FormatException] with a
+  /// plain-language reason when the input cannot be resolved.
+  Future<({Uri url, String fileName})?> _resolveHuggingFaceInput(
+    String raw,
+  ) async {
+    // A pasted link: keep only the path after huggingface.co/.
+    final uri = Uri.tryParse(raw);
+    if (uri != null && uri.host == 'huggingface.co') {
+      return _resolveHuggingFaceLink(uri);
+    }
+    if (uri != null && uri.scheme.isNotEmpty) {
+      throw const FormatException('That is not a Hugging Face link.');
+    }
+    var spec = raw;
+    final hfAt = spec.indexOf('huggingface.co/');
+    if (hfAt >= 0) {
+      spec = spec.substring(hfAt + 'huggingface.co/'.length);
+    }
+    final parts = spec.split('/').where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) {
+      throw const FormatException(
+        'Paste a model name or a Hugging Face link.',
+      );
+    }
+    if (parts.length == 1) {
+      // A bare name: search, then pick the repo.
+      final repos = await _searchHuggingFaceModels(parts.first);
+      if (repos.isEmpty) {
+        throw FormatException(
+          'No Hugging Face model matches "${parts.first}".',
+        );
+      }
+      final repo = repos.length == 1
+          ? repos.first
+          : await _pickOne<String>(
+              title: 'Which model?',
+              options: [
+                for (final r in repos) (label: r, value: r),
+              ],
+            );
+      if (repo == null) return null;
+      return _pickGgufFromRepo(repo);
+    }
+    if (parts.length >= 3 && parts.last.toLowerCase().endsWith('.gguf')) {
+      // owner/repo/file.gguf — pull that file directly.
+      final repo = '${parts[0]}/${parts[1]}';
+      final file = parts.sublist(2).join('/');
+      return (
+        url: Uri.https('huggingface.co', '$repo/resolve/main/$file'),
+        fileName: parts.last,
+      );
+    }
+    if (parts.length == 2) {
+      return _pickGgufFromRepo('${parts[0]}/${parts[1]}');
+    }
+    throw const FormatException(
+      'That does not look like a model name. Paste owner/repo, like '
+      'Qwen/Qwen2.5-0.5B-Instruct-GGUF.',
+    );
+  }
+
+  /// A full file link (or file-page link) into (url, file name).
+  ({Uri url, String fileName}) _resolveHuggingFaceLink(Uri uri) {
+    var path = uri.path;
+    if (path.contains('/blob/')) {
+      path = path.replaceFirst('/blob/', '/resolve/');
+    }
+    if (!path.contains('/resolve/')) {
+      throw const FormatException(
+        'That is a model page, not a file. Paste the model name instead, '
+        'like owner/repo, and pick the file.',
+      );
+    }
+    final fileName = path.split('/').last;
+    if (fileName.isEmpty || !fileName.toLowerCase().endsWith('.gguf')) {
+      throw const FormatException(
+        'That link does not point to a .gguf file.',
+      );
+    }
+    return (url: uri.replace(path: path), fileName: fileName);
+  }
+
+  /// Repo ids matching a bare name, best first (Hugging Face search API,
+  /// no key needed).
+  Future<List<String>> _searchHuggingFaceModels(String query) async {
+    final uri = Uri.https('huggingface.co', '/api/models', {
+      'search': query,
+      'limit': '10',
+    });
+    final res = await http.get(uri).timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw HttpException('Hugging Face answered ${res.statusCode}.');
+    }
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return [
+      for (final item in list)
+        if (item is Map<String, dynamic> && item['id'] is String)
+          item['id'] as String,
+    ];
+  }
+
+  /// The .gguf files in a repo, from the file tree (no key needed). One
+  /// file downloads straight away; several get a picker with sizes.
+  Future<({Uri url, String fileName})?> _pickGgufFromRepo(String repo) async {
+    final uri = Uri.https(
+      'huggingface.co',
+      '/api/models/$repo/tree/main',
+      {'recursive': 'true'},
+    );
+    final res = await http.get(uri).timeout(const Duration(seconds: 15));
+    if (res.statusCode == 404) {
+      throw FormatException('No model called "$repo" on Hugging Face.');
+    }
+    if (res.statusCode != 200) {
+      throw HttpException('Hugging Face answered ${res.statusCode}.');
+    }
+    final list = jsonDecode(res.body) as List<dynamic>;
+    final files = <({String path, int size})>[];
+    for (final item in list) {
+      if (item is! Map<String, dynamic>) continue;
+      if (item['type'] != 'file') continue;
+      final path = item['path'] as String?;
+      final size = item['size'] as int?;
+      if (path == null) continue;
+      if (!path.toLowerCase().endsWith('.gguf')) continue;
+      files.add((path: path, size: size ?? 0));
+    }
+    if (files.isEmpty) {
+      throw FormatException('No .gguf file in "$repo".');
+    }
+    String chosen;
+    if (files.length == 1) {
+      chosen = files.first.path;
+    } else {
+      final picked = await _pickOne<String>(
+        title: 'Which file?',
+        options: [
+          for (final f in files)
+            (
+              label: f.size > 0
+                  ? '${f.path.split('/').last} — '
+                      '${_ModelsScreenState._fmtBytes(f.size)}'
+                  : f.path.split('/').last,
+              value: f.path,
+            ),
+        ],
+      );
+      if (picked == null) return null;
+      chosen = picked;
+    }
+    return (
+      url: Uri.https('huggingface.co', '$repo/resolve/main/$chosen'),
+      fileName: chosen.split('/').last,
+    );
+  }
+
+  /// A simple "pick one" dialog. Returns the chosen value, or null when
+  /// he cancels. The list scrolls, because a repo can hold twenty quants.
+  Future<T?> _pickOne<T>({
+    required String title,
+    required List<({String label, T value})> options,
+  }) async {
+    return showDialog<T>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 320,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: options.length,
+            itemBuilder: (context, index) {
+              final option = options[index];
+              return ListTile(
+                title: Text(option.label),
+                onTap: () => Navigator.pop(context, option.value),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Cancel an in-flight Hugging Face import. Closing the client aborts the
@@ -1755,8 +1951,9 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
                     },
                   ),
                 ],
-              // Import from Hugging Face: paste a file link, the app pulls
-              // the GGUF in (Nov 11, 2026). It lands in the models folder
+              // Import from Hugging Face: paste a model name (or a file
+              // link) and the app pulls the GGUF in (Nov 11, 2026; by
+              // name since Nov 12, 2026). It lands in the models folder
               // and shows up here with a Load button.
               const Divider(height: 24),
               Text(
@@ -1765,10 +1962,10 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Paste a file link from Hugging Face and the app pulls the '
-                'model in. It lands in your models folder when one is set, '
-                'otherwise straight into the app. Use the file\'s download '
-                'link, not the model page.',
+                'Paste a model name from Hugging Face — owner/repo, like '
+                'Qwen/Qwen2.5-0.5B-Instruct-GGUF — and pick the file, or '
+                'paste a file link. It lands in your models folder when '
+                'one is set, otherwise straight into the app.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: scheme.onSurfaceVariant,
                 ),
@@ -1781,12 +1978,12 @@ class _MyModelsSectionState extends ConsumerState<_MyModelsSection> {
                       controller: _hfController,
                       decoration: const InputDecoration(
                         hintText:
-                            'https://huggingface.co/.../resolve/.../*.gguf',
+                            'Qwen/Qwen2.5-0.5B-Instruct-GGUF',
                         border: OutlineInputBorder(),
                         contentPadding:
                             EdgeInsets.symmetric(horizontal: 12),
                       ),
-                      keyboardType: TextInputType.url,
+                      keyboardType: TextInputType.text,
                       textInputAction: TextInputAction.done,
                       onSubmitted: (_) => _importFromHuggingFace(),
                       enabled: !_hfDownloading,
