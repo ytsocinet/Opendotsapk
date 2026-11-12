@@ -1,6 +1,7 @@
 /// Main screen with a left slide-out drawer.
 ///
-/// Nine destinations. Chat and the model list are separate because picking a
+/// Nine tab destinations, plus the IDE as a drawer action (it opens the
+/// editor; it is not a tab). Chat and the model list are separate because picking a
 /// model is a settings-shaped task, while Memory and Activity are read-mostly.
 /// Browser is last on purpose: the original five keep their indices, so
 /// nothing that addressed a tab by number moves. Tasks, Goals and Projects
@@ -10,6 +11,9 @@
 /// app bars, or by swiping in from the left edge.
 library;
 
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -18,6 +22,7 @@ import '../../core/theme/motion.dart';
 import '../providers/providers.dart';
 import 'browser_screen.dart';
 import 'chat_screen.dart';
+import 'code_editor_screen.dart';
 import 'goals_screen.dart';
 import 'memory_screen.dart';
 import 'activity_screen.dart';
@@ -69,6 +74,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
     return Scaffold(
       drawer: _buildDrawer(context),
+      // Re-read the saved chats each time the drawer opens, so a chat
+      // saved while the drawer was closed is never missing from the
+      // list. Fires only on open/close, never on rebuild.
+      onDrawerChanged: (open) {
+        if (open) {
+          unawaited(ref.read(conversationsProvider.notifier).refresh());
+        }
+      },
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -87,10 +100,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   }
 
   /// The slide-out navigation drawer: the saved chats up top (New chat plus
-  /// the list, most recent first), then the six destinations that used to
-  /// live in a fixed bottom bar. Tapping one closes the drawer and switches
+  /// the list, most recent first), then the destinations that used to live
+  /// in a fixed bottom bar. Tapping one closes the drawer and switches
   /// to that tab; the tab bodies stay mounted either way, so switching
   /// never drops a half-typed message.
+  ///
+  /// The whole drawer is one scrolling list (build #88). It used to be a
+  /// fixed Column with the chats in an Expanded middle, so on a shorter
+  /// screen the bottom destination tiles were clipped off with no way to
+  /// reach them — Browser was cut off at the bottom.
   Widget _buildDrawer(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
@@ -101,8 +119,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
     return Drawer(
       child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: ListView(
+          padding: EdgeInsets.zero,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -159,78 +177,83 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
               child: Text(
-                'CHATS',
+                // The count makes it visible at a glance whether chats
+                // are actually being saved.
+                'CHATS · ${conversations.length}',
                 style: textTheme.labelSmall?.copyWith(
                   letterSpacing: 2.0,
                   color: scheme.onSurfaceVariant,
                 ),
               ),
             ),
-            Expanded(
-              child: conversations.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                      child: Text(
-                        'No saved chats yet.',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: EdgeInsets.zero,
-                      itemCount: conversations.length,
-                      itemBuilder: (context, index) {
-                        final conversation = conversations[index];
-                        final selected = conversation.id == activeId;
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            Icons.chat_bubble_outline,
-                            color: selected
-                                ? scheme.primary
-                                : scheme.onSurfaceVariant,
-                          ),
-                          title: Text(
-                            conversation.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: selected ? scheme.primary : null,
-                              fontWeight:
-                                  selected ? FontWeight.w600 : null,
-                            ),
-                          ),
-                          selected: selected,
-                          selectedTileColor:
-                              scheme.primary.withValues(alpha: 0.12),
-                          onTap: () async {
-                            Navigator.of(context).pop();
-                            await ref
-                                .read(conversationsProvider.notifier)
-                                .switchTo(conversation.id);
-                            if (mounted && _currentIndex != 0) {
-                              setState(() => _currentIndex = 0);
-                            }
-                          },
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline, size: 20),
-                            tooltip: 'Delete chat',
-                            color: scheme.onSurfaceVariant,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints.tightFor(
-                              width: 36,
-                              height: 36,
-                            ),
-                            onPressed: () => _confirmDeleteConversation(
-                              context,
-                              conversation,
-                            ),
-                          ),
-                        );
-                      },
+            if (conversations.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Text(
+                  'No saved chats yet.',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              )
+            else
+              ListView.builder(
+                // Nested in the drawer's own scroll view: shrink-wrapped
+                // and non-scrollable, so the whole drawer scrolls as one
+                // list and the chat rows still build lazily.
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: EdgeInsets.zero,
+                itemCount: conversations.length,
+                itemBuilder: (context, index) {
+                  final conversation = conversations[index];
+                  final selected = conversation.id == activeId;
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(
+                      Icons.chat_bubble_outline,
+                      color: selected
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
                     ),
-            ),
+                    title: Text(
+                      conversation.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected ? scheme.primary : null,
+                        fontWeight: selected ? FontWeight.w600 : null,
+                      ),
+                    ),
+                    selected: selected,
+                    selectedTileColor:
+                        scheme.primary.withValues(alpha: 0.12),
+                    onTap: () async {
+                      Navigator.of(context).pop();
+                      await ref
+                          .read(conversationsProvider.notifier)
+                          .switchTo(conversation.id);
+                      if (mounted && _currentIndex != 0) {
+                        setState(() => _currentIndex = 0);
+                      }
+                    },
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 20),
+                      tooltip: 'Delete chat',
+                      color: scheme.onSurfaceVariant,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 36,
+                        height: 36,
+                      ),
+                      onPressed: () => _confirmDeleteConversation(
+                        context,
+                        conversation,
+                      ),
+                    ),
+                  );
+                },
+              ),
             const Divider(height: 1),
             _drawerTile(
               index: 0,
@@ -286,10 +309,44 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               selectedIcon: Icons.public,
               label: 'Browser',
             ),
+            _ideTile(scheme),
           ],
         ),
       ),
     );
+  }
+
+  /// The IDE is a drawer action, not a tab: it opens the code editor on
+  /// the last file opened from Projects, or the Projects tab when there
+  /// is no such file yet so one can be picked there.
+  Widget _ideTile(ColorScheme scheme) {
+    return ListTile(
+      leading: Icon(Icons.code, color: scheme.onSurfaceVariant),
+      title: const Text('IDE'),
+      onTap: () {
+        // Capture the navigator before popping: the tile's context is
+        // deactivated by the pop, so a later Navigator.of(context)
+        // would fail.
+        final navigator = Navigator.of(context);
+        navigator.pop();
+        _openIde(navigator);
+      },
+    );
+  }
+
+  Future<void> _openIde(NavigatorState navigator) async {
+    final path = ref.read(settingsProvider)['last_ide_file'] as String?;
+    if (path != null && path.isNotEmpty && await File(path).exists()) {
+      await navigator.push(
+        MaterialPageRoute(builder: (_) => CodeEditorScreen(path: path)),
+      );
+      return;
+    }
+    // No remembered file (or it is gone): show the Projects tab so a
+    // file can be picked there.
+    if (mounted && _currentIndex != 7) {
+      setState(() => _currentIndex = 7);
+    }
   }
 
   /// Deletes a chat after asking. The drawer stays open on Cancel; on

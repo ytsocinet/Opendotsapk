@@ -402,7 +402,9 @@ class _CloudModelsScreenState extends ConsumerState<CloudModelsScreen> {
       }
       final cfg = await SecureStore.instance.providerConfig(p.id);
       final stored = cfg['model'] as String?;
-      final retired = stored != null && p.modelById(stored) == null;
+      // OpenRouter ids fetched live are valid even when they are not in
+      // the pinned catalog; anything else unknown is retired.
+      final retired = stored != null && !p.acceptsStoredModel(stored);
       final modelId = retired ? p.defaultModel.id : (stored ?? p.defaultModel.id);
       try {
         await CloudService.instance.testConnection(
@@ -607,6 +609,14 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
   bool _busy = false;
   String? _status;
 
+  // OpenRouter only: the live model list from their public /models
+  // endpoint, fetched when the screen opens. Catalog models are always
+  // shown; these are the rest of what the key can actually reach.
+  List<CloudModel> _fetchedModels = [];
+  bool _fetchingModels = false;
+  String? _fetchError;
+  String _modelFilter = '';
+
   @override
   void initState() {
     super.initState();
@@ -629,6 +639,28 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
       _baseUrlController.text =
           cfg['baseUrl'] ?? widget.provider.defaultBaseUrl;
     });
+    if (widget.provider.id == 'openrouter') _fetchOpenRouterModels();
+  }
+
+  /// Pull OpenRouter's live model list (public endpoint, no key). A
+  /// failure leaves the pinned catalog in place and shows the error
+  /// instead of the list.
+  Future<void> _fetchOpenRouterModels() async {
+    if (_fetchingModels) return;
+    setState(() {
+      _fetchingModels = true;
+      _fetchError = null;
+    });
+    try {
+      final models = await CloudService.fetchOpenRouterModels();
+      if (!mounted) return;
+      setState(() => _fetchedModels = models);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _fetchError = '$e');
+    } finally {
+      if (mounted) setState(() => _fetchingModels = false);
+    }
   }
 
   @override
@@ -676,6 +708,10 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
               ],
             ),
           ),
+          if (widget.provider.id == 'openrouter') ...[
+            const SizedBox(height: 20),
+            _openRouterModelsSection(activeModel),
+          ],
         ],
       ),
     );
@@ -806,6 +842,106 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
               child: const Text('Save URL'),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// The live OpenRouter list: every model the key can reach, with a
+  /// search box (hundreds of models is too many to scroll blind) and a
+  /// refresh button. Tapping one selects it exactly like a catalog
+  /// model — the router accepts the stored id even though it is not in
+  /// the pinned list.
+  Widget _openRouterModelsSection(String? activeModel) {
+    final query = _modelFilter.trim().toLowerCase();
+    final catalogIds = widget.provider.models.map((m) => m.id).toSet();
+    final shown = _fetchedModels
+        .where((m) => !catalogIds.contains(m.id))
+        .where(
+          (m) =>
+              query.isEmpty ||
+              m.id.toLowerCase().contains(query) ||
+              m.displayName.toLowerCase().contains(query),
+        )
+        .toList();
+    return ScreenSection(
+      title: 'Browse all models',
+      subtitle: 'Live from OpenRouter — tap one to use it.',
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      hintText: 'Search models…',
+                      isDense: true,
+                    ),
+                    onChanged: (v) => setState(() => _modelFilter = v),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: _fetchingModels
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                  tooltip: 'Refresh model list',
+                  onPressed:
+                      _fetchingModels ? null : _fetchOpenRouterModels,
+                ),
+              ],
+            ),
+          ),
+          if (_fetchError != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Text(
+                'Could not load the live list: $_fetchError '
+                'The models above still work.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            )
+          else if (_fetchingModels && _fetchedModels.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (shown.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              child: Text(
+                _fetchedModels.isEmpty
+                    ? 'No live models loaded yet.'
+                    : 'No models match "$_modelFilter".',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            )
+          else
+            ListView.builder(
+              // Nested in the screen's own scroll view: shrink-wrapped
+              // and non-scrollable, so the screen scrolls as one list.
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: EdgeInsets.zero,
+              itemCount: shown.length,
+              itemBuilder: (context, i) {
+                final model = shown[i];
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _modelTile(model, activeModel),
+                    if (i != shown.length - 1) const ScreenRowDivider(),
+                  ],
+                );
+              },
+            ),
         ],
       ),
     );
@@ -959,6 +1095,14 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
     final notifier = ref.read(settingsProvider.notifier);
     await notifier.updateSetting('active_cloud_provider', widget.provider.id);
     await notifier.updateSetting('active_cloud_model', model.id);
+    // The router reads the per-provider config, not the settings map, so
+    // persist the pick there too — otherwise the tap only changes the
+    // label and cloud turns keep using the provider default.
+    final cfg = Map<String, String>.from(
+      await SecureStore.instance.providerConfig(widget.provider.id),
+    );
+    cfg['model'] = model.id;
+    await SecureStore.instance.setProviderConfig(widget.provider.id, cfg);
     _refreshRouter();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -982,9 +1126,11 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
       // A saved model can die underneath the app — providers retire IDs
       // (Gemini 2.0 Flash, Groq's Llamas) — so a stored id that is no
       // longer in the provider's list falls back to the default instead
-      // of sending a 404 to the API on every cloud turn.
+      // of sending a 404 to the API on every cloud turn. OpenRouter is
+      // the exception: its list is fetched live, so a stored id that is
+      // not in the pinned catalog is still a real model.
       final stored = cfg['model'] as String?;
-      final modelId = stored != null && p.modelById(stored) != null
+      final modelId = stored != null && p.acceptsStoredModel(stored)
           ? stored
           : p.defaultModel.id;
       candidates.add((provider: p, modelId: modelId));

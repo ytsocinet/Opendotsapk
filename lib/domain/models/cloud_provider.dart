@@ -14,7 +14,9 @@
 /// the APIs were failing: `gemini-2.0-flash` shut down June 1, 2026,
 /// `gemini-2.5-pro` was deprecated Nov 2, 2026 (routed to `gemini-3.8-flash`
 /// from Dec 1), and Groq shut both Llama models down for free/developer
-/// keys on Aug 16, 2026. A saved model that is no longer in its provider's
+/// keys on Aug 16, 2026. OpenRouter retired `anthropic/claude-3.5-sonnet`
+/// (verified against their live /models list Nov 12, 2026; replaced with
+/// Claude Sonnet 5.5 and Haiku 5.5). A saved model that is no longer in its provider's
 /// list falls back to that provider's default (see `_refreshRouter` in
 /// the Cloud screen), so a stale pick fails over instead of 404ing.
 /// Prices marked 0 were not pinned when the list was written; the UI hides
@@ -85,6 +87,16 @@ class CloudProvider {
       if (m.id == id) return m;
     }
     return null;
+  }
+
+  /// Whether a stored model id is usable for this provider, even when it
+  /// is not in the hardcoded catalog. OpenRouter's list is fetched live
+  /// from their /models endpoint, so a stored id the app has never seen
+  /// is still a real model; every other provider only accepts ids from
+  /// its pinned list.
+  bool acceptsStoredModel(String modelId) {
+    if (modelById(modelId) != null) return true;
+    return id == 'openrouter' && modelId.isNotEmpty;
   }
 
   /// First model, used as the default when a provider is first configured.
@@ -237,13 +249,23 @@ class CloudCatalog {
       keyUrl: 'https://openrouter.ai/keys',
       keyHint: 'sk-or-',
       models: [
+        // Claude 3.5 Sonnet was retired by OpenRouter (gone from their
+        // live /models list, verified Nov 12, 2026); Sonnet 5.5 is the
+        // current Claude on their side.
         CloudModel(
-          id: 'anthropic/claude-3.5-sonnet',
-          displayName: 'Claude 3.5 Sonnet (via OR)',
+          id: 'anthropic/claude-sonnet-5.5',
+          displayName: 'Claude Sonnet 5.5 (via OR)',
           contextTokens: 200000,
           inputPricePerM: 3.00,
           outputPricePerM: 15.00,
           supportsVision: true,
+        ),
+        CloudModel(
+          id: 'anthropic/claude-haiku-5.5',
+          displayName: 'Claude Haiku 5.5 (via OR)',
+          contextTokens: 200000,
+          inputPricePerM: 1.00,
+          outputPricePerM: 5.00,
         ),
         CloudModel(
           id: 'meta-llama/llama-3.3-70b-instruct',

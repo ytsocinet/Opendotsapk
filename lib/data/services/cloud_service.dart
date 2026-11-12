@@ -175,6 +175,47 @@ class CloudService {
     return text.trim();
   }
 
+  /// Fetch OpenRouter's live model list. The endpoint is public — no key
+  /// needed — so the list can be refreshed without a saved key. Entries
+  /// carry no prices (the cost estimator only knows the pinned catalog),
+  /// and the display name falls back to the id when OpenRouter sends none.
+  static Future<List<CloudModel>> fetchOpenRouterModels() async {
+    final uri = Uri.parse('https://openrouter.ai/api/v1/models');
+    final res =
+        await http.get(uri).timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw CloudException(
+        'OpenRouter model list failed (HTTP ${res.statusCode})',
+        statusCode: res.statusCode,
+      );
+    }
+    final decoded = jsonDecode(res.body);
+    final data = decoded is Map ? decoded['data'] : null;
+    if (data is! List) {
+      throw const CloudException(
+        'OpenRouter sent an unexpected model list.',
+      );
+    }
+    final models = <CloudModel>[];
+    for (final entry in data) {
+      if (entry is! Map) continue;
+      final id = entry['id'];
+      if (id is! String || id.isEmpty) continue;
+      final name = entry['name'];
+      final contextLength = entry['context_length'];
+      models.add(
+        CloudModel(
+          id: id,
+          displayName: name is String && name.isNotEmpty ? name : id,
+          contextTokens:
+              contextLength is int && contextLength > 0 ? contextLength : 128000,
+        ),
+      );
+    }
+    models.sort((a, b) => a.id.compareTo(b.id));
+    return models;
+  }
+
   void dispose() => _client.close();
 
   // ------------------------------------------------------- wire: OpenAI-ish

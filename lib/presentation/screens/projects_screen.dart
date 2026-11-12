@@ -122,6 +122,10 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
       );
       return;
     }
+    // Remember this file so the IDE drawer tile can reopen it directly.
+    await ref
+        .read(settingsProvider.notifier)
+        .updateSetting('last_ide_file', file.path);
     if (!mounted) return;
     await Navigator.push(
       context,

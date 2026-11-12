@@ -97,6 +97,11 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
     final scheme = theme.colorScheme;
     final text = theme.textTheme;
     final maxWidth = MediaQuery.of(context).size.width * 0.85;
+    // Message timestamps follow the Time format setting (12-hour by
+    // default); watching it here re-renders the transcript on change.
+    final timeFormat =
+        ref.watch(settingsProvider)['time_format'] as String? ?? '12h';
+    final twelveHour = timeFormat != '24h';
 
     return FadeSlideIn(
       duration: const Duration(milliseconds: 400),
@@ -107,7 +112,7 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
           curve: AppMotion.enter,
           reverseCurve: AppMotion.exit,
         ),
-        child: _buildMessage(isUser, scheme, text, maxWidth, theme),
+        child: _buildMessage(isUser, scheme, text, maxWidth, theme, twelveHour),
       ),
     );
   }
@@ -118,8 +123,9 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
     TextTheme text,
     double maxWidth,
     ThemeData theme,
+    bool twelveHour,
   ) {
-    final bubble = _buildBubble(isUser, scheme, text, maxWidth, theme);
+    final bubble = _buildBubble(isUser, scheme, text, maxWidth, theme, twelveHour);
 
     if (isUser) {
       return Align(alignment: Alignment.centerRight, child: bubble);
@@ -141,6 +147,7 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
     TextTheme text,
     double maxWidth,
     ThemeData theme,
+    bool twelveHour,
   ) {
     // Split the model's reasoning out of the answer, when it is there, so
     // the thinking gets its own collapsible box instead of running together
@@ -195,7 +202,10 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
                 const Spacer(),
                 if (_hasTime)
                   Text(
-                    _formatTime(widget.message.timestamp),
+                    _formatTime(
+                      widget.message.timestamp,
+                      twelveHour: twelveHour,
+                    ),
                     style: text.labelSmall,
                   ),
               ],
@@ -265,7 +275,10 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
             Align(
               alignment: Alignment.centerRight,
               child: Text(
-                _formatTime(widget.message.timestamp),
+                _formatTime(
+                  widget.message.timestamp,
+                  twelveHour: twelveHour,
+                ),
                 style: text.labelSmall?.copyWith(color: Colors.white70),
               ),
             ),
@@ -278,14 +291,21 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
   /// A zero timestamp means "not recorded"; there is nothing honest to show.
   bool get _hasTime => widget.message.timestamp > 0;
 
-  /// `HH:MM` in device-local time.
+  /// Message time in device-local time: `h:MM AM/PM` for 12-hour,
+  /// `HH:MM` for 24-hour.
   ///
   /// Formatted by hand rather than through `intl` so the transcript needs no
   /// additional dependency for the one format it needs.
-  static String _formatTime(int millisSinceEpoch) {
+  static String _formatTime(
+    int millisSinceEpoch, {
+    bool twelveHour = true,
+  }) {
     final at = DateTime.fromMillisecondsSinceEpoch(millisSinceEpoch);
     String two(int value) => value.toString().padLeft(2, '0');
-    return '${two(at.hour)}:${two(at.minute)}';
+    if (!twelveHour) return '${two(at.hour)}:${two(at.minute)}';
+    final hour12 = at.hour % 12 == 0 ? 12 : at.hour % 12;
+    final ampm = at.hour < 12 ? 'AM' : 'PM';
+    return '$hour12:${two(at.minute)} $ampm';
   }
 }
 

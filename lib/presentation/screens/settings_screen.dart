@@ -161,6 +161,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
             const SizedBox(height: 24),
 
             FadeSlideIn(
+              delay: const Duration(milliseconds: 38),
+              child: ScreenSection(
+                title: 'Time format',
+                subtitle: 'How message times are shown.',
+                padding: EdgeInsets.zero,
+                child: _TimeFormatSection(
+                  onChanged: () => _triggerFeedback('time_format'),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            FadeSlideIn(
               delay: const Duration(milliseconds: 45),
               child: ScreenSection(
                 title: 'Assistant & Behavior',
@@ -2026,6 +2039,44 @@ class _ThemeColorSection extends ConsumerWidget {
                     : null,
               ),
             ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Time format: 12-hour (2:17 PM) or 24-hour (14:17) message timestamps.
+///
+/// Stored as '12h' / '24h' under the `time_format` setting; the chat
+/// transcript reads it on every build, so the change applies at once.
+class _TimeFormatSection extends ConsumerWidget {
+  const _TimeFormatSection({required this.onChanged});
+
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider);
+    final current = settings['time_format'] as String? ?? '12h';
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final (value, label) in <(String, String)>[
+          ('12h', '12-hour · 2:17 PM'),
+          ('24h', '24-hour · 14:17'),
+        ])
+          ChoiceChip(
+            label: Text(label),
+            selected: current == value,
+            onSelected: (selected) {
+              if (!selected) return;
+              ref
+                  .read(settingsProvider.notifier)
+                  .updateSetting('time_format', value);
+              onChanged();
+            },
           ),
       ],
     );

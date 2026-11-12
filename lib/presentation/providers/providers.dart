@@ -7,6 +7,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/utils/log.dart';
 import '../../data/services/llm_service.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/cloud_service.dart';
@@ -365,7 +366,17 @@ class ConversationsNotifier extends StateNotifier<List<Conversation>> {
 
   Future<void> refresh() async {
     final rows = await _db.getConversations();
-    state = rows.map(Conversation.fromMap).toList();
+    // One unreadable row must not throw away the whole list: parse
+    // each row on its own and skip (with a log line) the ones that fail.
+    final parsed = <Conversation>[];
+    for (final row in rows) {
+      try {
+        parsed.add(Conversation.fromMap(row));
+      } catch (e) {
+        Log.w('conversations: skipping unreadable row: $e');
+      }
+    }
+    state = parsed;
   }
 
   /// Starts a new chat and switches to it.
@@ -375,6 +386,9 @@ class ConversationsNotifier extends StateNotifier<List<Conversation>> {
     await _db.createConversation(id: id, title: 'New chat', timestamp: now);
     await refresh();
     await ref.read(chatMessagesProvider.notifier).loadConversation(id);
+    // Re-read once the switch has landed, so the list the drawer shows
+    // is the list that is actually in the database now.
+    await refresh();
   }
 
   /// Opens an existing chat.
@@ -439,7 +453,15 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     var id = ref.read(activeConversationIdProvider);
     if (id == null) {
       id = await _ensureConversation();
-      ref.read(activeConversationIdProvider.notifier).state = id;
+      // The user may have tapped New chat or switched chats while this
+      // first load was still in flight; never clobber a newer choice
+      // with the stale one this load started with.
+      final current = ref.read(activeConversationIdProvider);
+      if (current != null) {
+        id = current;
+      } else {
+        ref.read(activeConversationIdProvider.notifier).state = id;
+      }
     }
     _conversationId = id;
     await _loadMessages();
@@ -764,6 +786,14 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // the colour's ARGB int. Matrix green by default.
     'theme_color': 0xFF00FF66,
 
+    // Message timestamps: '12h' (2:17 PM) or '24h' (14:17). 12-hour by
+    // default.
+    'time_format': '12h',
+
+    // Last file opened in the IDE (from Projects). The IDE drawer tile
+    // reopens it; null means none yet.
+    'last_ide_file': null,
+
     // Connected apps (opt-in, off by default): a JSON list of Android
     // package names Cypher may open or share to. Empty means none.
     'connected_apps': '[]',
@@ -828,6 +858,8 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'projects_folder',
       'connected_apps',
       'tts_voice',
+      'time_format',
+      'last_ide_file',
     ]) {
       final raw = await _db.getPreference(key);
       if (raw != null && raw.isNotEmpty) {
