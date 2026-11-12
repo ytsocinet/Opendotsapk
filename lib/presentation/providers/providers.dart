@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../data/services/llm_service.dart';
 import '../../data/services/embedding_service.dart';
@@ -323,6 +324,92 @@ final wakeServiceProvider = Provider<WakeService>((ref) {
   return WakeService.instance;
 });
 
+/// One saved chat (a "side chat"). The list is newest-active first; the
+/// title comes from the first user message.
+class Conversation {
+  const Conversation({
+    required this.id,
+    required this.title,
+    required this.updatedAt,
+  });
+
+  factory Conversation.fromMap(Map<String, dynamic> map) {
+    return Conversation(
+      id: map['id'] as String,
+      title: map['title'] as String? ?? 'New chat',
+      updatedAt: map['updated_at'] as int? ?? 0,
+    );
+  }
+
+  final String id;
+  final String title;
+  final int updatedAt;
+}
+
+/// The active conversation's id, shared by the drawer and the chat screen.
+final activeConversationIdProvider = StateProvider<String?>((ref) => null);
+
+/// The saved chats shown in the drawer.
+final conversationsProvider =
+    StateNotifierProvider<ConversationsNotifier, List<Conversation>>((ref) {
+      return ConversationsNotifier(ref);
+    });
+
+class ConversationsNotifier extends StateNotifier<List<Conversation>> {
+  ConversationsNotifier(this.ref) : super([]) {
+    refresh();
+  }
+
+  final Ref ref;
+  final DatabaseHelper _db = DatabaseHelper.instance;
+
+  Future<void> refresh() async {
+    final rows = await _db.getConversations();
+    state = rows.map(Conversation.fromMap).toList();
+  }
+
+  /// Starts a new chat and switches to it.
+  Future<void> createNew() async {
+    final id = const Uuid().v4();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.createConversation(id: id, title: 'New chat', timestamp: now);
+    await refresh();
+    await ref.read(chatMessagesProvider.notifier).loadConversation(id);
+  }
+
+  /// Opens an existing chat.
+  Future<void> switchTo(String id) async {
+    await ref.read(chatMessagesProvider.notifier).loadConversation(id);
+    await refresh();
+  }
+
+  /// Deletes a chat and all its messages. If it was the open one, the most
+  /// recent remaining chat opens; if none remains, a fresh one is created.
+  Future<void> delete(String id) async {
+    final wasActive = ref.read(activeConversationIdProvider) == id;
+    await _db.deleteConversation(id);
+    await refresh();
+    if (!wasActive) return;
+    if (state.isNotEmpty) {
+      await ref
+          .read(chatMessagesProvider.notifier)
+          .loadConversation(state.first.id);
+    } else {
+      final freshId = const Uuid().v4();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await _db.createConversation(
+        id: freshId,
+        title: 'New chat',
+        timestamp: now,
+      );
+      await refresh();
+      await ref
+          .read(chatMessagesProvider.notifier)
+          .loadConversation(freshId);
+    }
+  }
+}
+
 // Chat Messages Provider
 final chatMessagesProvider =
     StateNotifierProvider<ChatNotifier, List<ChatMessage>>((ref) {
@@ -333,12 +420,59 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   final Ref ref;
   final DatabaseHelper _db = DatabaseHelper.instance;
 
+  /// The conversation these messages belong to. Null until the first load
+  /// makes sure one exists.
+  String? _conversationId;
+
+  /// Memoised so a send racing the first load cannot create two "New chat"
+  /// rows: both callers share the one in-flight creation.
+  Future<String>? _ensureFuture;
+
   ChatNotifier(this.ref) : super([]) {
-    _loadMessages();
+    _init();
+  }
+
+  Future<void> _init() async {
+    // The active conversation lives in its own provider so the drawer can
+    // switch it; if none is set yet (fresh install, or an upgrade that
+    // predates conversations), make sure one exists first.
+    var id = ref.read(activeConversationIdProvider);
+    if (id == null) {
+      id = await _ensureConversation();
+      ref.read(activeConversationIdProvider.notifier).state = id;
+    }
+    _conversationId = id;
+    await _loadMessages();
+  }
+
+  /// The id of a conversation to load: the most recent one, or a fresh
+  /// "New chat" when there is none yet.
+  Future<String> _ensureConversation() {
+    return _ensureFuture ??= _pickOrCreateConversation();
+  }
+
+  Future<String> _pickOrCreateConversation() async {
+    final rows = await _db.getConversations();
+    if (rows.isNotEmpty) return rows.first['id'] as String;
+    final id = const Uuid().v4();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.createConversation(id: id, title: 'New chat', timestamp: now);
+    // The drawer list loads separately; refresh it so the new row shows.
+    unawaited(ref.read(conversationsProvider.notifier).refresh());
+    return id;
+  }
+
+  Future<void> loadConversation(String id) async {
+    _conversationId = id;
+    ref.read(activeConversationIdProvider.notifier).state = id;
+    await _loadMessages();
   }
 
   Future<void> _loadMessages() async {
-    final messages = await _db.getRecentMessages(limit: 100);
+    final messages = await _db.getRecentMessages(
+      limit: 100,
+      conversationId: _conversationId,
+    );
     state = messages
         .map((m) => ChatMessage.fromMap(m))
         .toList()
@@ -347,17 +481,58 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   }
 
   Future<void> addMessage(ChatMessage message) async {
+    // The composer can fire before the first load finished; make sure the
+    // message lands in a conversation rather than nowhere.
+    var id = _conversationId;
+    if (id == null) {
+      id = await _ensureConversation();
+      _conversationId = id;
+      ref.read(activeConversationIdProvider.notifier).state = id;
+    }
     await _db.insertMessage(
       id: message.id,
       role: message.role,
       content: message.content,
       timestamp: message.timestamp,
+      conversationId: id,
     );
+    await _db.touchConversation(id: id, timestamp: message.timestamp);
     state = [message, ...state];
+    // First user message names the chat: "New chat" becomes the first few
+    // words of what was actually asked. Later messages leave the title
+    // alone.
+    if (message.role == 'user') {
+      await _maybeTitleConversation(id, message.content);
+    }
+    unawaited(ref.read(conversationsProvider.notifier).refresh());
+  }
+
+  Future<void> _maybeTitleConversation(String id, String content) async {
+    final rows = await _db.getConversations();
+    final row = rows.where((r) => r['id'] == id).toList();
+    if (row.isEmpty) return;
+    if ((row.first['title'] as String?) != 'New chat') return;
+    await _db.updateConversationTitle(id: id, title: _titleFrom(content));
+  }
+
+  /// A chat title from the first message: one line, short enough for the
+  /// drawer row.
+  String _titleFrom(String content) {
+    final oneLine = content.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (oneLine.isEmpty) return 'New chat';
+    if (oneLine.length <= 40) return oneLine;
+    return '${oneLine.substring(0, 39).trimRight()}…';
   }
 
   Future<void> clearChat() async {
-    // In production, delete all messages from DB
+    // Clearing used to empty only the in-memory list, so the messages came
+    // back from the database on the next launch. Now it deletes this
+    // conversation's messages for real; the conversation itself stays in
+    // the list, empty.
+    final id = _conversationId;
+    if (id != null) {
+      await _db.deleteMessagesForConversation(id);
+    }
     state = [];
   }
 }

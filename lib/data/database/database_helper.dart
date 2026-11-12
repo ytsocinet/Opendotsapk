@@ -55,9 +55,17 @@ class DatabaseHelper {
 
   /// Bumped from 1: the schema changed from a broken `vec0` table to real
   /// tables. `onUpgrade` rebuilds the vector store and keeps messages.
-  static const int _schemaVersion = 2;
+  /// Bumped to 3: side chats — a `conversations` table, and every message
+  /// belongs to one conversation.
+  static const int _schemaVersion = 3;
 
   static const String tableMessages = 'messages';
+  static const String tableConversations = 'conversations';
+
+  /// The conversation pre-existing messages are assigned to on upgrade.
+  /// A fixed id (not a generated one) so the migration is deterministic
+  /// and re-runnable: running it twice changes nothing.
+  static const String defaultConversationId = 'default';
   static const String tableVectors = 'vectors';
   static const String tableNotes = 'notes';
   static const String tableActivityLog = 'activity_log';
@@ -158,6 +166,22 @@ class DatabaseHelper {
 
     await _createVectorTables(db);
     await _createDocumentTables(db);
+    await _createConversationTables(db);
+
+    // Messages written before conversations existed have no conversation.
+    // They belong to the default one, so no history is lost by the upgrade.
+    // The default row is created first so the list is never empty.
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.rawInsert(
+      'INSERT OR IGNORE INTO $tableConversations'
+      '(id, title, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      [defaultConversationId, 'First chat', now, now],
+    );
+    await db.update(
+      tableMessages,
+      {'conversation_id': defaultConversationId},
+      where: 'conversation_id IS NULL',
+    );
   }
 
   /// Drops the vector table only when it is the legacy `vec0` virtual table.
@@ -230,6 +254,7 @@ class DatabaseHelper {
       'CREATE INDEX idx_activity_timestamp ON $tableActivityLog(timestamp)',
     );
 
+    await _createConversationTables(db);
     await _createVectorTables(db);
     await _createDocumentTables(db);
   }
@@ -290,6 +315,25 @@ class DatabaseHelper {
     );
   }
 
+  /// Side chats: one row per conversation. Messages point at it through
+  /// `messages.conversation_id` (which already existed, unused, since the
+  /// table was created). Created with IF NOT EXISTS so both a fresh install
+  /// and the v3 upgrade land on the same schema.
+  Future<void> _createConversationTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableConversations (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_conversations_updated '
+      'ON $tableConversations(updated_at)',
+    );
+  }
+
   // -------------------------------------------------------------- messages
 
   Future<String> insertMessage({
@@ -316,10 +360,21 @@ class DatabaseHelper {
     int limit = 50,
     String? role,
     bool decrypt = true,
+    String? conversationId,
   }) async {
     final db = await database;
-    final where = role != null ? 'WHERE role = ?' : '';
-    final args = role != null ? <Object?>[role] : <Object?>[];
+    final conditions = <String>[];
+    final args = <Object?>[];
+    if (role != null) {
+      conditions.add('role = ?');
+      args.add(role);
+    }
+    if (conversationId != null) {
+      conditions.add('conversation_id = ?');
+      args.add(conversationId);
+    }
+    final where =
+        conditions.isEmpty ? '' : 'WHERE ${conditions.join(' AND ')}';
 
     final rows = await db.rawQuery(
       'SELECT * FROM $tableMessages $where ORDER BY timestamp DESC LIMIT ?',
@@ -337,6 +392,90 @@ class DatabaseHelper {
     final db = await database;
     _invalidateIndex();
     return db.delete(tableMessages);
+  }
+
+  // ---------------------------------------------------------- conversations
+
+  /// All conversations, most recently active first. An empty list means
+  /// this install has never chatted — the caller creates the first one.
+  Future<List<Map<String, dynamic>>> getConversations() async {
+    final db = await database;
+    return db.query(
+      tableConversations,
+      orderBy: 'updated_at DESC',
+    );
+  }
+
+  Future<void> createConversation({
+    required String id,
+    required String title,
+    required int timestamp,
+  }) async {
+    final db = await database;
+    await db.insert(tableConversations, {
+      'id': id,
+      'title': title,
+      'created_at': timestamp,
+      'updated_at': timestamp,
+    });
+  }
+
+  Future<void> updateConversationTitle({
+    required String id,
+    required String title,
+  }) async {
+    final db = await database;
+    await db.update(
+      tableConversations,
+      {'title': title},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Bumps a conversation to the top of the list when a message lands in it.
+  Future<void> touchConversation({
+    required String id,
+    required int timestamp,
+  }) async {
+    final db = await database;
+    await db.update(
+      tableConversations,
+      {'updated_at': timestamp},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Deletes a conversation and every message in it. Returns the number of
+  /// conversations removed (0 or 1).
+  Future<int> deleteConversation(String id) async {
+    final db = await database;
+    await db.delete(
+      tableMessages,
+      where: 'conversation_id = ?',
+      whereArgs: [id],
+    );
+    _invalidateIndex();
+    return db.delete(
+      tableConversations,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Deletes one conversation's messages without deleting the conversation
+  /// itself. This is what "Clear chat" does now: the chat stays in the
+  /// list, empty, instead of vanishing and reappearing from the database
+  /// on the next launch (the old clear only emptied the in-memory list).
+  Future<int> deleteMessagesForConversation(String conversationId) async {
+    final db = await database;
+    _invalidateIndex();
+    return db.delete(
+      tableMessages,
+      where: 'conversation_id = ?',
+      whereArgs: [conversationId],
+    );
   }
 
   // ------------------------------------------------------------- memories

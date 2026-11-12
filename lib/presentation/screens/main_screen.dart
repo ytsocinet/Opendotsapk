@@ -78,13 +78,18 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     );
   }
 
-  /// The slide-out navigation drawer: the six destinations that used to
+  /// The slide-out navigation drawer: the saved chats up top (New chat plus
+  /// the list, most recent first), then the six destinations that used to
   /// live in a fixed bottom bar. Tapping one closes the drawer and switches
   /// to that tab; the tab bodies stay mounted either way, so switching
   /// never drops a half-typed message.
   Widget _buildDrawer(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    // The saved chats live in the drawer so starting a new one is one tap
+    // from anywhere — no more clearing the only conversation to start over.
+    final conversations = ref.watch(conversationsProvider);
+    final activeId = ref.watch(activeConversationIdProvider);
 
     return Drawer(
       child: SafeArea(
@@ -132,6 +137,93 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               ),
             ),
             const Divider(height: 1),
+            ListTile(
+              leading: Icon(Icons.add, color: scheme.primary),
+              title: const Text('New chat'),
+              onTap: () async {
+                Navigator.of(context).pop();
+                await ref.read(conversationsProvider.notifier).createNew();
+                if (mounted && _currentIndex != 0) {
+                  setState(() => _currentIndex = 0);
+                }
+              },
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                'CHATS',
+                style: textTheme.labelSmall?.copyWith(
+                  letterSpacing: 2.0,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            Expanded(
+              child: conversations.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: Text(
+                        'No saved chats yet.',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: EdgeInsets.zero,
+                      itemCount: conversations.length,
+                      itemBuilder: (context, index) {
+                        final conversation = conversations[index];
+                        final selected = conversation.id == activeId;
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            Icons.chat_bubble_outline,
+                            color: selected
+                                ? scheme.primary
+                                : scheme.onSurfaceVariant,
+                          ),
+                          title: Text(
+                            conversation.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: selected ? scheme.primary : null,
+                              fontWeight:
+                                  selected ? FontWeight.w600 : null,
+                            ),
+                          ),
+                          selected: selected,
+                          selectedTileColor:
+                              scheme.primary.withValues(alpha: 0.12),
+                          onTap: () async {
+                            Navigator.of(context).pop();
+                            await ref
+                                .read(conversationsProvider.notifier)
+                                .switchTo(conversation.id);
+                            if (mounted && _currentIndex != 0) {
+                              setState(() => _currentIndex = 0);
+                            }
+                          },
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 20),
+                            tooltip: 'Delete chat',
+                            color: scheme.onSurfaceVariant,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 36,
+                              height: 36,
+                            ),
+                            onPressed: () => _confirmDeleteConversation(
+                              context,
+                              conversation,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            const Divider(height: 1),
             _drawerTile(
               index: 0,
               icon: Icons.chat_bubble_outline,
@@ -172,6 +264,37 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         ),
       ),
     );
+  }
+
+  /// Deletes a chat after asking. The drawer stays open on Cancel; on
+  /// Delete the conversation (and its messages) is gone for good. If it
+  /// was the open chat, the next most recent one opens instead.
+  Future<void> _confirmDeleteConversation(
+    BuildContext context,
+    Conversation conversation,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete chat?'),
+        content: Text(
+          '"${conversation.title}" and all its messages will be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(conversationsProvider.notifier).delete(conversation.id);
+    }
   }
 
   /// One destination row in the drawer. Same icons and labels as the old
