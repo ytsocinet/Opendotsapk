@@ -33,6 +33,7 @@ import '../../data/services/location_weather_service.dart';
 import '../../data/services/router_service.dart';
 import '../../data/services/storage_models_store.dart';
 import '../../data/services/wake_service.dart';
+import '../../data/tools/tool_registry.dart';
 import '../widgets/biometric_gate.dart';
 import '../../domain/models/local_model.dart';
 import '../../domain/models/models.dart';
@@ -700,6 +701,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   // ------------------------------------------------------------------- send
 
+  /// Streams one model reply into the bubble, honouring Stop.
+  Future<void> _streamReply({
+    required String prompt,
+    required String? systemPrompt,
+    required List<Map<String, String>> history,
+    String? imagePath,
+  }) async {
+    final llmService = ref.read(llmServiceProvider);
+    await for (final token in llmService.generateStream(
+      prompt: prompt,
+      systemPrompt: systemPrompt,
+      history: history,
+      maxTokens: _responseTokens(),
+      imagePath: imagePath,
+    )) {
+      if (_stopRequested) break;
+      _bufferToken(token);
+    }
+    _flushNow();
+  }
+
   Future<void> _sendMessage([String? text]) async {
     // Only the mic passes text; the composer sends with no argument.
     // This is what gates auto-listen after the reply.
@@ -805,21 +827,54 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
 
     try {
+      // Tools are local-only: the cloud path builds its own request and
+      // never parses tool calls, so a tools section there would only make
+      // the model print raw JSON.
+      final toolsSection =
+          await ref.read(toolRegistryProvider).promptSection();
       final request = _buildRequest(
         message: '$display$docCtx',
         priorHistory: priorHistory,
+        toolsSection: toolsSection,
       );
 
       // Streaming response
-      await for (final token in llmService.generateStream(
+      await _streamReply(
         prompt: request.prompt,
         systemPrompt: request.systemPrompt,
         history: request.history,
-        maxTokens: _responseTokens(),
         imagePath: imagePath,
-      )) {
-        if (_stopRequested) break;
-        _bufferToken(token);
+      );
+
+      // One tool round per turn: if the reply was a tool call, run it and
+      // generate a brief answer from the result. The raw JSON never reaches
+      // the transcript — the follow-up answer replaces it.
+      final call = parseToolCall(_currentResponse);
+      if (call != null && !_stopRequested) {
+        final registry = ref.read(toolRegistryProvider);
+        final result = await registry.executeTool(
+          toolName: call.tool,
+          params: call.params,
+        );
+        // Clear the tool JSON out of the bubble before the answer streams.
+        _pendingTokens = '';
+        _flushTimer?.cancel();
+        _flushTimer = null;
+        if (mounted) {
+          setState(() => _currentResponse = '');
+        }
+        final followUp = _buildRequest(
+          message:
+              'The tool "${call.tool}" returned:\n${TextUtils.ellipsize(result.toJson(), 2000)}\n'
+              'Answer the user briefly based on this result. Do not call another tool — answer directly in plain text.',
+          priorHistory: [...priorHistory, userMessage],
+          // No tools section: this turn answers, it does not act.
+        );
+        await _streamReply(
+          prompt: followUp.prompt,
+          systemPrompt: followUp.systemPrompt,
+          history: followUp.history,
+        );
       }
 
       _flushNow();
@@ -1105,6 +1160,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   _buildRequest({
     required String message,
     required List<ChatMessage> priorHistory,
+    String? toolsSection,
   }) {
     final settings = ref.read(settingsProvider);
     final personality = settings['personality'] as String?;
@@ -1113,7 +1169,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // The system prompt is the date and time first — the model has no
     // clock of its own — then where the user is and the temperature,
     // then the personality plus the mode's instruction, when the mode
-    // has one. Chat mode adds nothing.
+    // has one. Chat mode adds nothing. The tools section goes last, and
+    // only on the local path: the cloud path never parses tool calls.
     final modeInstruction =
         _modeInstruction(settings['chat_mode'] as String? ?? 'chat');
     final systemParts = <String>[
@@ -1121,6 +1178,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (_locationLine != null) _locationLine!,
       if (personality != null && personality.trim().isNotEmpty) personality,
       if (modeInstruction != null) modeInstruction,
+      if (toolsSection != null && toolsSection.trim().isNotEmpty)
+        toolsSection,
     ];
     final systemPromptText =
         systemParts.isEmpty ? null : systemParts.join('\n\n');
@@ -1162,6 +1221,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// times a second for no visible benefit.
   void _bufferToken(String token) {
     _pendingTokens += token;
+    // A tool call is not an answer: while the reply looks like one (a
+    // ```json fence or a bare object at the start), keep its tokens out
+    // of the bubble. If the turn ends with no tool call, the final flush
+    // still shows the whole reply, so nothing is ever lost.
+    final soFar = (_currentResponse + _pendingTokens).trimLeft();
+    if (soFar.startsWith('```json') ||
+        soFar.startsWith('```tool') ||
+        soFar.startsWith('{')) {
+      _flushTimer?.cancel();
+      _flushTimer = null;
+      return;
+    }
     _flushTimer ??= Timer(const Duration(milliseconds: 50), _flushNow);
   }
 
@@ -1612,17 +1683,18 @@ class _ChatHeaderState extends State<_ChatHeader>
                       // way to cut it off mid-speech, e.g. while listening
                       // to something else). It sits in the header so it is
                       // always one tap away, and stopping an idle engine
-                      // is a harmless no-op.
+                      // is a harmless no-op. Big and filled since Nov 12,
+                      // 2026: the small outlined grey icon could barely be
+                      // seen or tapped.
                       IconButton(
-                        icon: const Icon(Icons.volume_off_outlined),
+                        icon: const Icon(Icons.volume_off),
                         tooltip: 'Stop voice',
-                        iconSize: 20,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints.tightFor(
-                          width: 36,
-                          height: 36,
+                        iconSize: 28,
+                        style: IconButton.styleFrom(
+                          backgroundColor: scheme.errorContainer,
+                          foregroundColor: scheme.onErrorContainer,
+                          minimumSize: const Size(48, 48),
                         ),
-                        color: scheme.onSurfaceVariant,
                         onPressed: widget.onStopSpeaking,
                       ),
                       const SizedBox(width: 4),

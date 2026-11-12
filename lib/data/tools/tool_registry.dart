@@ -26,6 +26,7 @@ import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/utils/json_extract.dart';
 import '../../domain/models/tool_result.dart';
 import '../services/connected_apps_store.dart';
 import '../services/llm_service.dart';
@@ -221,6 +222,50 @@ class ToolRegistry {
       .toList(growable: false);
 
   bool isImplemented(String toolName) => _tools[toolName]?.implemented ?? false;
+
+  /// The tools section for the chat system prompt, or '' when there is
+  /// nothing to offer.
+  ///
+  /// Lists only [toolsForModel] — never a gated or unimplemented tool —
+  /// plus the enabled connected apps with their exact package names, so
+  /// the model never has to guess one. The connected-apps gate still
+  /// refuses unconnected packages at execution time; this list only tells
+  /// the model which packages are valid. Local chat only: the cloud path
+  /// never parses tool calls, so a tools section there would only make
+  /// the model print raw JSON.
+  Future<String> promptSection() async {
+    final tools = toolsForModel;
+    if (tools.isEmpty) return '';
+    final lines = <String>[
+      'You can use tools. When the user asks for something a tool can do, '
+          'reply with ONLY a JSON block like this and nothing else:',
+      '```json',
+      '{"tool": "open_app", "params": {"package_name": "com.google.android.youtube"}}',
+      '```',
+      'Tools:',
+      for (final t in tools) '- ${t.name}: ${t.description}',
+    ];
+    try {
+      final enabled = (await ConnectedAppsStore.instance.entries())
+          .where((a) => a.enabled)
+          .toList();
+      if (enabled.isNotEmpty) {
+        lines.add(
+          'Connected apps you may open or share to — use the package name exactly:',
+        );
+        for (final a in enabled) {
+          lines.add('- ${a.label} (${a.packageName})');
+        }
+      }
+    } catch (_) {
+      // No app list is not a reason to hide the tools: the gate still
+      // refuses unconnected packages at execution time.
+    }
+    lines.add(
+      'If no tool fits the request, answer directly in plain text — do not output a tool block.',
+    );
+    return lines.join('\n');
+  }
 
   /// Executes a tool.
   ///
@@ -584,4 +629,23 @@ class ToolDefinition {
       'required': required,
     },
   });
+}
+
+/// A tool call the model wrote in its reply, or null when there is none.
+///
+/// Accepts a fenced ```json block or a bare JSON object with a "tool" key,
+/// using the same tolerant extractor the planner relies on — a local model
+/// rarely returns bare JSON. Never throws: an unparseable reply is a plain
+/// answer, not a crash. A call naming an unknown tool is still returned;
+/// [ToolRegistry.executeTool] refuses it fail-closed.
+({String tool, Map<String, dynamic> params})? parseToolCall(String text) {
+  final obj = extractJsonObject(text);
+  if (obj == null) return null;
+  final tool = obj['tool'];
+  if (tool is! String || tool.isEmpty) return null;
+  final rawParams = obj['params'];
+  final params = rawParams is Map
+      ? rawParams.map((key, value) => MapEntry(key.toString(), value))
+      : <String, dynamic>{};
+  return (tool: tool, params: params);
 }

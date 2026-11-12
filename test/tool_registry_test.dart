@@ -191,6 +191,42 @@ void main() {
     });
   });
 
+  group('parseToolCall', () {
+    test('parses a fenced json block', () {
+      final call = parseToolCall(
+        '```json\n{"tool": "open_app", "params": {"package_name": "com.google.android.youtube"}}\n```',
+      );
+      expect(call, isNotNull);
+      expect(call!.tool, 'open_app');
+      expect(call.params['package_name'], 'com.google.android.youtube');
+    });
+
+    test('parses a bare object and defaults missing params', () {
+      final call = parseToolCall('{"tool": "web_search"}');
+      expect(call, isNotNull);
+      expect(call!.tool, 'web_search');
+      expect(call.params, isEmpty);
+    });
+
+    test('returns null when there is no tool call', () {
+      expect(parseToolCall('Just answer this.'), isNull);
+      expect(parseToolCall('{"answer": 42}'), isNull);
+      expect(parseToolCall('```json\n{ broken\n```'), isNull);
+      expect(parseToolCall(''), isNull);
+    });
+  });
+
+  group('ToolRegistry.promptSection', () {
+    test('lists offered tools, never gated ones', () async {
+      final section = await registry.promptSection();
+      expect(section, contains('open_app'));
+      expect(section, contains('web_search'));
+      expect(section, contains('get_location'));
+      expect(section, isNot(contains('send_sms')));
+      expect(section, isNot(contains('add_contact')));
+    });
+  });
+
   group('ToolResult', () {
     test('wire statuses are stable', () {
       expect(ToolResult.success('x').status.wire, 'success');
