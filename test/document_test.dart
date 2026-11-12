@@ -7,13 +7,13 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/data/services/document_service.dart';
+import 'package:clawzilla/data/services/document_service.dart';
 
 void main() {
   late Directory tmp;
 
   setUp(() async {
-    tmp = await Directory.systemTemp.createTemp('localmind_doc_test');
+    tmp = await Directory.systemTemp.createTemp('clawzilla_doc_test');
   });
 
   tearDown(() async {

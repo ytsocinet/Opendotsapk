@@ -8,7 +8,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/core/utils/turn_builder.dart';
+import 'package:clawzilla/core/utils/turn_builder.dart';
 
 void main() {
   group('estimateTokens', () {

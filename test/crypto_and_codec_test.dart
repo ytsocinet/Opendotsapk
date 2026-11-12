@@ -7,8 +7,8 @@ library;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/core/security/crypto_box.dart';
-import 'package:localmind/data/database/database_helper.dart';
+import 'package:clawzilla/core/security/crypto_box.dart';
+import 'package:clawzilla/data/database/database_helper.dart';
 
 void main() {
   group('CryptoBox', () {
@@ -20,7 +20,7 @@ void main() {
     });
 
     test('round-trips a simple string', () async {
-      const plain = 'hello localmind';
+      const plain = 'hello clawzilla';
       final enc = await box.encrypt(plain);
       expect(enc, isNot(plain));
       expect(await box.decrypt(enc), plain);

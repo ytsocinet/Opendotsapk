@@ -7,7 +7,7 @@ library;
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/core/utils/text_utils.dart';
+import 'package:clawzilla/core/utils/text_utils.dart';
 
 /// Mirror of the BM25 maths in DatabaseHelper, so the formula is pinned by a
 /// test rather than only living inside a private class.

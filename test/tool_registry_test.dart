@@ -9,10 +9,10 @@ library;
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/core/utils/json_extract.dart';
-import 'package:localmind/data/tools/tool_permission_store.dart';
-import 'package:localmind/data/tools/tool_registry.dart';
-import 'package:localmind/domain/models/tool_result.dart';
+import 'package:clawzilla/core/utils/json_extract.dart';
+import 'package:clawzilla/data/tools/tool_permission_store.dart';
+import 'package:clawzilla/data/tools/tool_registry.dart';
+import 'package:clawzilla/domain/models/tool_result.dart';
 
 void main() {
   final registry = ToolRegistry()..registerTools();

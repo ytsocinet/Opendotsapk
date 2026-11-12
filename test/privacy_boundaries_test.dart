@@ -10,9 +10,9 @@ library;
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/data/services/router_service.dart';
-import 'package:localmind/domain/models/cloud_provider.dart';
-import 'package:localmind/presentation/providers/providers.dart';
+import 'package:clawzilla/data/services/router_service.dart';
+import 'package:clawzilla/domain/models/cloud_provider.dart';
+import 'package:clawzilla/presentation/providers/providers.dart';
 
 void main() {
   late RouterService router;

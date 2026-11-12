@@ -11,8 +11,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/data/services/model_manager.dart';
-import 'package:localmind/domain/models/local_model.dart';
+import 'package:clawzilla/data/services/model_manager.dart';
+import 'package:clawzilla/domain/models/local_model.dart';
 
 /// A 64-hex SHA-256, used where the actual value does not matter.
 const String _shaA =

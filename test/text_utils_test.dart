@@ -5,7 +5,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/core/utils/text_utils.dart';
+import 'package:clawzilla/core/utils/text_utils.dart';
 
 void main() {
   group('tokenize', () {

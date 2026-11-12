@@ -8,7 +8,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/data/services/gpu_service.dart';
+import 'package:clawzilla/data/services/gpu_service.dart';
 
 void main() {
   group('GpuService.layersForMode', () {

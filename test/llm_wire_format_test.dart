@@ -16,7 +16,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/data/services/llm_service.dart';
+import 'package:clawzilla/data/services/llm_service.dart';
 
 void main() {
   group('LLM wire format', () {

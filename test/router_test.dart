@@ -5,8 +5,8 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/data/services/router_service.dart';
-import 'package:localmind/domain/models/cloud_provider.dart';
+import 'package:clawzilla/data/services/router_service.dart';
+import 'package:clawzilla/domain/models/cloud_provider.dart';
 
 void main() {
   late RouterService router;

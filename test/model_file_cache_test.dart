@@ -14,7 +14,7 @@ library;
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/data/services/model_file_cache.dart';
+import 'package:clawzilla/data/services/model_file_cache.dart';
 
 void main() {
   group('FilePresence', () {

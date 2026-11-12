@@ -11,8 +11,8 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:localmind/core/theme/app_theme.dart';
-import 'package:localmind/core/theme/motion.dart';
+import 'package:clawzilla/core/theme/app_theme.dart';
+import 'package:clawzilla/core/theme/motion.dart';
 
 /// Hosts [AppMotion.fadeSlide] with a real controller so the transition is
 /// driven exactly the way a pushed route would drive it.
