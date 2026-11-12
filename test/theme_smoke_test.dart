@@ -73,7 +73,11 @@ void main() {
   group('AppColors', () {
     /// Every colour the app names by hand, not through the scheme. A change to
     /// this list is a reminder that the new colour also needs an opaque alpha.
-    const Map<String, Color> palette = {
+    ///
+    /// Not `const`: `brand` stopped being a constant when the theme-colour
+    /// setting landed (build #85) — it is set from the setting before the
+    /// theme is built, so a const map naming it cannot compile.
+    final Map<String, Color> palette = {
       'brand': AppColors.brand,
       'accent': AppColors.accent,
       'success': AppColors.success,
@@ -98,6 +102,10 @@ void main() {
       // since the reskin (Nov 7, 2026): brand was Matrix 0xFF00FF41, before
       // that indigo 0xFF6366F1; accent was Matrix light green 0xFF4ADE80,
       // before that cyan 0xFF22D3EE.
+      //
+      // This pins the DEFAULT brand. The user can pick another colour in
+      // Settings → Appearance (build #85), which writes AppColors.brand;
+      // nothing in the test suite does that, so the default holds here.
       expect(AppColors.brand, const Color(0xFF00FF66));
       expect(AppColors.accent, const Color(0xFF10B981));
     });
