@@ -349,6 +349,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     super.dispose();
   }
 
+  /// A mode tap sets the mode for later turns. Tapping Code also takes
+  /// the user straight into the IDE: MainScreen opens it from the
+  /// request below (last file, or the Projects tab when there is none).
+  void _onModeChanged(String mode) {
+    ref.read(settingsProvider.notifier).updateSetting('chat_mode', mode);
+    if (mode == 'code') {
+      ref.read(ideOpenRequestProvider.notifier).state++;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final messages = ref.watch(chatMessagesProvider);
@@ -482,9 +492,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   _ModeBar(
                     mode: settings['chat_mode'] as String? ?? 'chat',
                     effort: settings['thinking_effort'] as String? ?? 'med',
-                    onModeChanged: (mode) => ref
-                        .read(settingsProvider.notifier)
-                        .updateSetting('chat_mode', mode),
+                    onModeChanged: _onModeChanged,
                     onEffortChanged: (effort) => ref
                         .read(settingsProvider.notifier)
                         .updateSetting('thinking_effort', effort),

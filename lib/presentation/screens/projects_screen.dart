@@ -4,7 +4,8 @@
 /// recently changed first. Tapping a text file opens it in the editor;
 /// files over 1 MB are refused with a message rather than loaded into
 /// memory. When no folder is picked, the screen offers the picker inline
-/// instead of sending the user to Settings.
+/// instead of sending the user to Settings. The + button creates a new
+/// empty file in the folder and opens it in the editor.
 library;
 
 import 'dart:io';
@@ -145,6 +146,83 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
     await _reload();
   }
 
+  /// Create a new empty file in the projects folder and open it.
+  ///
+  /// The name is a bare file name, not a path: slashes and ".." are
+  /// refused, and an existing file is never overwritten. The file is
+  /// opened through [_open] so the IDE tile remembers it.
+  Future<void> _createFile() async {
+    final folder = ref.read(settingsProvider)['projects_folder'] as String?;
+    if (folder == null || folder.isEmpty) return;
+    final controller = TextEditingController();
+    String? error;
+
+    // Validates the typed name inside the dialog, showing the problem
+    // there; returns the name to the caller only when it is usable.
+    Future<void> submit(StateSetter setDialogState) async {
+      final name = controller.text.trim();
+      if (name.isEmpty) {
+        setDialogState(() => error = 'Give the file a name.');
+        return;
+      }
+      if (name.contains('/') ||
+          name.contains(r'\') ||
+          name.contains('..')) {
+        setDialogState(
+          () => error = 'That is not a file name — no / , \\ or ..',
+        );
+        return;
+      }
+      if (await File(p.join(folder, name)).exists()) {
+        setDialogState(
+          () => error = 'A file with that name already exists.',
+        );
+        return;
+      }
+      if (mounted) Navigator.pop(context, name);
+    }
+
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('New file'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: 'e.g. notes.txt',
+              errorText: error,
+            ),
+            onSubmitted: (_) => submit(setDialogState),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => submit(setDialogState),
+              child: const Text('Create'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (name == null) return;
+    try {
+      final file = File(p.join(folder, name));
+      await file.create();
+      await _open(file);
+    } catch (e) {
+      Log.w('create file failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not create that file: $e')),
+      );
+    }
+  }
+
   String _sizeLabel(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
@@ -189,6 +267,13 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
             ),
         ],
       ),
+      floatingActionButton: folderSet
+          ? FloatingActionButton(
+              onPressed: _createFile,
+              tooltip: 'New file',
+              child: const Icon(Icons.add),
+            )
+          : null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : !folderSet

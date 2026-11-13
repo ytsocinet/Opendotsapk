@@ -72,6 +72,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       }
     });
 
+    // Tapping the Code mode button in chat asks for the IDE: the last
+    // file opens in the editor, or the Projects tab when there is none
+    // yet. Same request pattern as the browser link above; the listener
+    // fires after the build, so navigation and setState here are safe.
+    ref.listen<int>(ideOpenRequestProvider, (previous, next) {
+      if (next == 0) return;
+      unawaited(_openIde(Navigator.of(context)));
+    });
+
     return Scaffold(
       drawer: _buildDrawer(context),
       // Re-read the saved chats each time the drawer opens, so a chat

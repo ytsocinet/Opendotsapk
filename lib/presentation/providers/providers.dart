@@ -946,3 +946,9 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
 // this — the agent page-reader is a future step, explicitly decided that day,
 // not part of this batch.
 final browserOpenRequestProvider = StateProvider<String?>((ref) => null);
+
+/// Tapping the Code mode button in chat writes here; MainScreen reads it
+/// and opens the IDE (the last file, or the Projects tab when there is
+/// none yet). A counter, not a nullable value: every tap increments it,
+/// so tapping Code again still fires, and nothing needs clearing after.
+final ideOpenRequestProvider = StateProvider<int>((ref) => 0);
