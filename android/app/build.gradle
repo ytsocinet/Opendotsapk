@@ -110,6 +110,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Required by flutter_local_notifications (build #90): it uses
+        // Java 8+ core-library APIs that need desugaring on :app, or the
+        // release build fails with "core library desugaring to be enabled".
+        coreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -182,6 +186,11 @@ android {
             pickFirst 'lib/x86_64/libonnxruntime.so'
         }
     }
+}
+
+dependencies {
+    // Pairs with coreLibraryDesugaringEnabled above (build #90 fix).
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 }
 
 flutter {
