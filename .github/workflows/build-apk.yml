@@ -142,9 +142,9 @@ jobs:
           set -euo pipefail
           mkdir -p out
           if [ "${{ steps.signing.outputs.has_keystore }}" = "true" ]; then
-            name="localmind-${{ steps.version.outputs.version }}.apk"
+            name="clawzilla-${{ steps.version.outputs.version }}.apk"
           else
-            name="localmind-${{ steps.version.outputs.version }}-DEBUGSIGNED-NOT-UPDATABLE.apk"
+            name="clawzilla-${{ steps.version.outputs.version }}-DEBUGSIGNED-NOT-UPDATABLE.apk"
           fi
           cp build/app/outputs/flutter-apk/app-release.apk "out/${name}"
           echo "apk_name=${name}" >> "$GITHUB_OUTPUT"
@@ -271,7 +271,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: localmind-apk
+          name: clawzilla-apk
           path: |
             out/${{ steps.collect.outputs.apk_name }}
             out/SHA256SUMS
