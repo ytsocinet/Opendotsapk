@@ -1163,6 +1163,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         'The current time is $hour12:$minute $ampm.';
   }
 
+  /// The five Shemue core skills, folded into the prompt (build #91).
+  ///
+  /// Static text — no I/O, so this is sync where the memories section is
+  /// async. Returns null when the setting is off, so an off toggle means
+  /// a byte-identical prompt. Wording is adapted to what Clawzilla can
+  /// actually do: Planning With Files means the Projects folder and the
+  /// read/write_project_file tools, not Skales files.
+  String? _coreSkillsSection() {
+    final enabled =
+        ref.read(settingsProvider)['core_skills'] as bool? ?? true;
+    if (!enabled) return null;
+    return 'Core skills — how to work:\n'
+        '- Ponytail: do not over-engineer. Check the existing code and '
+        'the standard library first, before writing new code.\n'
+        '- Planning With Files: for a job in the Projects folder, keep a '
+        'plan file (task_plan.md, findings.md, progress.md) and update '
+        'progress.md after each step.\n'
+        '- I Have ADHD: answer first, no filler.\n'
+        '- Taste: design rules for spacing, type, layout, and motion. '
+        'No generic AI look.\n'
+        '- Diagram Design: clean flowcharts, architecture diagrams, and '
+        'explainers, in brand colors.';
+  }
+
   /// The saved memories, as one system-prompt section — or null when the
   /// user has saved nothing, so an empty Memory screen changes nothing
   /// about the prompt at all.
@@ -1237,12 +1261,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // The system prompt is the date and time first — the model has no
     // clock of its own — then where the user is and the temperature,
     // then the personality plus the mode's instruction, when the mode
-    // has one, then the user's saved memories. Chat mode adds nothing.
+    // has one, then the user's saved memories and the core skills.
+    // Chat mode adds nothing.
     // The tools section goes last, and only on the local path: the cloud
     // path never parses tool calls.
     final modeInstruction =
         _modeInstruction(settings['chat_mode'] as String? ?? 'chat');
     final memoriesSection = await _savedMemoriesSection();
+    final coreSkillsSection = _coreSkillsSection();
     final systemParts = <String>[
       _nowLine(),
       if (_locationLine != null) _locationLine!,
@@ -1256,6 +1282,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (personality != null && personality.trim().isNotEmpty) personality,
       if (modeInstruction != null) modeInstruction,
       if (memoriesSection != null) memoriesSection,
+      if (coreSkillsSection != null) coreSkillsSection,
       if (toolsSection != null && toolsSection.trim().isNotEmpty)
         toolsSection,
     ];

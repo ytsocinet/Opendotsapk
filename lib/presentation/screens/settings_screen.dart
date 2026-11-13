@@ -750,6 +750,7 @@ class VoiceSettings extends ConsumerWidget {
     final ttsEnabled = settings['tts_enabled'] as bool? ?? true;
     final alwaysListening = settings['always_listening'] as bool? ?? false;
     final backgroundMode = settings['background_mode'] as bool? ?? true;
+    final coreSkills = settings['core_skills'] as bool? ?? true;
     // Pitch lives in settings (a double, default 1.0) so the slider
     // rebuilds live as setPitch saves each step.
     final pitch = settings['tts_pitch'] as double? ?? 1.0;
@@ -855,6 +856,33 @@ class VoiceSettings extends ConsumerWidget {
                   .read(settingsProvider.notifier)
                   .updateSetting('background_mode', value);
               onChanged('background_mode');
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: SwitchListTile(
+            secondary: ScreenRowIcon(
+              icon: coreSkills
+                  ? Icons.psychology_outlined
+                  : Icons.psychology_alt_outlined,
+              color: coreSkills
+                  ? scheme.primary
+                  : scheme.onSurfaceVariant.withValues(alpha: 0.5),
+              size: 38,
+            ),
+            title: const Text('Core skills'),
+            subtitle: const Text(
+              'Fold the five Shemue core skills into Cypher\'s replies: '
+              'check existing code first, keep a plan file, answer first '
+              'with no filler, and clean design and diagrams.',
+            ),
+            value: coreSkills,
+            onChanged: (value) {
+              ref
+                  .read(settingsProvider.notifier)
+                  .updateSetting('core_skills', value);
+              onChanged('core_skills');
             },
           ),
         ),

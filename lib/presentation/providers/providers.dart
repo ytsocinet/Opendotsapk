@@ -738,6 +738,10 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // reply, with a "done" notice when it finishes. On by default: it
     // only holds a wake lock while a task actually runs.
     'background_mode': true,
+    // Core skills (build #91): the five Shemue core skills folded into
+    // Cypher's system prompt. On by default: the section is five short
+    // lines, so it costs almost no context.
+    'core_skills': true,
     'model_path': null,
 
     // Cloud / privacy. Defaults are the conservative ones: auto routing,
@@ -841,6 +845,7 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'voice_enabled',
       'always_listening',
       'background_mode',
+      'core_skills',
       'onboarding_done',
     ]) {
       final raw = await _db.getPreference(key);
