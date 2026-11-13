@@ -32,6 +32,7 @@ import '../../data/services/location_weather_service.dart';
 import '../../data/services/memory_store.dart';
 import '../../data/services/router_service.dart';
 import '../../data/services/storage_models_store.dart';
+import '../../data/services/background_task_service.dart';
 import '../../data/services/wake_service.dart';
 import '../../data/tools/tool_registry.dart';
 import '../widgets/biometric_gate.dart';
@@ -789,109 +790,128 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       localModelReady: llmService.isLoaded,
     );
 
-    if (decision.isCloud) {
-      await _sendViaCloud(decision, '$display$docCtx', imagePath, priorHistory);
-      return;
-    }
-
-    if (decision.isRefused) {
-      // Say why, in the transcript, and stop. Calling a model here would mean
-      // returning a confident answer to a question it was never shown.
-      Log.w('turn refused: ${decision.reason}');
-      await ref
-          .read(chatMessagesProvider.notifier)
-          .addMessage(
-            ChatMessage(
-              id: _uuid.v4(),
-              role: 'assistant',
-              content: decision.reason,
-              timestamp: DateTime.now().millisecondsSinceEpoch,
-            ),
-          );
-      // A new message just landed: go to the bottom even if the user was
-      // reading earlier messages.
-      if (mounted) _scrollToBottom(force: true);
-      return;
-    }
-
-    if (!llmService.isLoaded) {
-      await _showModelNotLoadedDialog();
-      return;
-    }
-
-    // Process through agent pipeline
-    setState(() {
-      _isThinking = true;
-      _currentResponse = '';
-    });
-
+    // Background mode: keep the app alive while Cypher works on this
+    // turn, so Android cannot sleep it mid-reply. Armed here, after
+    // routing and before any generation starts; the service itself
+    // only starts if the turn is still running after a short delay,
+    // so quick answers never flash a notification. The finally at the
+    // end of this method covers the cloud turn, the local turn, Stop,
+    // and errors alike — the early `return`s below still run a finally.
+    final backgroundMode = settings['background_mode'] as bool? ?? true;
+    if (backgroundMode) BackgroundTaskService.instance.beginWork();
     try {
-      // Tools are local-only: the cloud path builds its own request and
-      // never parses tool calls, so a tools section there would only make
-      // the model print raw JSON.
-      final toolsSection =
-          await ref.read(toolRegistryProvider).promptSection();
-      final request = await _buildRequest(
-        message: '$display$docCtx',
-        priorHistory: priorHistory,
-        toolsSection: toolsSection,
-      );
-
-      // Streaming response
-      await _streamReply(
-        prompt: request.prompt,
-        systemPrompt: request.systemPrompt,
-        history: request.history,
-        imagePath: imagePath,
-      );
-
-      // One tool round per turn: if the reply was a tool call, run it and
-      // generate a brief answer from the result. The raw JSON never reaches
-      // the transcript — the follow-up answer replaces it.
-      final call = parseToolCall(_currentResponse);
-      if (call != null && !_stopRequested) {
-        final registry = ref.read(toolRegistryProvider);
-        final result = await registry.executeTool(
-          toolName: call.tool,
-          params: call.params,
-        );
-        // Clear the tool JSON out of the bubble before the answer streams.
-        _pendingTokens = '';
-        _flushTimer?.cancel();
-        _flushTimer = null;
-        if (mounted) {
-          setState(() => _currentResponse = '');
-        }
-        final followUp = await _buildRequest(
-          message:
-              'The tool "${call.tool}" returned:\n${TextUtils.ellipsize(result.toJson(), 2000)}\n'
-              'Answer the user briefly based on this result. Do not call another tool — answer directly in plain text.',
-          priorHistory: [...priorHistory, userMessage],
-          // No tools section: this turn answers, it does not act.
-        );
-        await _streamReply(
-          prompt: followUp.prompt,
-          systemPrompt: followUp.systemPrompt,
-          history: followUp.history,
-        );
+      if (decision.isCloud) {
+        await _sendViaCloud(decision, '$display$docCtx', imagePath, priorHistory);
+        return;
       }
 
-      _flushNow();
-      await _finishAssistantMessage();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error: $e')));
+      if (decision.isRefused) {
+        // Say why, in the transcript, and stop. Calling a model here would mean
+        // returning a confident answer to a question it was never shown.
+        Log.w('turn refused: ${decision.reason}');
+        await ref
+            .read(chatMessagesProvider.notifier)
+            .addMessage(
+              ChatMessage(
+                id: _uuid.v4(),
+                role: 'assistant',
+                content: decision.reason,
+                timestamp: DateTime.now().millisecondsSinceEpoch,
+              ),
+            );
+        // A new message just landed: go to the bottom even if the user was
+        // reading earlier messages.
+        if (mounted) _scrollToBottom(force: true);
+        return;
+      }
+
+      if (!llmService.isLoaded) {
+        await _showModelNotLoadedDialog();
+        return;
+      }
+
+      // Process through agent pipeline
+      setState(() {
+        _isThinking = true;
+        _currentResponse = '';
+      });
+
+      try {
+        // Tools are local-only: the cloud path builds its own request and
+        // never parses tool calls, so a tools section there would only make
+        // the model print raw JSON.
+        final toolsSection =
+            await ref.read(toolRegistryProvider).promptSection();
+        final request = await _buildRequest(
+          message: '$display$docCtx',
+          priorHistory: priorHistory,
+          toolsSection: toolsSection,
+        );
+
+        // Streaming response
+        await _streamReply(
+          prompt: request.prompt,
+          systemPrompt: request.systemPrompt,
+          history: request.history,
+          imagePath: imagePath,
+        );
+
+        // One tool round per turn: if the reply was a tool call, run it and
+        // generate a brief answer from the result. The raw JSON never reaches
+        // the transcript — the follow-up answer replaces it.
+        final call = parseToolCall(_currentResponse);
+        if (call != null && !_stopRequested) {
+          final registry = ref.read(toolRegistryProvider);
+          final result = await registry.executeTool(
+            toolName: call.tool,
+            params: call.params,
+          );
+          // Clear the tool JSON out of the bubble before the answer streams.
+          _pendingTokens = '';
+          _flushTimer?.cancel();
+          _flushTimer = null;
+          if (mounted) {
+            setState(() => _currentResponse = '');
+          }
+          final followUp = await _buildRequest(
+            message:
+                'The tool "${call.tool}" returned:\n${TextUtils.ellipsize(result.toJson(), 2000)}\n'
+                'Answer the user briefly based on this result. Do not call another tool — answer directly in plain text.',
+            priorHistory: [...priorHistory, userMessage],
+            // No tools section: this turn answers, it does not act.
+          );
+          await _streamReply(
+            prompt: followUp.prompt,
+            systemPrompt: followUp.systemPrompt,
+            history: followUp.history,
+          );
+        }
+
+        _flushNow();
+        await _finishAssistantMessage();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('Error: $e')));
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isThinking = false;
+            _currentResponse = '';
+          });
+          // The answer has landed: return to the bottom even if the user was
+          // reading earlier messages while it generated.
+          _scrollToBottom(force: true);
+        }
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isThinking = false;
-          _currentResponse = '';
-        });
-        // The answer has landed: return to the bottom even if the user was
-        // reading earlier messages while it generated.
-        _scrollToBottom(force: true);
+      // The turn is over (answered, stopped, or errored): drop the
+      // background service, posting the "done" notice if it ran.
+      if (backgroundMode) {
+        await BackgroundTaskService.instance.endWork(
+          stopped: _stopRequested,
+        );
       }
     }
   }

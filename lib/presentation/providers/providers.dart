@@ -734,6 +734,10 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // Cypher always-listening ("Hey Cypher"). Off by default: it keeps
     // the mic warm and runs a foreground service, so it is opt-in.
     'always_listening': false,
+    // Background mode: keep the app alive while Cypher works on a long
+    // reply, with a "done" notice when it finishes. On by default: it
+    // only holds a wake lock while a task actually runs.
+    'background_mode': true,
     'model_path': null,
 
     // Cloud / privacy. Defaults are the conservative ones: auto routing,
@@ -836,6 +840,7 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'biometric_lock',
       'voice_enabled',
       'always_listening',
+      'background_mode',
       'onboarding_done',
     ]) {
       final raw = await _db.getPreference(key);

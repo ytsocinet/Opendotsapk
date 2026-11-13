@@ -91,6 +91,14 @@ dependencies:
   flutter_foreground_task: ^11.0.3
   workmanager: ^0.10.10
 
+  # Completion notice for background mode (build #90): the foreground
+  # notification vanishes when its service stops, so "Cypher is done" is
+  # posted as a plain local notification that stays in the tray. 19.x is
+  # picked for its floors (Dart ^3.4.0, Flutter >=3.22.0), which sit well
+  # under this project's and CI's; the newer lines raise the Dart floor
+  # and add nothing this feature needs.
+  flutter_local_notifications: ^19.4.0
+
   # Network
   http: ^1.2.1
 

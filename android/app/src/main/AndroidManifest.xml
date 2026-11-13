@@ -5,9 +5,12 @@
 
     <!-- Cypher always-listening (added back after v1): foreground service
          (microphone type) so OpenWakeWord can listen with the app closed,
-         and the notification permission for its persistent notification. -->
+         and the notification permission for its persistent notification.
+         Background mode (build #90) uses the same service with the
+         dataSync type while Cypher works on a long reply. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Live location (added back Nov 11, 2026, when Aaron approved it so
@@ -112,14 +115,15 @@
 
         <!-- flutter_foreground_task does NOT declare its service — the host
              app must. Android 14+ requires android:foregroundServiceType
-             to be declared, and ours is microphone (wake-word listening).
-             Without this the service silently never starts: the toggle
-             flips on, then back off, with "foreground service did not
-             start". A build-time merged-manifest check is still needed:
-             plugins can re-add permissions this draft removes. -->
+             to be declared, and ours is microphone (wake-word listening)
+             plus dataSync (background mode, build #90 — Cypher working on
+             a long reply). Without this the service silently never starts:
+             the toggle flips on, then back off, with "foreground service
+             did not start". A build-time merged-manifest check is still
+             needed: plugins can re-add permissions this draft removes. -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
-            android:foregroundServiceType="microphone"
+            android:foregroundServiceType="microphone|dataSync"
             android:exported="false" />
 
         <meta-data

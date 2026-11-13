@@ -749,6 +749,7 @@ class VoiceSettings extends ConsumerWidget {
     final settings = ref.watch(settingsProvider);
     final ttsEnabled = settings['tts_enabled'] as bool? ?? true;
     final alwaysListening = settings['always_listening'] as bool? ?? false;
+    final backgroundMode = settings['background_mode'] as bool? ?? true;
     // Pitch lives in settings (a double, default 1.0) so the slider
     // rebuilds live as setPitch saves each step.
     final pitch = settings['tts_pitch'] as double? ?? 1.0;
@@ -825,6 +826,35 @@ class VoiceSettings extends ConsumerWidget {
               } else {
                 await wake.stop();
               }
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: SwitchListTile(
+            secondary: ScreenRowIcon(
+              icon: backgroundMode
+                  ? Icons.notifications_active_outlined
+                  : Icons.notifications_off_outlined,
+              color: backgroundMode
+                  ? scheme.primary
+                  : scheme.onSurfaceVariant.withValues(alpha: 0.5),
+              size: 38,
+            ),
+            title: const Text('Background mode'),
+            subtitle: const Text(
+              'When Cypher is working on a long reply, keep the app alive '
+              'with a "Cypher is working" notice and tell you when it is '
+              'done. Uses more battery while a task runs — set battery to '
+              'Unrestricted for Clawzilla in Android Settings (Apps → '
+              'Clawzilla → Battery) or the system may still stop it.',
+            ),
+            value: backgroundMode,
+            onChanged: (value) {
+              ref
+                  .read(settingsProvider.notifier)
+                  .updateSetting('background_mode', value);
+              onChanged('background_mode');
             },
           ),
         ),
