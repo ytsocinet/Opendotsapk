@@ -1209,7 +1209,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required String message,
     required List<ChatMessage> priorHistory,
     String? toolsSection,
-  }) {
+  }) async {
     final settings = ref.read(settingsProvider);
     final personality = settings['personality'] as String?;
     final nCtx = ref.read(llmServiceProvider).contextSize;
