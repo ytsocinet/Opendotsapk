@@ -1254,7 +1254,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     final turns = selection.turns;
     if (turns.isEmpty) {
-      return (prompt: message, systemPrompt: null, history: const []);
+      // Explicit field types: without them the record infers
+      // (String, Null, List<dynamic>), which is not the declared
+      // (String, String?, List<Map<String, String>>).
+      return (
+        prompt: message,
+        systemPrompt: null as String?,
+        history: const <Map<String, String>>[],
+      );
     }
 
     final hasSystem = turns.first.role == 'system';
