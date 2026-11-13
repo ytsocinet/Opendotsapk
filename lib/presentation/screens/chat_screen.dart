@@ -29,6 +29,7 @@ import '../../data/services/model_manager.dart';
 import '../../data/services/model_preflight.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/location_weather_service.dart';
+import '../../data/services/memory_store.dart';
 import '../../data/services/router_service.dart';
 import '../../data/services/storage_models_store.dart';
 import '../../data/services/wake_service.dart';
@@ -830,7 +831,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // the model print raw JSON.
       final toolsSection =
           await ref.read(toolRegistryProvider).promptSection();
-      final request = _buildRequest(
+      final request = await _buildRequest(
         message: '$display$docCtx',
         priorHistory: priorHistory,
         toolsSection: toolsSection,
@@ -861,7 +862,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         if (mounted) {
           setState(() => _currentResponse = '');
         }
-        final followUp = _buildRequest(
+        final followUp = await _buildRequest(
           message:
               'The tool "${call.tool}" returned:\n${TextUtils.ellipsize(result.toJson(), 2000)}\n'
               'Answer the user briefly based on this result. Do not call another tool — answer directly in plain text.',
@@ -916,7 +917,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     try {
       // Same newest-first, budgeted selection as the local path. This used to
       // be `history.take(12)`, i.e. the twelve OLDEST messages.
-      final request = _buildRequest(
+      final request = await _buildRequest(
         message: prompt,
         priorHistory: priorHistory,
       );
@@ -1142,6 +1143,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         'The current time is $hour12:$minute $ampm.';
   }
 
+  /// The saved memories, as one system-prompt section — or null when the
+  /// user has saved nothing, so an empty Memory screen changes nothing
+  /// about the prompt at all.
+  ///
+  /// Loaded fresh on every turn, so a memory saved mid-chat applies to
+  /// the next reply. Capped at the 30 most recent entries and ~2000
+  /// characters of memory text, so a full notebook cannot crowd the
+  /// question out of a small local context (the section is also charged
+  /// against the budget in [buildRecentTurns], like the rest of the
+  /// system prompt).
+  Future<String?> _savedMemoriesSection() async {
+    final List<Map<String, dynamic>> memories;
+    try {
+      memories = await MemoryStore.instance.entries();
+    } catch (e) {
+      // A memory-store failure must never break sending a message.
+      Log.w('saved memories unavailable: $e');
+      return null;
+    }
+    if (memories.isEmpty) return null;
+    const maxEntries = 30;
+    const maxChars = 2000;
+    final lines = <String>[];
+    var chars = 0;
+    for (final m in memories) {
+      if (lines.length >= maxEntries) break;
+      if (chars >= maxChars) break;
+      final content =
+          (m['content'] as String).replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (content.isEmpty) continue;
+      // One very long memory is cut to what is left of the budget rather
+      // than dropped outright — the newest fact is the one that matters.
+      final take = content.length > maxChars - chars
+          ? content.substring(0, maxChars - chars).trimRight()
+          : content;
+      if (take.isEmpty) break;
+      chars += take.length;
+      lines.add('- [${m['type']}] $take');
+    }
+    if (lines.isEmpty) return null;
+    return 'Things to remember about the user (saved by the user in '
+        'Memory — treat as facts about them and their preferences; if a '
+        'saved memory conflicts with something said in this conversation, '
+        'what was said in the conversation wins):\n${lines.join('\n')}';
+  }
+
   /// Builds the system prompt, the question, and the history to send.
   ///
   /// [priorHistory] must be the conversation **before** the current message.
@@ -1154,7 +1201,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   ///
   /// The return is split into the parts `LlmService.generateStream` expects,
   /// which is what keeps `test/llm_wire_format_test.dart` green.
-  ({String prompt, String? systemPrompt, List<Map<String, String>> history})
+  ///
+  /// Async because the saved-memories section is loaded fresh from
+  /// [MemoryStore] on every turn.
+  Future<({String prompt, String? systemPrompt, List<Map<String, String>> history})>
   _buildRequest({
     required String message,
     required List<ChatMessage> priorHistory,
@@ -1167,10 +1217,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // The system prompt is the date and time first — the model has no
     // clock of its own — then where the user is and the temperature,
     // then the personality plus the mode's instruction, when the mode
-    // has one. Chat mode adds nothing. The tools section goes last, and
-    // only on the local path: the cloud path never parses tool calls.
+    // has one, then the user's saved memories. Chat mode adds nothing.
+    // The tools section goes last, and only on the local path: the cloud
+    // path never parses tool calls.
     final modeInstruction =
         _modeInstruction(settings['chat_mode'] as String? ?? 'chat');
+    final memoriesSection = await _savedMemoriesSection();
     final systemParts = <String>[
       _nowLine(),
       if (_locationLine != null) _locationLine!,
@@ -1183,6 +1235,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         'temperature is, say you do not know; do not guess.',
       if (personality != null && personality.trim().isNotEmpty) personality,
       if (modeInstruction != null) modeInstruction,
+      if (memoriesSection != null) memoriesSection,
       if (toolsSection != null && toolsSection.trim().isNotEmpty)
         toolsSection,
     ];
