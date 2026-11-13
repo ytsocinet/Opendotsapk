@@ -33,6 +33,11 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
   List<File> _files = [];
   bool _loading = true;
   String? _error;
+  // The folder value _reload() last loaded for. The screen only loads
+  // its list once in initState, but the folder can be picked later in
+  // Settings (or removed there); the listener in build compares the
+  // current setting against this and reloads when it changes.
+  String? _loadedFolder;
 
   @override
   void initState() {
@@ -43,6 +48,9 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
   Future<void> _reload() async {
     final folder =
         ref.read(settingsProvider)['projects_folder'] as String?;
+    // Record this synchronously, before any await, so a second change
+    // while a listing is in flight cannot trigger a duplicate reload.
+    _loadedFolder = folder;
     if (folder == null || folder.isEmpty) {
       if (mounted) {
         setState(() {
@@ -149,6 +157,20 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
     final folder =
         ref.watch(settingsProvider)['projects_folder'] as String?;
     final folderSet = folder != null && folder.isNotEmpty;
+
+    // The folder can change outside this screen (picked in Settings, or
+    // removed there). All tabs stay mounted, so initState's one reload
+    // is not enough: reload whenever the setting moves. The listener
+    // fires after the provider changes, never during build, and
+    // _reload() guards its own setState with mounted. A pick made from
+    // this screen's own button also reloads directly in _pickFolder;
+    // the _loadedFolder guard keeps that from doubling the work.
+    ref.listen(
+      settingsProvider.select((s) => s['projects_folder'] as String?),
+      (previous, next) {
+        if (next != _loadedFolder) _reload();
+      },
+    );
 
     return Scaffold(
       appBar: AppBar(
