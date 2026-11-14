@@ -156,6 +156,11 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
     // whole content.
     final split = splitThinking(widget.message.content);
 
+    // Which message, if any, is being read aloud right now. The bubble
+    // showing it swaps its replay icon for a stop icon (build #96).
+    final speakingId = ref.watch(speakingMessageIdProvider);
+    final isSpeaking = speakingId == widget.message.id;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       constraints: BoxConstraints(maxWidth: maxWidth),
@@ -238,34 +243,68 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
                 const SizedBox(height: 6),
                 Align(
                   alignment: Alignment.centerRight,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(6),
-                    onTap: () async {
-                      // Copy the answer, not the reasoning — that is the
-                      // part the user wants to keep or share. Falls back to
-                      // the full content when the answer is empty (a reply
-                      // stopped mid-thought).
-                      await Clipboard.setData(
-                        ClipboardData(
-                          text: split.answer.isNotEmpty
-                              ? split.answer
-                              : widget.message.content,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Replay / stop (build #96): re-read this answer
+                      // through the same TTS path as the automatic
+                      // speak-after-reply. Hidden on the live tile — the
+                      // reply is still streaming, so there is no complete
+                      // answer to replay yet — and on empty answers.
+                      // While this bubble is the one speaking, the icon
+                      // becomes a stop button on the same path as the
+                      // stop-voice button in the chat header.
+                      if (!_isLive && _speakText.isNotEmpty)
+                        Tooltip(
+                          message:
+                              isSpeaking ? 'Stop voice' : 'Replay answer',
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: isSpeaking
+                                ? _stopSpeaking
+                                : _replayAnswer,
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Icon(
+                                isSpeaking
+                                    ? Icons.stop_rounded
+                                    : Icons.replay_rounded,
+                                size: 14,
+                                color: isSpeaking ? scheme.error : null,
+                              ),
+                            ),
+                          ),
                         ),
-                      );
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context)
-                          ..hideCurrentSnackBar()
-                          ..showSnackBar(
-                            const SnackBar(
-                              content: Text('Copied to clipboard'),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: () async {
+                          // Copy the answer, not the reasoning — that is the
+                          // part the user wants to keep or share. Falls back to
+                          // the full content when the answer is empty (a reply
+                          // stopped mid-thought).
+                          await Clipboard.setData(
+                            ClipboardData(
+                              text: split.answer.isNotEmpty
+                                  ? split.answer
+                                  : widget.message.content,
                             ),
                           );
-                      }
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(Icons.copy_rounded, size: 14),
-                    ),
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context)
+                              ..hideCurrentSnackBar()
+                              ..showSnackBar(
+                                const SnackBar(
+                                  content: Text('Copied to clipboard'),
+                                ),
+                              );
+                          }
+                        },
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(Icons.copy_rounded, size: 14),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -290,6 +329,49 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
 
   /// A zero timestamp means "not recorded"; there is nothing honest to show.
   bool get _hasTime => widget.message.timestamp > 0;
+
+  /// The live reply is rendered as a tile with this id while it streams
+  /// (see chat_screen); replay only makes sense once the answer is
+  /// complete and stored, so the live tile gets no voice buttons.
+  bool get _isLive => widget.message.id == 'live-response';
+
+  /// The text the replay button reads: the answer, not the reasoning —
+  /// the same text the copy button takes. A reply stopped mid-thought is
+  /// stored with a trailing `_(stopped)_` marker; it is for the eye, not
+  /// the ear, so it is stripped before speaking.
+  String get _speakText {
+    final split = splitThinking(widget.message.content);
+    final raw = split.answer.isNotEmpty
+        ? split.answer
+        : widget.message.content;
+    return raw.replaceAll(RegExp(r'_\(stopped\)\s*$'), '').trim();
+  }
+
+  /// Re-read this answer aloud through the same TTS path as the automatic
+  /// speak-after-reply — same voice, same pitch. An explicit tap speaks
+  /// even when the auto-speak toggle is off. Whatever is playing now is
+  /// stopped first, so tapping replay on another bubble does not queue
+  /// behind the current one.
+  Future<void> _replayAnswer() async {
+    final text = _speakText;
+    if (text.isEmpty) return;
+    final tts = ref.read(textToSpeechProvider.notifier);
+    await tts.stop();
+    ref.read(speakingMessageIdProvider.notifier).state = widget.message.id;
+    await tts.speak(text);
+    // Clear only if nobody has since started another message: the
+    // auto-speak path and another bubble's replay use the same guard.
+    if (ref.read(speakingMessageIdProvider) == widget.message.id) {
+      ref.read(speakingMessageIdProvider.notifier).state = null;
+    }
+  }
+
+  /// Cut off the voice reading this bubble aloud. Same path as the
+  /// stop-voice button in the chat header; the speaking id clears when
+  /// the cancelled speak() returns.
+  Future<void> _stopSpeaking() async {
+    await ref.read(textToSpeechProvider.notifier).stop();
+  }
 
   /// Message time in device-local time: `h:MM AM/PM` for 12-hour,
   /// `HH:MM` for 24-hour.

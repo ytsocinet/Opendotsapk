@@ -320,6 +320,16 @@ class TtsNotifier extends StateNotifier<bool> {
   }
 }
 
+/// Id of the message currently being read aloud, or null when idle
+/// (build #96).
+///
+/// Set by the chat screen when it auto-speaks a finished reply, and by
+/// a bubble's replay button when the user replays an older answer. The
+/// bubble showing this id swaps its replay icon for a stop icon. The
+/// header stop-voice button does not use it — it stops the engine
+/// directly, speaking or not.
+final speakingMessageIdProvider = StateProvider<String?>((ref) => null);
+
 // Wake word ("Hey Cypher") — see lib/data/services/wake_service.dart.
 final wakeServiceProvider = Provider<WakeService>((ref) {
   return WakeService.instance;

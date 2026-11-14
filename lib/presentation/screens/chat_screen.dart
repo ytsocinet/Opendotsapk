@@ -1281,9 +1281,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // eye, not the ear. Falls back to the whole reply when the answer is
       // empty (a reply that was all thinking).
       final answer = splitThinking(_currentResponse).answer;
+      // Mark this bubble as the one being read so its in-bubble stop
+      // button shows while it speaks (build #96). Cleared below,
+      // guarded so a replay started mid-speech is not clobbered.
+      ref.read(speakingMessageIdProvider.notifier).state =
+          assistantMessage.id;
       await ref
           .read(textToSpeechProvider.notifier)
           .speak(answer.isNotEmpty ? answer : _currentResponse);
+      if (ref.read(speakingMessageIdProvider) == assistantMessage.id) {
+        ref.read(speakingMessageIdProvider.notifier).state = null;
+      }
     }
 
     // Cypher voice conversation: after a spoken reply, listen again so
