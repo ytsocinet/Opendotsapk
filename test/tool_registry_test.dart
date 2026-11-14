@@ -120,6 +120,25 @@ void main() {
       expect(offered, contains('read_project_file'));
       expect(offered, contains('write_project_file'));
 
+      // Tasks and Goals left manual-only (Nov 14, 2026, build #95):
+      // Aaron said the tabs are for the agent to do, not him, so the
+      // model may manage tasks and goals in the same tables the tabs
+      // read. These are plain database writes, no Android permission.
+      for (final tool in [
+        'create_task',
+        'list_tasks',
+        'update_task',
+        'complete_task',
+        'delete_task',
+        'create_goal',
+        'list_goals',
+        'update_goal',
+        'complete_goal',
+        'delete_goal',
+      ]) {
+        expect(offered, contains(tool));
+      }
+
       // These do nothing yet, so the model must not see them.
       expect(offered, isNot(contains('send_sms')));
       expect(offered, isNot(contains('add_contact')));
@@ -192,8 +211,39 @@ void main() {
       expect(registry.isImplemented('get_location'), isTrue);
       expect(registry.isImplemented('open_app'), isTrue);
       expect(registry.isImplemented('share_to_app'), isTrue);
+      expect(registry.isImplemented('create_task'), isTrue);
+      expect(registry.isImplemented('list_goals'), isTrue);
       expect(registry.isImplemented('send_sms'), isFalse);
       expect(registry.isImplemented('nope'), isFalse);
+    });
+
+    test('task and goal tools refuse bad input before touching the database',
+        () async {
+      // These fail in validation, before any DatabaseHelper call — so
+      // they are safe to run in a unit test, where sqflite has no
+      // platform channel. A success here would mean a tool claimed to
+      // act while doing nothing, the exact failure this file guards.
+      for (final tool in [
+        'create_task',
+        'create_goal',
+        'update_task',
+        'update_goal',
+        'complete_task',
+        'complete_goal',
+        'delete_task',
+        'delete_goal',
+      ]) {
+        final result = await registry.executeTool(
+          toolName: tool,
+          params: const {},
+        );
+        expect(
+          result.status,
+          ToolStatus.failed,
+          reason: '$tool with no params must fail, not succeed',
+        );
+        expect(result.isSuccess, isFalse);
+      }
     });
   });
 
@@ -228,6 +278,9 @@ void main() {
       expect(section, contains('open_app'));
       expect(section, contains('web_search'));
       expect(section, contains('get_location'));
+      expect(section, contains('create_task'));
+      expect(section, contains('list_tasks'));
+      expect(section, contains('create_goal'));
       expect(section, isNot(contains('send_sms')));
       expect(section, isNot(contains('add_contact')));
     });

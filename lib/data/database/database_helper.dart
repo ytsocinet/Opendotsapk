@@ -580,6 +580,28 @@ class DatabaseHelper {
     );
   }
 
+  /// Update a task's title and/or done flag. Only the supplied ones
+  /// change. (Build #95: the agent's update_task tool needs to rename a
+  /// task; the tabs only ever toggled done, so there was no update path.)
+  Future<int> updateTask({
+    required String id,
+    String? title,
+    bool? done,
+  }) async {
+    final db = await database;
+    final values = <String, Object?>{
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    };
+    if (title != null) values['title'] = title;
+    if (done != null) values['done'] = done ? 1 : 0;
+    return db.update(
+      tableTasks,
+      values,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   Future<int> deleteTask(String id) async {
     final db = await database;
     return db.delete(tableTasks, where: 'id = ?', whereArgs: [id]);

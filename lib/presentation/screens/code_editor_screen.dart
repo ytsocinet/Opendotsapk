@@ -2,7 +2,7 @@
 ///
 /// v1 is a plain editor: the file's text in a full-screen field, Save
 /// writes it back to the same path. No syntax highlighting, no running
-/// code — that is a later step. Files over 1 MB are refused at the
+/// code — that is a later step. Files over 5 MB are refused at the
 /// Projects screen, so this screen never has to hold a huge file.
 library;
 

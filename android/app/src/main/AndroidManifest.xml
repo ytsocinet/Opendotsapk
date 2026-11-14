@@ -20,6 +20,16 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
+    <!-- All-files access (build #95): listing a shared-storage folder
+         with raw file paths needs this on Android 11+ — without the
+         grant, Directory.list() yields nothing and Projects reports a
+         folder with files in it as empty (the "blink" bug: the folder
+         held a 25-byte file the app could not see). The Projects screen
+         requests the grant when a picked folder lists empty; the user
+         flips the toggle in Settings, there is no runtime dialog for
+         it. Sideloaded debug APK, so no Play Store review concern. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
     <!-- Package visibility (Android 11+): listing launchable apps for the
          Connected apps picker needs this narrow queries entry for the
          launcher intent. It is NOT the broad QUERY_ALL_PACKAGES permission,
@@ -37,7 +47,9 @@
          QUERY_ALL_PACKAGES, WAKE_LOCK
          (FOREGROUND_SERVICE, FOREGROUND_SERVICE_MICROPHONE and POST_NOTIFICATIONS
          came back for Cypher always-listening; ACCESS_FINE_LOCATION and
-         ACCESS_COARSE_LOCATION came back for live location.) -->
+         ACCESS_COARSE_LOCATION came back for live location;
+         MANAGE_EXTERNAL_STORAGE came back in build #95 for the Projects
+         folder — see above.) -->
     <application
         android:label="Clawzilla"
         android:icon="@mipmap/ic_launcher"

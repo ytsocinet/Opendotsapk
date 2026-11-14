@@ -3,8 +3,8 @@
 ///
 /// A goal is a title plus free-form notes (what "done" looks like, the
 /// next step, whatever matters). Tap a goal to edit it, tick it off when
-/// it is finished. Like Tasks, v1 is manual — the agent does not add
-/// goals yet.
+/// it is finished. Cypher manages goals too (build #95) through the
+/// agent's goal tools, which write to this same table.
 library;
 
 import 'package:flutter/material.dart';

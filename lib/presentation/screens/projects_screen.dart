@@ -2,10 +2,15 @@
 ///
 /// Shows every file under the projects folder picked in Settings, most
 /// recently changed first. Tapping a text file opens it in the editor;
-/// files over 1 MB are refused with a message rather than loaded into
+/// files over 5 MB are refused with a message rather than loaded into
 /// memory. When no folder is picked, the screen offers the picker inline
 /// instead of sending the user to Settings. The + button creates a new
 /// empty file in the folder and opens it in the editor.
+///
+/// Listing a shared-storage folder needs All-files access (build #95):
+/// without the grant, the folder "exists" but lists nothing, so Projects
+/// reports a folder with files in it as empty. The empty state offers
+/// the grant when it is missing.
 library;
 
 import 'dart:io';
@@ -14,6 +19,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/utils/log.dart';
 import '../providers/providers.dart';
@@ -21,7 +27,12 @@ import '../widgets/screen_empty_state.dart';
 import 'code_editor_screen.dart';
 
 /// Files over this size are not opened in the editor.
-const int _maxEditableBytes = 1024 * 1024;
+///
+/// 5 MB, raised from 1 MB in build #95: Aaron wants bigger files to open
+/// too. The cap stays — a 1.5 GB model file loaded into a text field
+/// would crash the phone — it just stops refusing ordinary large text
+/// and code files.
+const int _maxEditableBytes = 5 * 1024 * 1024;
 
 class ProjectsScreen extends ConsumerStatefulWidget {
   const ProjectsScreen({super.key});
@@ -34,6 +45,10 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
   List<File> _files = [];
   bool _loading = true;
   String? _error;
+  // Whether All-files access is granted. Checked in [_reload]: without
+  // it, listing a shared-storage folder silently yields nothing, so the
+  // empty state offers the grant instead of just "Pick another folder".
+  bool _filesAccessGranted = true;
   // The folder value _reload() last loaded for. The screen only loads
   // its list once in initState, but the folder can be picked later in
   // Settings (or removed there); the listener in build compares the
@@ -58,9 +73,22 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
           _files = [];
           _loading = false;
           _error = null;
+          _filesAccessGranted = true;
         });
       }
       return;
+    }
+    // All-files access (build #95): without the grant, a shared-storage
+    // folder still "exists" but dir.list() yields nothing — no error, so
+    // the screen would report the folder empty while files sit in it.
+    // Checked here so the empty state can offer the grant.
+    var filesAccessGranted = true;
+    try {
+      filesAccessGranted =
+          await Permission.manageExternalStorage.status.isGranted;
+    } catch (_) {
+      // The check itself cannot run: fail open and do not nag.
+      filesAccessGranted = true;
     }
     try {
       final dir = Directory(folder);
@@ -70,6 +98,7 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
             _files = [];
             _loading = false;
             _error = 'That folder no longer exists — pick another one.';
+            _filesAccessGranted = filesAccessGranted;
           });
         }
         return;
@@ -94,6 +123,7 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
           _files = found;
           _loading = false;
           _error = null;
+          _filesAccessGranted = filesAccessGranted;
         });
       }
     } catch (e) {
@@ -103,9 +133,33 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
           _files = [];
           _loading = false;
           _error = 'Could not list that folder: $e';
+          _filesAccessGranted = filesAccessGranted;
         });
       }
     }
+  }
+
+  /// Ask for All-files access (build #95).
+  ///
+  /// MANAGE_EXTERNAL_STORAGE cannot be granted from a runtime dialog on
+  /// Android 11+: the request opens the system "All files access" page
+  /// for Clawzilla and the user flips the toggle there. The list is
+  /// reloaded on return, granted or not.
+  Future<void> _requestFileAccess() async {
+    final status = await Permission.manageExternalStorage.request();
+    Log.i('projects file access: $status');
+    if (!mounted) return;
+    if (!status.isGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'File access is still off — turn on "Allow access to all '
+            'files" for Clawzilla, then come back.',
+          ),
+        ),
+      );
+    }
+    await _reload();
   }
 
   Future<void> _pickFolder() async {
@@ -126,7 +180,7 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('That file is over 1 MB — too big to edit here.'),
+          content: Text('That file is over 5 MB — too big to edit here.'),
         ),
       );
       return;
@@ -223,6 +277,28 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
     }
   }
 
+  /// The empty/error state plus, when All-files access is missing, a
+  /// second button for the grant. The grant is the fix for a folder that
+  /// reports empty while files are in it (build #95): the app could see
+  /// the folder existed but could not list it. When access is granted
+  /// the state is returned unchanged.
+  Widget _stateWithAccessButton({
+    required Widget state,
+    required String secondaryLabel,
+    required VoidCallback onSecondary,
+  }) {
+    if (_filesAccessGranted) return state;
+    return Column(
+      children: [
+        state,
+        TextButton(
+          onPressed: onSecondary,
+          child: Text(secondaryLabel),
+        ),
+      ],
+    );
+  }
+
   String _sizeLabel(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
@@ -287,20 +363,40 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
                   onAction: _pickFolder,
                 )
               : _error != null
-                  ? ScreenEmptyState(
-                      icon: Icons.folder_off_outlined,
-                      title: 'Folder unavailable',
-                      message: _error!,
-                      actionLabel: 'Pick another folder',
-                      onAction: _pickFolder,
+                  ? _stateWithAccessButton(
+                      state: ScreenEmptyState(
+                        icon: Icons.folder_off_outlined,
+                        title: 'Folder unavailable',
+                        message: _error!,
+                        actionLabel: 'Pick another folder',
+                        onAction: _pickFolder,
+                      ),
+                      secondaryLabel: 'Allow file access',
+                      onSecondary: _requestFileAccess,
                     )
                   : _files.isEmpty
-                      ? ScreenEmptyState(
-                          icon: Icons.folder_open,
-                          title: 'Folder is empty',
-                          message: 'Nothing in $folder yet.',
-                          actionLabel: 'Pick another folder',
-                          onAction: _pickFolder,
+                      ? _stateWithAccessButton(
+                          state: ScreenEmptyState(
+                            icon: Icons.folder_open,
+                            title: 'Folder is empty',
+                            message: _filesAccessGranted
+                                ? 'Nothing in $folder yet.'
+                                : 'Clawzilla can\'t see the files in '
+                                    '$folder yet. Android blocks the app '
+                                    'from listing this folder until All '
+                                    'files access is granted.',
+                            actionLabel: _filesAccessGranted
+                                ? 'Pick another folder'
+                                : 'Allow file access',
+                            actionIcon: _filesAccessGranted
+                                ? null
+                                : Icons.folder_shared,
+                            onAction: _filesAccessGranted
+                                ? _pickFolder
+                                : _requestFileAccess,
+                          ),
+                          secondaryLabel: 'Pick another folder',
+                          onSecondary: _pickFolder,
                         )
                       : Column(
                           children: [

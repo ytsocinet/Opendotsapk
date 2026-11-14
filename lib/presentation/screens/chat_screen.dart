@@ -814,29 +814,54 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
 
       if (decision.isRefused) {
-        // Say why, in the transcript, and stop. Calling a model here would mean
-        // returning a confident answer to a question it was never shown.
-        Log.w('turn refused: ${decision.reason}');
-        await ref
-            .read(chatMessagesProvider.notifier)
-            .addMessage(
-              ChatMessage(
-                id: _uuid.v4(),
-                role: 'assistant',
-                content: decision.reason,
-                timestamp: DateTime.now().millisecondsSinceEpoch,
-              ),
-            );
-        // A new message just landed: go to the bottom even if the user was
-        // reading earlier messages.
-        if (mounted) _scrollToBottom(force: true);
-        return;
+        // Multi-select auto-pick (build #95): a refused picture turn may
+        // only need the right local model pulled up — a vision model from
+        // the multi-selected list, with its projector attached. Try that
+        // before telling the user nothing can look at the picture.
+        var rescued = false;
+        if (hasImages) {
+          rescued = await _routeModelForTurn(
+            message: messageText,
+            hasImages: true,
+          );
+        }
+        if (!rescued) {
+          // Say why, in the transcript, and stop. Calling a model here would mean
+          // returning a confident answer to a question it was never shown.
+          Log.w('turn refused: ${decision.reason}');
+          await ref
+              .read(chatMessagesProvider.notifier)
+              .addMessage(
+                ChatMessage(
+                  id: _uuid.v4(),
+                  role: 'assistant',
+                  content: decision.reason,
+                  timestamp: DateTime.now().millisecondsSinceEpoch,
+                ),
+              );
+          // A new message just landed: go to the bottom even if the user was
+          // reading earlier messages.
+          if (mounted) _scrollToBottom(force: true);
+          return;
+        }
+        // Rescued: fall through to the local pipeline below with the
+        // swapped-in model. The cloud check above already ran on the old
+        // decision, and a rescue only ever lands on local.
       }
 
       if (!llmService.isLoaded) {
         await _showModelNotLoadedDialog();
         return;
       }
+
+      // Multi-select auto-pick (build #95): a coding turn may need the
+      // coder from the multi-selected list rather than the model that
+      // happens to be loaded. No swap when nothing is multi-selected or
+      // no multi-selected model matches — the loaded model answers.
+      await _routeModelForTurn(
+        message: messageText,
+        hasImages: hasImages,
+      );
 
       // Process through agent pipeline
       setState(() {
@@ -922,6 +947,208 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         );
       }
     }
+  }
+
+  /// Multi-select auto-pick (build #95).
+  ///
+  /// Aaron multi-selects 3–4 models in Settings → Models; this turn
+  /// pulls up the one the job needs instead of always answering with
+  /// whatever was loaded last:
+  /// * a turn with a picture → the first multi-selected chat model that
+  ///   can see pictures (vision / multimodal), with its projector
+  ///   attached, so a picture turn the router would have refused gets
+  ///   answered locally instead;
+  /// * a coding turn (fenced code, or a clear code request) → the first
+  ///   multi-selected model whose id or name says "coder";
+  /// * anything else → no swap; the loaded model answers.
+  ///
+  /// Only swaps when the needed model is installed and differs from the
+  /// one already in memory — the phone holds one model at a time, and
+  /// loading is the slow part. A failed swap never fails the turn: the
+  /// loaded model answers instead, and the failure is logged.
+  ///
+  /// Returns true when the local path is ready for this turn: a model is
+  /// loaded, and for a picture turn the vision projector is attached.
+  Future<bool> _routeModelForTurn({
+    required String message,
+    required bool hasImages,
+  }) async {
+    final llmService = ref.read(llmServiceProvider);
+    if (!llmService.isLoaded) return false;
+    final manager = ModelManager.getInstance();
+    final multiIds = await manager.activeLlmIds();
+    if (multiIds.isEmpty) return false;
+
+    LocalModel? wanted;
+    String reason = '';
+    if (hasImages) {
+      // Already seeing? Nothing to swap — and no churn between two
+      // vision models that would both do.
+      if (llmService.isVisionLoaded) return true;
+      for (final id in multiIds) {
+        final m = await manager.modelForId(id, ModelKind.llm);
+        if (m != null &&
+            ModelCatalog.isChatCapable(m) &&
+            m.isVision &&
+            await manager.isInstalled(m)) {
+          wanted = m;
+          reason = 'picture turn';
+          break;
+        }
+      }
+    } else if (_looksLikeCode(message)) {
+      for (final id in multiIds) {
+        final m = await manager.modelForId(id, ModelKind.llm);
+        if (m != null &&
+            ModelCatalog.isChatCapable(m) &&
+            _isCoderModel(m) &&
+            await manager.isInstalled(m)) {
+          wanted = m;
+          reason = 'coding turn';
+          break;
+        }
+      }
+    }
+    if (wanted == null) {
+      return llmService.isLoaded &&
+          (!hasImages || llmService.isVisionLoaded);
+    }
+
+    final wantedPath = await manager.weightPath(wanted);
+    if (llmService.modelPath == wantedPath) {
+      Log.d('[auto-pick] ${wanted.displayName} already loaded ($reason)');
+      // Right model, projector never attached: attach it now so a
+      // picture turn does not fail on the missing projector.
+      if (hasImages && !llmService.isVisionLoaded) {
+        await _attachVisionFor(wanted);
+      }
+      return llmService.isLoaded &&
+          (!hasImages || llmService.isVisionLoaded);
+    }
+
+    Log.i(
+      '[auto-pick] switching to ${wanted.displayName} ($reason) — was '
+      '${llmService.modelPath}',
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Switching to ${wanted.displayName} for this…'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+    // Same CPU-first loader rules as the Load button: an explicit GPU
+    // choice is honoured only after a CPU load has succeeded once.
+    var layers = await GpuService.layersForMode(
+      '${ref.read(settingsProvider)['gpu_offload'] ?? 'auto'}',
+    );
+    final cpuSucceeded = ref.read(settingsProvider)['cpu_load_succeeded'];
+    final gpuDeferred =
+        layers > 0 && cpuSucceeded != true && cpuSucceeded != 'true';
+    if (gpuDeferred) layers = 0;
+    final threads =
+        int.tryParse('${ref.read(settingsProvider)['cpu_threads']}') ?? 4;
+    llmService.setThreads(threads);
+    final ok = await llmService.loadModel(
+      wantedPath,
+      gpuLayers: layers,
+      totalRamMb: (await GpuService.detect()).totalRamMb,
+    );
+    if (!ok) {
+      Log.w(
+        '[auto-pick] could not load ${wanted.displayName} '
+        '(${llmService.lastLoadError}) — staying on the loaded model',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Could not switch to ${wanted.displayName} — answering '
+              'with the loaded model instead.',
+            ),
+          ),
+        );
+      }
+      return llmService.isLoaded &&
+          (!hasImages || llmService.isVisionLoaded);
+    }
+    await ref
+        .read(settingsProvider.notifier)
+        .updateSetting('model_path', wantedPath);
+    if (llmService.activeBackend == 'cpu') {
+      await ref
+          .read(settingsProvider.notifier)
+          .updateSetting('cpu_load_succeeded', 'true');
+    }
+    // loadModel's release() drops the vision projector, so a picture
+    // turn re-attaches it — same arch check as the Load button, so a
+    // projector never lands on the wrong backbone.
+    if (hasImages) {
+      await _attachVisionFor(wanted);
+    }
+    return llmService.isLoaded &&
+        (!hasImages || llmService.isVisionLoaded);
+  }
+
+  /// Re-attach the selected vision projector after a model swap.
+  ///
+  /// Same arch check as the Load button: a vision model whose arch does
+  /// not match the chat model's is skipped rather than handed to the
+  /// wrong backbone. A missing projector file is not an error here —
+  /// the turn still answers, it just cannot see.
+  Future<void> _attachVisionFor(LocalModel chat) async {
+    final manager = ModelManager.getInstance();
+    final llmService = ref.read(llmServiceProvider);
+    final vision = await manager.activeVision();
+    if (vision == null) return;
+    if (chat.id != vision.id) {
+      final chatArch = chat.llmArch;
+      final visionArch = vision.llmArch;
+      if (chatArch != null && visionArch != null && chatArch != visionArch) {
+        Log.w(
+          '[auto-pick] pictures off: ${vision.displayName} does not fit '
+          '${chat.displayName}.',
+        );
+        return;
+      }
+    }
+    final projector = await manager.projectorPath(vision);
+    if (projector == null) return;
+    final attached = await llmService.loadVision(projector);
+    if (!attached) {
+      Log.w(
+        '[auto-pick] vision did not attach: ${llmService.lastVisionError}',
+      );
+    }
+  }
+
+  /// A coding turn: fenced code, or a clear code request in words.
+  /// Kept conservative — a vague "help me with this" is not code.
+  bool _looksLikeCode(String message) {
+    if (message.contains('```')) return true;
+    final lower = message.toLowerCase();
+    const codeIntents = [
+      'write code',
+      'write a function',
+      'write a script',
+      'write a program',
+      'debug this',
+      'fix this code',
+      'fix my code',
+      'code for',
+      'implement ',
+      'refactor',
+      'what does this code do',
+    ];
+    return codeIntents.any(lower.contains);
+  }
+
+  /// A coder model: the id or display name says "coder"
+  /// (Qwen2.5-Coder-3B, and any future coder the same way).
+  bool _isCoderModel(LocalModel m) {
+    final haystack = '${m.id} ${m.displayName}'.toLowerCase();
+    return haystack.contains('coder');
   }
 
   /// Send the turn to the selected cloud provider instead of the local model.

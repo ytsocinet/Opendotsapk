@@ -1,8 +1,8 @@
 /// Tasks — a plain checklist, stored in the phone's database.
 ///
-/// v1 is deliberately manual: add a task, tick it off, delete it. The
-/// agent does not add tasks yet — that is a separate permission question,
-/// not something to smuggle in with the list itself.
+/// Add a task, tick it off, delete it — by hand, or by asking Cypher:
+/// the agent's task tools (build #95) write to this same table, so
+/// anything Cypher adds shows up here.
 library;
 
 import 'package:flutter/material.dart';

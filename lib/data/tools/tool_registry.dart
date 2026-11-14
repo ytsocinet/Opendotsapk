@@ -256,6 +256,171 @@ class ToolRegistry {
         implemented: true,
       ),
     );
+
+    // Tasks and Goals (build #95): Aaron said the Tasks and Goals tabs
+    // are for the agent to do, not him. These tools write to the same
+    // tables the tabs read, so anything Cypher adds, renames, or ticks
+    // off shows up there. A task or goal is found by "id" when the model
+    // has one, otherwise by "title" (case-insensitive, exact first,
+    // then a unique substring) — the chat only runs one tool round per
+    // turn, so a list-then-act round trip is not possible.
+    add(
+      ToolDefinition(
+        name: 'create_task',
+        description: 'Add a task to the user\'s Tasks list.',
+        parameters: {
+          'title': {'type': 'string', 'description': 'Task title'},
+        },
+        required: ['title'],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'list_tasks',
+        description:
+            'List the user\'s tasks with their ids and whether each '
+            'one is done. Use it when asked what tasks exist.',
+        parameters: {},
+        required: const [],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'update_task',
+        description:
+            'Rename a task, or mark it done / not done. Find it by '
+            '"title" (or "id" when known); "new_title" renames it and '
+            '"done" flips its tick.',
+        parameters: {
+          'id': {'type': 'string', 'description': 'Task id, when known'},
+          'title': {
+            'type': 'string',
+            'description': 'Task title to find, when id is unknown',
+          },
+          'new_title': {'type': 'string', 'description': 'New title'},
+          'done': {'type': 'boolean', 'description': 'True = done'},
+        },
+        required: const [],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'complete_task',
+        description: 'Mark a task done. Find it by "title" (or "id").',
+        parameters: {
+          'id': {'type': 'string', 'description': 'Task id, when known'},
+          'title': {
+            'type': 'string',
+            'description': 'Task title to find, when id is unknown',
+          },
+        },
+        required: const [],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'delete_task',
+        description: 'Delete a task. Find it by "title" (or "id").',
+        parameters: {
+          'id': {'type': 'string', 'description': 'Task id, when known'},
+          'title': {
+            'type': 'string',
+            'description': 'Task title to find, when id is unknown',
+          },
+        },
+        required: const [],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'create_goal',
+        description:
+            'Add a goal to the user\'s Goals list. "notes" is what '
+            'done looks like, or the next step.',
+        parameters: {
+          'title': {'type': 'string', 'description': 'Goal title'},
+          'notes': {'type': 'string', 'description': 'Notes about the goal'},
+        },
+        required: ['title'],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'list_goals',
+        description:
+            'List the user\'s goals with their ids, notes, and whether '
+            'each one is done. Use it when asked what goals exist.',
+        parameters: {},
+        required: const [],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'update_goal',
+        description:
+            'Rename a goal, change its notes, or mark it done / not '
+            'done. Find it by "title" (or "id" when known); "new_title" '
+            'renames it, "notes" replaces its notes, "done" flips its tick.',
+        parameters: {
+          'id': {'type': 'string', 'description': 'Goal id, when known'},
+          'title': {
+            'type': 'string',
+            'description': 'Goal title to find, when id is unknown',
+          },
+          'new_title': {'type': 'string', 'description': 'New title'},
+          'notes': {'type': 'string', 'description': 'New notes'},
+          'done': {'type': 'boolean', 'description': 'True = done'},
+        },
+        required: const [],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'complete_goal',
+        description: 'Mark a goal done. Find it by "title" (or "id").',
+        parameters: {
+          'id': {'type': 'string', 'description': 'Goal id, when known'},
+          'title': {
+            'type': 'string',
+            'description': 'Goal title to find, when id is unknown',
+          },
+        },
+        required: const [],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'delete_goal',
+        description: 'Delete a goal. Find it by "title" (or "id").',
+        parameters: {
+          'id': {'type': 'string', 'description': 'Goal id, when known'},
+          'title': {
+            'type': 'string',
+            'description': 'Goal title to find, when id is unknown',
+          },
+        },
+        required: const [],
+        implemented: true,
+      ),
+    );
   }
 
   /// Every registered definition, implemented or not.
@@ -361,6 +526,26 @@ class ToolRegistry {
         return _executeReadProjectFile(params);
       case 'write_project_file':
         return _executeWriteProjectFile(params);
+      case 'create_task':
+        return _executeCreateTask(params);
+      case 'list_tasks':
+        return _executeListTasks(params);
+      case 'update_task':
+        return _executeUpdateTask(params);
+      case 'complete_task':
+        return _executeCompleteTask(params);
+      case 'delete_task':
+        return _executeDeleteTask(params);
+      case 'create_goal':
+        return _executeCreateGoal(params);
+      case 'list_goals':
+        return _executeListGoals(params);
+      case 'update_goal':
+        return _executeUpdateGoal(params);
+      case 'complete_goal':
+        return _executeCompleteGoal(params);
+      case 'delete_goal':
+        return _executeDeleteGoal(params);
       default:
         return ToolResult.unsupported('No implementation for "$toolName".');
     }
@@ -486,6 +671,423 @@ class ToolRegistry {
       );
     } catch (e) {
       return ToolResult.failed('Could not write $rel: $e');
+    }
+  }
+
+  // ------------------------------------------------------------ tasks/goals
+  //
+  // Build #95: the Tasks and Goals tabs are for the agent, not the user.
+  // These tools write to the same tables the tabs read (insertTask /
+  // getTasks / updateTask / setTaskDone / deleteTask and the goal
+  // equivalents), so the tabs show Cypher's work with no extra wiring.
+  // The tabs re-read on every visit, so a row written here appears
+  // there the next time the tab opens.
+  //
+  // One tool round per turn means the model cannot list first and then
+  // act, so update/complete/delete resolve by title as well as id:
+  // exact match first (case-insensitive), then a unique substring
+  // match. An ambiguous or missing title fails with the candidates
+  // listed, so the model asks the user instead of guessing.
+
+  /// Find one row by id or title, or the failure that says why not.
+  ({Map<String, dynamic>? row, ToolResult? error}) _resolveRow({
+    required List<Map<String, dynamic>> rows,
+    required String kind,
+    String? id,
+    String? title,
+  }) {
+    if (id != null && id.isNotEmpty) {
+      for (final row in rows) {
+        if ('${row['id']}' == id) return (row: row, error: null);
+      }
+      return (
+        row: null,
+        error: ToolResult.failed('No $kind with id $id.'),
+      );
+    }
+    final needle = title?.trim();
+    if (needle == null || needle.isEmpty) {
+      return (
+        row: null,
+        error: ToolResult.failed(
+          'Give a $kind "title" or "id" so I know which one.',
+        ),
+      );
+    }
+    final lower = needle.toLowerCase();
+    final exact = rows
+        .where(
+          (row) => ('${row['title'] ?? ''}').toLowerCase() == lower,
+        )
+        .toList();
+    if (exact.length == 1) return (row: exact.first, error: null);
+    if (exact.length > 1) {
+      return (
+        row: null,
+        error: ToolResult.failed(
+          'Several ${kind}s are called "$needle" — say which one by id.',
+        ),
+      );
+    }
+    final partial = rows
+        .where(
+          (row) => ('${row['title'] ?? ''}').toLowerCase().contains(lower),
+        )
+        .toList();
+    if (partial.length == 1) return (row: partial.first, error: null);
+    if (partial.isEmpty) {
+      return (
+        row: null,
+        error: ToolResult.failed('No $kind called "$needle".'),
+      );
+    }
+    return (
+      row: null,
+      error: ToolResult.failed(
+        'Several ${kind}s match "$needle": '
+        '${partial.map((row) => row['title']).join(', ')} — say which one.',
+      ),
+    );
+  }
+
+  /// A "done" flag from the model: a real bool when the schema is
+  /// honoured, a "true"/"false" string when the model writes it as text.
+  bool? _doneParam(Map<String, dynamic> params) {
+    final raw = params['done'];
+    if (raw is bool) return raw;
+    if (raw is String) {
+      final lower = raw.trim().toLowerCase();
+      if (lower == 'true') return true;
+      if (lower == 'false') return false;
+    }
+    return null;
+  }
+
+  Future<ToolResult> _executeCreateTask(
+    Map<String, dynamic> params,
+  ) async {
+    final title = (params['title'] as String?)?.trim();
+    if (title == null || title.isEmpty) {
+      return ToolResult.failed('create_task requires a "title".');
+    }
+    try {
+      final id = const Uuid().v4();
+      await DatabaseHelper.instance.insertTask(
+        id: id,
+        title: title,
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+      );
+      return ToolResult.success(
+        'Task added: $title.',
+        data: {'id': id, 'title': title},
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to add task: $e');
+    }
+  }
+
+  Future<ToolResult> _executeListTasks(
+    Map<String, dynamic> params,
+  ) async {
+    try {
+      final tasks = await DatabaseHelper.instance.getTasks();
+      final shown = tasks.take(20).toList();
+      return ToolResult.success(
+        'Found ${shown.length} task(s).',
+        data: {
+          'tasks': [
+            for (final t in shown)
+              {
+                'id': t['id'],
+                'title': t['title'],
+                'done': (t['done'] as int? ?? 0) == 1,
+              },
+          ],
+        },
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to list tasks: $e');
+    }
+  }
+
+  Future<ToolResult> _executeUpdateTask(
+    Map<String, dynamic> params,
+  ) async {
+    final newTitle = (params['new_title'] as String?)?.trim();
+    final done = _doneParam(params);
+    if ((newTitle == null || newTitle.isEmpty) && done == null) {
+      return ToolResult.failed(
+        'update_task needs something to change — "new_title" or "done".',
+      );
+    }
+    final id = params['id'] as String?;
+    final title = params['title'] as String?;
+    if ((id == null || id.isEmpty) && (title == null || title.isEmpty)) {
+      return ToolResult.failed(
+        'update_task needs a "title" or "id" to find the task.',
+      );
+    }
+    try {
+      final tasks = await DatabaseHelper.instance.getTasks();
+      final resolved = _resolveRow(
+        rows: tasks,
+        kind: 'task',
+        id: id,
+        title: title,
+      );
+      if (resolved.error != null) return resolved.error!;
+      final row = resolved.row!;
+      final count = await DatabaseHelper.instance.updateTask(
+        id: '${row['id']}',
+        title: (newTitle == null || newTitle.isEmpty) ? null : newTitle,
+        done: done,
+      );
+      if (count == 0) {
+        return ToolResult.failed('That task is gone — nothing was updated.');
+      }
+      return ToolResult.success(
+        'Task updated: ${newTitle ?? row['title']}.',
+        data: {'id': row['id'], 'title': newTitle ?? row['title']},
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to update task: $e');
+    }
+  }
+
+  Future<ToolResult> _executeCompleteTask(
+    Map<String, dynamic> params,
+  ) async {
+    final id = params['id'] as String?;
+    final title = params['title'] as String?;
+    if ((id == null || id.isEmpty) && (title == null || title.isEmpty)) {
+      return ToolResult.failed(
+        'complete_task needs a "title" or "id" to find the task.',
+      );
+    }
+    try {
+      final tasks = await DatabaseHelper.instance.getTasks();
+      final resolved = _resolveRow(
+        rows: tasks,
+        kind: 'task',
+        id: id,
+        title: title,
+      );
+      if (resolved.error != null) return resolved.error!;
+      final row = resolved.row!;
+      final count = await DatabaseHelper.instance.setTaskDone(
+        id: '${row['id']}',
+        done: true,
+      );
+      if (count == 0) {
+        return ToolResult.failed('That task is gone — nothing was done.');
+      }
+      return ToolResult.success(
+        'Marked done: ${row['title']}.',
+        data: {'id': row['id'], 'title': row['title']},
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to complete task: $e');
+    }
+  }
+
+  Future<ToolResult> _executeDeleteTask(
+    Map<String, dynamic> params,
+  ) async {
+    final id = params['id'] as String?;
+    final title = params['title'] as String?;
+    if ((id == null || id.isEmpty) && (title == null || title.isEmpty)) {
+      return ToolResult.failed(
+        'delete_task needs a "title" or "id" to find the task.',
+      );
+    }
+    try {
+      final tasks = await DatabaseHelper.instance.getTasks();
+      final resolved = _resolveRow(
+        rows: tasks,
+        kind: 'task',
+        id: id,
+        title: title,
+      );
+      if (resolved.error != null) return resolved.error!;
+      final row = resolved.row!;
+      final count = await DatabaseHelper.instance.deleteTask('${row['id']}');
+      if (count == 0) {
+        return ToolResult.failed('That task is gone already.');
+      }
+      return ToolResult.success(
+        'Deleted task: ${row['title']}.',
+        data: {'id': row['id'], 'title': row['title']},
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to delete task: $e');
+    }
+  }
+
+  Future<ToolResult> _executeCreateGoal(
+    Map<String, dynamic> params,
+  ) async {
+    final title = (params['title'] as String?)?.trim();
+    if (title == null || title.isEmpty) {
+      return ToolResult.failed('create_goal requires a "title".');
+    }
+    final notes = (params['notes'] as String?)?.trim() ?? '';
+    try {
+      final id = const Uuid().v4();
+      await DatabaseHelper.instance.insertGoal(
+        id: id,
+        title: title,
+        notes: notes,
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+      );
+      return ToolResult.success(
+        'Goal added: $title.',
+        data: {'id': id, 'title': title, 'notes': notes},
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to add goal: $e');
+    }
+  }
+
+  Future<ToolResult> _executeListGoals(
+    Map<String, dynamic> params,
+  ) async {
+    try {
+      final goals = await DatabaseHelper.instance.getGoals();
+      final shown = goals.take(20).toList();
+      return ToolResult.success(
+        'Found ${shown.length} goal(s).',
+        data: {
+          'goals': [
+            for (final g in shown)
+              {
+                'id': g['id'],
+                'title': g['title'],
+                'notes': g['notes'],
+                'done': (g['done'] as int? ?? 0) == 1,
+              },
+          ],
+        },
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to list goals: $e');
+    }
+  }
+
+  Future<ToolResult> _executeUpdateGoal(
+    Map<String, dynamic> params,
+  ) async {
+    final newTitle = (params['new_title'] as String?)?.trim();
+    final notes = (params['notes'] as String?)?.trim();
+    final done = _doneParam(params);
+    if ((newTitle == null || newTitle.isEmpty) &&
+        notes == null &&
+        done == null) {
+      return ToolResult.failed(
+        'update_goal needs something to change — "new_title", "notes", '
+        'or "done".',
+      );
+    }
+    final id = params['id'] as String?;
+    final title = params['title'] as String?;
+    if ((id == null || id.isEmpty) && (title == null || title.isEmpty)) {
+      return ToolResult.failed(
+        'update_goal needs a "title" or "id" to find the goal.',
+      );
+    }
+    try {
+      final goals = await DatabaseHelper.instance.getGoals();
+      final resolved = _resolveRow(
+        rows: goals,
+        kind: 'goal',
+        id: id,
+        title: title,
+      );
+      if (resolved.error != null) return resolved.error!;
+      final row = resolved.row!;
+      final count = await DatabaseHelper.instance.updateGoal(
+        id: '${row['id']}',
+        title: (newTitle == null || newTitle.isEmpty) ? null : newTitle,
+        notes: notes,
+        done: done,
+      );
+      if (count == 0) {
+        return ToolResult.failed('That goal is gone — nothing was updated.');
+      }
+      return ToolResult.success(
+        'Goal updated: ${newTitle ?? row['title']}.',
+        data: {'id': row['id'], 'title': newTitle ?? row['title']},
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to update goal: $e');
+    }
+  }
+
+  Future<ToolResult> _executeCompleteGoal(
+    Map<String, dynamic> params,
+  ) async {
+    final id = params['id'] as String?;
+    final title = params['title'] as String?;
+    if ((id == null || id.isEmpty) && (title == null || title.isEmpty)) {
+      return ToolResult.failed(
+        'complete_goal needs a "title" or "id" to find the goal.',
+      );
+    }
+    try {
+      final goals = await DatabaseHelper.instance.getGoals();
+      final resolved = _resolveRow(
+        rows: goals,
+        kind: 'goal',
+        id: id,
+        title: title,
+      );
+      if (resolved.error != null) return resolved.error!;
+      final row = resolved.row!;
+      final count = await DatabaseHelper.instance.updateGoal(
+        id: '${row['id']}',
+        done: true,
+      );
+      if (count == 0) {
+        return ToolResult.failed('That goal is gone — nothing was done.');
+      }
+      return ToolResult.success(
+        'Marked done: ${row['title']}.',
+        data: {'id': row['id'], 'title': row['title']},
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to complete goal: $e');
+    }
+  }
+
+  Future<ToolResult> _executeDeleteGoal(
+    Map<String, dynamic> params,
+  ) async {
+    final id = params['id'] as String?;
+    final title = params['title'] as String?;
+    if ((id == null || id.isEmpty) && (title == null || title.isEmpty)) {
+      return ToolResult.failed(
+        'delete_goal needs a "title" or "id" to find the goal.',
+      );
+    }
+    try {
+      final goals = await DatabaseHelper.instance.getGoals();
+      final resolved = _resolveRow(
+        rows: goals,
+        kind: 'goal',
+        id: id,
+        title: title,
+      );
+      if (resolved.error != null) return resolved.error!;
+      final row = resolved.row!;
+      final count = await DatabaseHelper.instance.deleteGoal('${row['id']}');
+      if (count == 0) {
+        return ToolResult.failed('That goal is gone already.');
+      }
+      return ToolResult.success(
+        'Deleted goal: ${row['title']}.',
+        data: {'id': row['id'], 'title': row['title']},
+      );
+    } catch (e) {
+      return ToolResult.failed('Failed to delete goal: $e');
     }
   }
 

@@ -787,6 +787,14 @@ class ModelManager {
     return _importedModelFor(id, role);
   }
 
+  /// Resolve one stored id to a [LocalModel] for callers outside this
+  /// class. The chat screen's per-turn model router (build #95) walks the
+  /// multi-selected list and needs the same catalog-then-imported lookup
+  /// the role resolvers use — an imported model's id is its file path,
+  /// so a catalog-only lookup would miss it.
+  Future<LocalModel?> modelForId(String id, ModelKind role) =>
+      _resolveId(id, role);
+
   Future<bool> isInstalled(LocalModel m) async {
     // Imported model: the id is its file path. Check that file directly
     // instead of looking for the catalog file name in the models folder.
