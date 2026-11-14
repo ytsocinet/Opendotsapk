@@ -751,6 +751,20 @@ class VoiceSettings extends ConsumerWidget {
     final alwaysListening = settings['always_listening'] as bool? ?? false;
     final backgroundMode = settings['background_mode'] as bool? ?? true;
     final coreSkills = settings['core_skills'] as bool? ?? true;
+    final skillPonytail = settings['skill_ponytail'] as bool? ?? true;
+    final skillPlanningWithFiles =
+        settings['skill_planning_with_files'] as bool? ?? true;
+    final skillAdhd = settings['skill_adhd'] as bool? ?? true;
+    final skillTaste = settings['skill_taste'] as bool? ?? true;
+    final skillDiagram = settings['skill_diagram'] as bool? ?? true;
+    final skillGbrain = settings['skill_gbrain'] as bool? ?? true;
+    final skillAgentReach = settings['skill_agent_reach'] as bool? ?? true;
+    final skillHyperframes =
+        settings['skill_hyperframes'] as bool? ?? true;
+    final skillCybersecurity =
+        settings['skill_cybersecurity'] as bool? ?? true;
+    final skillScientific = settings['skill_scientific'] as bool? ?? true;
+    final skillDashboard = settings['skill_dashboard'] as bool? ?? true;
     // Pitch lives in settings (a double, default 1.0) so the slider
     // rebuilds live as setPitch saves each step.
     final pitch = settings['tts_pitch'] as double? ?? 1.0;
@@ -873,9 +887,10 @@ class VoiceSettings extends ConsumerWidget {
             ),
             title: const Text('Core skills'),
             subtitle: const Text(
-              'Fold the five Shemue core skills into Cypher\'s replies: '
+              'Fold the eleven Shemue core skills into Cypher\'s replies: '
               'check existing code first, keep a plan file, answer first '
-              'with no filler, and clean design and diagrams.',
+              'with no filler, and clean design and diagrams — each one '
+              'can be switched on or off below.',
             ),
             value: coreSkills,
             onChanged: (value) {
@@ -885,6 +900,103 @@ class VoiceSettings extends ConsumerWidget {
               onChanged('core_skills');
             },
           ),
+        ),
+        _skillTile(
+          ref,
+          'skill_ponytail',
+          'Ponytail',
+          'Do not over-engineer. Check the existing code and the standard '
+          'library first.',
+          skillPonytail,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_planning_with_files',
+          'Planning With Files',
+          'For a job in the Projects folder, keep a plan file and update '
+          'progress.md after each step.',
+          skillPlanningWithFiles,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_adhd',
+          'I Have ADHD',
+          'Answer first, no filler.',
+          skillAdhd,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_taste',
+          'Taste',
+          'Design rules for spacing, type, layout, and motion. No generic '
+          'AI look.',
+          skillTaste,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_diagram',
+          'Diagram Design',
+          'Clean flowcharts, architecture diagrams, and explainers, in '
+          'brand colors.',
+          skillDiagram,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_gbrain',
+          'Gbrain',
+          'A second brain over notes — keep and reuse what was learned '
+          'across sessions.',
+          skillGbrain,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_agent_reach',
+          'Agent Reach',
+          'When a question needs X, Reddit, or GitHub, search the public '
+          'web and say plainly when a source is login-gated.',
+          skillAgentReach,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_hyperframes',
+          'Hyperframes',
+          'For promo videos, plan motion graphics as HTML scenes — no AI '
+          'video generation.',
+          skillHyperframes,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_cybersecurity',
+          'Cybersecurity',
+          'Block or quarantine anything brought along that is not '
+          'verified — never call anything safe.',
+          skillCybersecurity,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_scientific',
+          'Scientific',
+          'Reason from evidence, cite sources, say what is unverified.',
+          skillScientific,
+          coreSkills,
+        ),
+        _skillTile(
+          ref,
+          'skill_dashboard',
+          'Dashboard',
+          'Keep one screen in mind — shared memory, goals, and progress '
+          'in one place.',
+          skillDashboard,
+          coreSkills,
         ),
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
@@ -956,6 +1068,36 @@ class VoiceSettings extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+
+  /// One per-skill toggle under the Core skills master switch, indented
+  /// beneath it. Disabled while the master is off: the whole section is
+  /// gone either way then, so the individual switches mean nothing until
+  /// it is back on.
+  Widget _skillTile(
+    WidgetRef ref,
+    String key,
+    String label,
+    String subtitle,
+    bool value,
+    bool masterOn,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, top: 6, bottom: 6),
+      child: SwitchListTile(
+        title: Text(label),
+        subtitle: Text(subtitle),
+        value: value,
+        onChanged: masterOn
+            ? (newValue) {
+                ref
+                    .read(settingsProvider.notifier)
+                    .updateSetting(key, newValue);
+                onChanged(key);
+              }
+            : null,
+      ),
     );
   }
 

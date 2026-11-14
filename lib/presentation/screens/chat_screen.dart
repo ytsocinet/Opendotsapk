@@ -1171,28 +1171,63 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         'The current time is $hour12:$minute $ampm.';
   }
 
-  /// The five Shemue core skills, folded into the prompt (build #91).
+  /// The Shemue core skills, folded into the prompt (build #91; eleven
+  /// skills from build #94, each with its own toggle).
   ///
   /// Static text — no I/O, so this is sync where the memories section is
-  /// async. Returns null when the setting is off, so an off toggle means
-  /// a byte-identical prompt. Wording is adapted to what Clawzilla can
-  /// actually do: Planning With Files means the Projects folder and the
-  /// read/write_project_file tools, not Skales files.
+  /// async. Returns null when the master setting is off or no skill is
+  /// on, so an off toggle means a byte-identical prompt. Wording is
+  /// adapted to what Clawzilla can actually do: Planning With Files means
+  /// the Projects folder and the read/write_project_file tools, not
+  /// Skales files; the newer skills are behavioral rules, not capability
+  /// claims — no MCP, no logins, no video rendering.
   String? _coreSkillsSection() {
-    final enabled =
-        ref.read(settingsProvider)['core_skills'] as bool? ?? true;
-    if (!enabled) return null;
-    return 'Core skills — how to work:\n'
-        '- Ponytail: do not over-engineer. Check the existing code and '
-        'the standard library first, before writing new code.\n'
-        '- Planning With Files: for a job in the Projects folder, keep a '
-        'plan file (task_plan.md, findings.md, progress.md) and update '
-        'progress.md after each step.\n'
-        '- I Have ADHD: answer first, no filler.\n'
-        '- Taste: design rules for spacing, type, layout, and motion. '
-        'No generic AI look.\n'
-        '- Diagram Design: clean flowcharts, architecture diagrams, and '
-        'explainers, in brand colors.';
+    final settings = ref.read(settingsProvider);
+    if (!(settings['core_skills'] as bool? ?? true)) return null;
+    // One line per skill, in prompt order. The five originals are
+    // byte-identical to build #91; turning the six newer ones off
+    // reproduces that prompt exactly.
+    const skillLines = <String, String>{
+      'skill_ponytail':
+          '- Ponytail: do not over-engineer. Check the existing code and '
+          'the standard library first, before writing new code.',
+      'skill_planning_with_files':
+          '- Planning With Files: for a job in the Projects folder, keep a '
+          'plan file (task_plan.md, findings.md, progress.md) and update '
+          'progress.md after each step.',
+      'skill_adhd': '- I Have ADHD: answer first, no filler.',
+      'skill_taste':
+          '- Taste: design rules for spacing, type, layout, and motion. '
+          'No generic AI look.',
+      'skill_diagram':
+          '- Diagram Design: clean flowcharts, architecture diagrams, and '
+          'explainers, in brand colors.',
+      'skill_gbrain':
+          '- Gbrain: a second brain over notes — keep and reuse what was '
+          'learned across sessions.',
+      'skill_agent_reach':
+          '- Agent Reach: when a question needs X, Reddit, or GitHub, '
+          'search the public web for it and say plainly when a source is '
+          'login-gated.',
+      'skill_hyperframes':
+          '- Hyperframes: for promo videos, plan motion graphics as HTML '
+          'scenes — no AI video generation.',
+      'skill_cybersecurity':
+          '- Cybersecurity: block or quarantine anything brought along '
+          'that is not verified — never call anything safe.',
+      'skill_scientific':
+          '- Scientific: reason from evidence, cite sources, say what is '
+          'unverified.',
+      'skill_dashboard':
+          '- Dashboard: keep one screen in mind — shared memory, goals, '
+          'and progress in one place.',
+    };
+    final on = <String>[];
+    for (final entry in skillLines.entries) {
+      if (settings[entry.key] as bool? ?? true) on.add(entry.value);
+    }
+    if (on.isEmpty) return null;
+    return 'Core skills — how to work:\n${on.join('\n')}';
   }
 
   /// The saved memories, as one system-prompt section — or null when the

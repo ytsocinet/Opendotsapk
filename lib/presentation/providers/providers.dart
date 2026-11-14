@@ -738,10 +738,23 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // reply, with a "done" notice when it finishes. On by default: it
     // only holds a wake lock while a task actually runs.
     'background_mode': true,
-    // Core skills (build #91): the five Shemue core skills folded into
-    // Cypher's system prompt. On by default: the section is five short
-    // lines, so it costs almost no context.
+    // Core skills (build #91; eleven skills from build #94): the Shemue
+    // core skills folded into Cypher's system prompt. On by default: the
+    // section is short lines, so it costs almost no context. Each skill
+    // also has its own toggle (skill_*), default on; the master switch
+    // is the overall kill switch.
     'core_skills': true,
+    'skill_ponytail': true,
+    'skill_planning_with_files': true,
+    'skill_adhd': true,
+    'skill_taste': true,
+    'skill_diagram': true,
+    'skill_gbrain': true,
+    'skill_agent_reach': true,
+    'skill_hyperframes': true,
+    'skill_cybersecurity': true,
+    'skill_scientific': true,
+    'skill_dashboard': true,
     'model_path': null,
 
     // Cloud / privacy. Defaults are the conservative ones: auto routing,
@@ -846,6 +859,17 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'always_listening',
       'background_mode',
       'core_skills',
+      'skill_ponytail',
+      'skill_planning_with_files',
+      'skill_adhd',
+      'skill_taste',
+      'skill_diagram',
+      'skill_gbrain',
+      'skill_agent_reach',
+      'skill_hyperframes',
+      'skill_cybersecurity',
+      'skill_scientific',
+      'skill_dashboard',
       'onboarding_done',
     ]) {
       final raw = await _db.getPreference(key);
