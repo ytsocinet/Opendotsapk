@@ -765,6 +765,12 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     'skill_cybersecurity': true,
     'skill_scientific': true,
     'skill_dashboard': true,
+    // Diagnostic safe prompt (build #98): when on, the LOCAL system
+    // prompt drops the saved memories, the core skills, and the tools
+    // section, so a crash can be tested against a minimal prompt.
+    // Off by default; off means a byte-identical prompt. Cloud turns
+    // never read this key.
+    'diagnostic_safe_prompt': false,
     'model_path': null,
 
     // Cloud / privacy. Defaults are the conservative ones: auto routing,
@@ -907,6 +913,7 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'skill_cybersecurity',
       'skill_scientific',
       'skill_dashboard',
+      'diagnostic_safe_prompt',
       'onboarding_done',
     ]) {
       final raw = await _db.getPreference(key);

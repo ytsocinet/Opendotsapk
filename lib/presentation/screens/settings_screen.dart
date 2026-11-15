@@ -22,6 +22,7 @@ import '../../domain/models/cloud_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/screen_section_card.dart';
 import 'cloud_screen.dart';
+import 'diagnostics_screen.dart';
 import 'models_screen.dart';
 import 'onboarding_screen.dart';
 import 'performance_screen.dart';
@@ -1315,6 +1316,18 @@ class _AboutSectionState extends State<AboutSection> {
           subtitle: 'Bring your own API key — optional and secure',
           onTap: () => Navigator.of(context)
               .push(AppPageRoute(builder: (_) => const CloudModelsScreen())),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: ScreenRowDivider(),
+        ),
+        _NavRow(
+          icon: Icons.bug_report_outlined,
+          title: 'Diagnostics',
+          subtitle: 'Crash log and minimal-prompt safe mode',
+          onTap: () => Navigator.of(context).push(
+            AppPageRoute(builder: (_) => const DiagnosticsScreen()),
+          ),
         ),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 16),

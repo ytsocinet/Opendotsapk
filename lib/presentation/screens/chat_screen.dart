@@ -21,6 +21,7 @@ import '../../core/theme/motion.dart';
 import '../../core/utils/log.dart';
 import '../../core/utils/text_utils.dart';
 import '../../core/utils/turn_builder.dart';
+import '../../core/utils/system_prompt.dart';
 import '../../data/services/assistant_launch.dart';
 import '../../data/services/document_service.dart';
 import '../../data/services/gpu_service.dart';
@@ -879,6 +880,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           message: '$display$docCtx',
           priorHistory: priorHistory,
           toolsSection: toolsSection,
+          safePrompt:
+              settings['diagnostic_safe_prompt'] as bool? ?? false,
         );
 
         // Streaming response
@@ -912,6 +915,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 'Answer the user briefly based on this result. Do not call another tool — answer directly in plain text.',
             priorHistory: [...priorHistory, userMessage],
             // No tools section: this turn answers, it does not act.
+            safePrompt:
+                settings['diagnostic_safe_prompt'] as bool? ?? false,
           );
           await _streamReply(
             prompt: followUp.prompt,
@@ -1531,41 +1536,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required String message,
     required List<ChatMessage> priorHistory,
     String? toolsSection,
+    // Diagnostic safe prompt (build #98): when true, the local system
+    // prompt drops the saved memories, the core skills, and the tools
+    // section. Only the local call sites pass it; the cloud path calls
+    // _buildRequest without it, so cloud turns are byte-identical.
+    bool safePrompt = false,
   }) async {
     final settings = ref.read(settingsProvider);
     final personality = settings['personality'] as String?;
     final nCtx = ref.read(llmServiceProvider).contextSize;
 
-    // The system prompt is the date and time first — the model has no
-    // clock of its own — then where the user is and the temperature,
-    // then the personality plus the mode's instruction, when the mode
-    // has one, then the user's saved memories and the core skills.
-    // Chat mode adds nothing.
-    // The tools section goes last, and only on the local path: the cloud
-    // path never parses tool calls.
+    // System-prompt assembly lives in [buildSystemPrompt] so the
+    // diagnostic safe-prompt mode is unit-testable; part order and the
+    // join are unchanged from the inline assembly this replaces.
     final modeInstruction =
         _modeInstruction(settings['chat_mode'] as String? ?? 'chat');
     final memoriesSection = await _savedMemoriesSection();
     final coreSkillsSection = _coreSkillsSection();
-    final systemParts = <String>[
-      _nowLine(),
-      if (_locationLine != null) _locationLine!,
-      // When the location line is missing, say so outright. A small model
-      // asked "where am I?" with no location in the prompt used to answer
-      // with the time from the line above — or invent a temperature. An
-      // honest "unknown" beats a confident wrong answer.
-      if (_locationLine == null)
-        'LOCATION: unknown — if asked where the user is or what the '
-        'temperature is, say you do not know; do not guess.',
-      if (personality != null && personality.trim().isNotEmpty) personality,
-      if (modeInstruction != null) modeInstruction,
-      if (memoriesSection != null) memoriesSection,
-      if (coreSkillsSection != null) coreSkillsSection,
-      if (toolsSection != null && toolsSection.trim().isNotEmpty)
-        toolsSection,
-    ];
-    final systemPromptText =
-        systemParts.isEmpty ? null : systemParts.join('\n\n');
+    final systemPromptText = buildSystemPrompt(
+      nowLine: _nowLine(),
+      locationLine: _locationLine,
+      personality: personality,
+      modeInstruction: modeInstruction,
+      memoriesSection: memoriesSection,
+      coreSkillsSection: coreSkillsSection,
+      toolsSection: toolsSection,
+      safePrompt: safePrompt,
+    );
 
     final selection = buildRecentTurns(
       history: [
