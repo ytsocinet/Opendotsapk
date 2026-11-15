@@ -792,6 +792,14 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // thermal throttling or OOM on low-end devices.
     'cpu_threads': 4,
 
+    // Prompt Lab parameters (build #97): temperature, top-k, and max
+    // tokens for the Lab's one-off prompts. Lab-specific keys — Prompt
+    // Lab is a raw test bench by design, so they never feed chat
+    // generation. Defaults match the Lab's original hard-coded values.
+    'lab_temperature': 0.7,
+    'lab_top_k': 40,
+    'lab_max_tokens': 512,
+
     // First-run
     'onboarding_done': false,
 
@@ -848,6 +856,25 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     if (ttsPitch != null) {
       state = Map.from(state)
         ..['tts_pitch'] = double.tryParse(ttsPitch) ?? 1.0;
+    }
+
+    // Prompt Lab parameters (build #97): persisted so they survive
+    // leaving the Lab and a restart. Parsed back from their string form,
+    // falling back to the Lab defaults on a stale or hand-edited value.
+    // Lab-specific keys — they never feed chat generation.
+    final labTemperature = await _db.getPreference('lab_temperature');
+    if (labTemperature != null) {
+      state = Map.from(state)
+        ..['lab_temperature'] = double.tryParse(labTemperature) ?? 0.7;
+    }
+    final labTopK = await _db.getPreference('lab_top_k');
+    if (labTopK != null) {
+      state = Map.from(state)..['lab_top_k'] = int.tryParse(labTopK) ?? 40;
+    }
+    final labMaxTokens = await _db.getPreference('lab_max_tokens');
+    if (labMaxTokens != null) {
+      state = Map.from(state)
+        ..['lab_max_tokens'] = int.tryParse(labMaxTokens) ?? 512;
     }
 
     final personality = await _db.getPreference('personality');

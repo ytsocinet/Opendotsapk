@@ -41,10 +41,30 @@ class _PromptLabScreenState extends ConsumerState<PromptLabScreen>
       vsync: this,
       duration: AppMotion.base,
     );
+    // Load the persisted Lab parameters (build #97): the sliders used
+    // to be local-only state, so leaving the Lab reset them to 0.7 /
+    // 40 / 512. Lab-specific keys — Prompt Lab is a raw test bench, so
+    // they never feed chat generation. Clamped to the slider ranges so
+    // a stale or hand-edited value cannot break the Slider.
+    final settings = ref.read(settingsProvider);
+    _temperature = _labDouble(settings['lab_temperature'], 0.7)
+        .clamp(0.0, 2.0)
+        .toDouble();
+    _topK = _labInt(settings['lab_top_k'], 40).clamp(1, 100).toInt();
+    _maxTokens =
+        _labInt(settings['lab_max_tokens'], 512).clamp(64, 2048).toInt();
   }
 
   @override
   void dispose() {
+    // Persist the Lab parameters (build #97): belt and braces for any
+    // change that never saw an onChangeEnd (e.g. an accessibility
+    // adjustment, which fires onChanged but not onChangeEnd). Writes
+    // are idempotent upserts, and these keys only ever change here.
+    final notifier = ref.read(settingsProvider.notifier);
+    notifier.updateSetting('lab_temperature', _temperature);
+    notifier.updateSetting('lab_top_k', _topK);
+    notifier.updateSetting('lab_max_tokens', _maxTokens);
     _controller.dispose();
     _promptController.dispose();
     _scrollController.dispose();
@@ -166,6 +186,11 @@ class _PromptLabScreenState extends ConsumerState<PromptLabScreen>
                       max: 2.0,
                       divisions: 20,
                       onChanged: (v) => setState(() => _temperature = v),
+                      // Persist on release (build #97): one database
+                      // write per drag instead of one per tick.
+                      onChangeEnd: (v) => ref
+                          .read(settingsProvider.notifier)
+                          .updateSetting('lab_temperature', v),
                     ),
                     const SizedBox(height: 12),
                     _ParamSlider(
@@ -175,6 +200,9 @@ class _PromptLabScreenState extends ConsumerState<PromptLabScreen>
                       max: 100,
                       divisions: 99,
                       onChanged: (v) => setState(() => _topK = v.round()),
+                      onChangeEnd: (v) => ref
+                          .read(settingsProvider.notifier)
+                          .updateSetting('lab_top_k', v.round()),
                     ),
                     const SizedBox(height: 12),
                     _ParamSlider(
@@ -184,6 +212,9 @@ class _PromptLabScreenState extends ConsumerState<PromptLabScreen>
                       max: 2048,
                       divisions: 32,
                       onChanged: (v) => setState(() => _maxTokens = v.round()),
+                      onChangeEnd: (v) => ref
+                          .read(settingsProvider.notifier)
+                          .updateSetting('lab_max_tokens', v.round()),
                     ),
                   ],
                 ),
@@ -253,6 +284,23 @@ class _PromptLabScreenState extends ConsumerState<PromptLabScreen>
   }
 }
 
+/// Parse a stored Lab parameter defensively (build #97): the provider
+/// holds the value as its string form, and a stale or hand-edited value
+/// must fall back to the Lab default rather than crash the screen.
+double _labDouble(dynamic value, double fallback) {
+  if (value is double) return value;
+  if (value is int) return value.toDouble();
+  if (value is String) return double.tryParse(value) ?? fallback;
+  return fallback;
+}
+
+int _labInt(dynamic value, int fallback) {
+  if (value is int) return value;
+  if (value is double) return value.round();
+  if (value is String) return int.tryParse(value) ?? fallback;
+  return fallback;
+}
+
 class _ParamSlider extends StatelessWidget {
   const _ParamSlider({
     required this.label,
@@ -261,6 +309,7 @@ class _ParamSlider extends StatelessWidget {
     required this.max,
     required this.divisions,
     required this.onChanged,
+    this.onChangeEnd,
   });
 
   final String label;
@@ -269,6 +318,11 @@ class _ParamSlider extends StatelessWidget {
   final double max;
   final int divisions;
   final ValueChanged<double> onChanged;
+
+  /// Fired once when a drag (or tap) ends. The Lab uses it to persist
+  /// the value (build #97) — one database write per gesture, not one
+  /// per tick.
+  final ValueChanged<double>? onChangeEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -304,6 +358,7 @@ class _ParamSlider extends StatelessWidget {
           divisions: divisions,
           label: value.toStringAsFixed(value == value.toInt() ? 0 : 2),
           onChanged: onChanged,
+          onChangeEnd: onChangeEnd,
         ),
       ],
     );
