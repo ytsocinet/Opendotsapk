@@ -72,6 +72,25 @@ already knows "minicpm5" — and it is kept so the script still fixes the
 stock April 2026 tree if the engine update is ever skipped. The one file the
 new tree dropped that the plugin's CMakeLists lists explicitly,
 tools/mtmd/clip.cpp, is removed from that list as part of the swap.
+
+## Native trace
+
+Build #99: safe mode works but the full local prompt kills every turn with
+a 90-second TimeoutException and no token — and the app has no native-side
+error channel, so the timeout is the only symptom. This script also
+instruments the plugin's JNI glue (`android/src/main/cpp/native-lib.cpp`,
+which the engine swap above does NOT touch — it replaces only
+`ios/shared_cpp`) with a generation trace: one line per stage of
+`startNativeGeneration` — entered, chat template applied, tokenized N
+tokens, each prefill chunk with its `llama_decode` return code, first token
+sent, EOS, tokens sent — appended to `native_trace.log` in the app docs
+dir, where the Diagnostics screen shows it. The trace path is set from
+Kotlin at engine attach (`NativeLlamaPlugin.kt`, same package), so the
+native code never guesses a path. All logging failures are swallowed and
+the file is truncated past ~200 KB, so tracing can never break generation
+or fill storage. The replacements follow the same pattern as the glue
+patches above: exact strings, idempotent, loud failure on unrecognised
+state.
 """
 
 from __future__ import annotations
@@ -564,6 +583,263 @@ def patch_native_lib(package_root: Path) -> int:
     return changed
 
 
+# ------------------------------------------------------- native trace (build #99)
+#
+# The replacements below instrument the JNI glue with a generation trace.
+# They use raw triple-quoted strings so the `\n` inside C++ string
+# literals stays literal. Each pair is (old, new, label); `_replace_once`
+# checks for `new` first, so a second run finds the patch already present
+# and skips instead of doubling the code.
+
+TRACE_CPP_REPLACEMENTS = [
+    (
+        r'''#include <thread>
+#include "llama.h"''',
+        r'''#include <thread>
+#include <cstdarg>
+#include <cstdio>
+#include "llama.h"''',
+        "trace includes",
+    ),
+    (
+        r'''static bool stop_generation = false;''',
+        r'''static bool stop_generation = false;
+
+// --- Clawzilla native trace (build #99) ---
+// One line per generation stage, appended to native_trace.log in the app's
+// docs dir (path set from Kotlin at engine attach). A silent native failure
+// — no token, no error, no crash — is otherwise invisible to Dart, so the
+// 90-second timeout is the only symptom. Every failure here is swallowed
+// and the file is truncated past ~200 KB: tracing must never break
+// generation or fill storage.
+static std::string trace_path;
+static int trace_tokens_sent = 0;
+
+static void trace_log(const char* fmt, ...) {
+    if (trace_path.empty()) return;
+    FILE* f = fopen(trace_path.c_str(), "a");
+    if (f == nullptr) return;
+    struct stat st;
+    if (stat(trace_path.c_str(), &st) == 0 && st.st_size > 200 * 1024) {
+        fclose(f);
+        f = fopen(trace_path.c_str(), "w");
+        if (f == nullptr) return;
+    }
+    char buf[512];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    fprintf(f, "%s\n", buf);
+    fclose(f);
+}''',
+        "trace helper",
+    ),
+    (
+        r'''JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_abortGeneration(JNIEnv *env, jobject thiz) {''',
+        r'''JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_setTracePath(JNIEnv *env, jobject thiz, jstring trace_path_j) {
+    if (trace_path_j == nullptr) return;
+    const char* p = env->GetStringUTFChars(trace_path_j, nullptr);
+    if (p != nullptr) {
+        trace_path = std::string(p);
+        env->ReleaseStringUTFChars(trace_path_j, p);
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_abortGeneration(JNIEnv *env, jobject thiz) {''',
+        "setTracePath JNI",
+    ),
+    (
+        r'''        jstring js = env->NewStringUTF(s.c_str());
+        env->CallVoidMethod(thiz, methodID, js);
+        env->DeleteLocalRef(js);
+        return true;''',
+        r'''        jstring js = env->NewStringUTF(s.c_str());
+        env->CallVoidMethod(thiz, methodID, js);
+        env->DeleteLocalRef(js);
+        if (trace_tokens_sent == 0) trace_log("first token sent");
+        trace_tokens_sent++;
+        return true;''',
+        "token counter",
+    ),
+    (
+        r'''Java_com_timebox_native_1llama_NativeLlamaPlugin_startNativeGeneration(JNIEnv *env, jobject thiz, jobjectArray roles, jobjectArray contents, jobjectArray media_paths, jfloat temperature, jint top_k, jfloat top_p) {
+if (ctx == nullptr || model == nullptr) return;''',
+        r'''Java_com_timebox_native_1llama_NativeLlamaPlugin_startNativeGeneration(JNIEnv *env, jobject thiz, jobjectArray roles, jobjectArray contents, jobjectArray media_paths, jfloat temperature, jint top_k, jfloat top_p) {
+if (ctx == nullptr || model == nullptr) { trace_log("generate: no model/context loaded"); return; }
+trace_tokens_sent = 0;''',
+        "generation entry",
+    ),
+    (
+        r'''bool use_draft = (ctx_draft != nullptr && n_media == 0);''',
+        r'''bool use_draft = (ctx_draft != nullptr && n_media == 0);
+trace_log("generate: entered n_msg=%d n_media=%d draft=%d temp=%.2f top_k=%d top_p=%.2f n_ctx=%u", env->GetArrayLength(roles), n_media, use_draft ? 1 : 0, temperature, top_k, top_p, llama_n_ctx(ctx));''',
+        "generation entered",
+    ),
+    (
+        r'''std::string prompt_str = formatted_prompt.data();''',
+        r'''std::string prompt_str = formatted_prompt.data();
+trace_log("template: formatted %d chars (%s)", n_formatted, tmpl_ptr != nullptr ? "model template" : "fallback");''',
+        "template applied",
+    ),
+    (
+        r'''n_prompt_tokens_total = prompt_tokens.size();''',
+        r'''n_prompt_tokens_total = prompt_tokens.size();
+trace_log("tokenize: %d prompt tokens", n_prompt_tokens_total);''',
+        "prompt tokenized",
+    ),
+    (
+        r'''if (llama_decode(ctx, batch) != 0) {
+llama_batch_free(batch);
+llama_sampler_free(smpl);
+return;
+}''',
+        r'''int decode_rc = llama_decode(ctx, batch);
+trace_log("prefill: chunk at %d/%d tokens rc=%d", n_eval, (int)prompt_tokens.size(), decode_rc);
+if (decode_rc != 0) {
+llama_batch_free(batch);
+llama_sampler_free(smpl);
+trace_log("prefill: FAILED rc=%d, returning with no token and no error", decode_rc);
+return;
+}''',
+        "prefill decode",
+    ),
+    (
+        r'''LOGE("MTMD Tokenize failed with error code: %d", tok_res);''',
+        r'''LOGE("MTMD Tokenize failed with error code: %d", tok_res);
+trace_log("mtmd: tokenize FAILED rc=%d", tok_res);''',
+        "mtmd tokenize failure",
+    ),
+    (
+        r'''LOGI("Media evaluation complete! Context cursor is now at: %d", n_cur);''',
+        r'''LOGI("Media evaluation complete! Context cursor is now at: %d", n_cur);
+trace_log("mtmd: evaluated, cursor at %d", n_cur);''',
+        "mtmd evaluated",
+    ),
+    (
+        r'''jstring eos = env->NewStringUTF("__END_OF_STREAM__");
+env->CallVoidMethod(thiz, methodID, eos);
+env->DeleteLocalRef(eos);''',
+        r'''jstring eos = env->NewStringUTF("__END_OF_STREAM__");
+env->CallVoidMethod(thiz, methodID, eos);
+env->DeleteLocalRef(eos);
+trace_log("eos: stream closed, tokens_sent=%d", trace_tokens_sent);''',
+        "end of stream",
+    ),
+]
+
+TRACE_KOTLIN_REPLACEMENTS = [
+    (
+        r'''    private external fun abortGeneration()''',
+        r'''    private external fun abortGeneration()
+    private external fun setTracePath(path: String)''',
+        "setTracePath declaration",
+    ),
+    (
+        r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
+        eventChannel.setStreamHandler(this)
+    }''',
+        r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
+        eventChannel.setStreamHandler(this)
+
+        // Clawzilla build #99: tell the native glue where to write the
+        // generation trace (native_trace.log in the app docs dir), so a
+        // silent native failure is visible in the Diagnostics screen.
+        // path_provider's docs dir on Android is <filesDir>/app_flutter.
+        setTracePath(
+            java.io.File(
+                flutterPluginBinding.applicationContext.filesDir,
+                "app_flutter/native_trace.log",
+            ).absolutePath,
+        )
+    }''',
+        "trace path at attach",
+    ),
+]
+
+
+def _replace_once(text, old, new, label, path):
+    """Apply one exact-string replacement, idempotently.
+
+    Returns (text, changed). If the replacement is already present, skips
+    (the script runs on every build; the pub cache may already be patched).
+    If neither old nor new is found, fails loudly so CI never ships a
+    silently uninstrumented build.
+    """
+    if new in text:
+        print("%s already present in %s; skipping" % (label, path))
+        return text, 0
+    if old not in text:
+        raise SystemExit(
+            "::error::unrecognised %s in %s" % (label, path)
+        )
+    return text.replace(old, new, 1), 1
+
+
+def patch_native_trace(package_root: Path) -> int:
+    """Instrument the JNI glue with a generation trace (build #99).
+
+    Adds a `trace_log` helper plus a `setTracePath` JNI entry to
+    native-lib.cpp, log calls at each stage of `startNativeGeneration`,
+    and the Kotlin call that sets the trace path at engine attach. The
+    glue file is NOT touched by the engine swap (only `ios/shared_cpp`
+    is replaced), so these anchors hold on both the old and the new tree
+    and no engine gate is needed — but they must not overlap the two
+    call sites `patch_native_lib` rewrites (penalties, mtmd bitmap),
+    and they do not. Returns the number of replacements made. Raises
+    SystemExit if a site is in an unrecognised state, so CI fails loudly.
+    """
+    native_lib = (
+        package_root / "android" / "src" / "main" / "cpp" / "native-lib.cpp"
+    )
+    if not native_lib.is_file():
+        raise SystemExit(
+            "::error::native-lib.cpp not found under %s" % package_root
+        )
+    kotlin = (
+        package_root
+        / "android"
+        / "src"
+        / "main"
+        / "kotlin"
+        / "com"
+        / "timebox"
+        / "native_llama"
+        / "NativeLlamaPlugin.kt"
+    )
+    if not kotlin.is_file():
+        raise SystemExit(
+            "::error::NativeLlamaPlugin.kt not found under %s" % package_root
+        )
+
+    text = native_lib.read_text()
+    changed = 0
+    for old, new, label in TRACE_CPP_REPLACEMENTS:
+        text, n = _replace_once(text, old, new, label, native_lib)
+        changed += n
+    if changed:
+        native_lib.write_text(text)
+        print(
+            "patched native-lib.cpp (native trace, %d site(s))" % changed
+        )
+
+    ktext = kotlin.read_text()
+    kchanged = 0
+    for old, new, label in TRACE_KOTLIN_REPLACEMENTS:
+        ktext, n = _replace_once(ktext, old, new, label, kotlin)
+        kchanged += n
+    if kchanged:
+        kotlin.write_text(ktext)
+        print(
+            "patched NativeLlamaPlugin.kt (trace path, %d site(s))"
+            % kchanged
+        )
+    return changed + kchanged
+
+
 def drop_stale_onnxruntime_so(roots: list[Path]) -> int:
     """Delete the onnxruntime package's bundled libonnxruntime.so files.
 
@@ -689,6 +965,12 @@ def main() -> int:
         # JNI glue for the new engine's changed APIs (penalties + mtmd
         # bitmap). Skipped on the old tree, where the old calls are correct.
         patched += patch_native_lib(base.parent)
+
+        # Native generation trace (build #99): instruments the JNI glue
+        # with per-stage logging to native_trace.log, so a silent native
+        # failure is visible in the Diagnostics screen. Applies to both
+        # trees — the glue is untouched by the engine swap.
+        patched += patch_native_trace(base.parent)
 
         # MiniCPM5 tokenizer support (independent of the Vulkan mode).
         # No-op on the updated engine, which already knows "minicpm5"; kept

@@ -2,8 +2,9 @@
 ///
 /// Shows every file under the projects folder picked in Settings, most
 /// recently changed first. Tapping a text file opens it in the editor;
-/// files over 5 MB are refused with a message rather than loaded into
-/// memory. When no folder is picked, the screen offers the picker inline
+/// the delete icon on a row removes the file from disk after asking
+/// first (build #99). Files over 5 MB are refused with a message rather
+/// than loaded into memory. When no folder is picked, the screen offers the picker inline
 /// instead of sending the user to Settings. The + button creates a new
 /// empty file in the folder and opens it in the editor.
 ///
@@ -21,6 +22,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../core/utils/ide_file.dart';
 import '../../core/utils/log.dart';
 import '../providers/providers.dart';
 import '../widgets/screen_empty_state.dart';
@@ -277,6 +279,55 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
     }
   }
 
+  /// Delete a file from disk, after asking first.
+  ///
+  /// Deleting is permanent. When the deleted file is the one remembered
+  /// as the active IDE file, that setting is cleared too, so chat stops
+  /// carrying it and the IDE tile stops reopening a file that is gone.
+  /// A failed delete leaves the file and the setting alone.
+  Future<void> _deleteFile(File file) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this file?'),
+        content: Text(
+          '"${p.basename(file.path)}" will be permanently deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!await IdeFile.deleteFile(file)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not delete that file.')),
+      );
+      return;
+    }
+    if (IdeFile.clearsActiveFile(
+      activePath: ref.read(settingsProvider)['last_ide_file'] as String?,
+      deletedPath: file.path,
+    )) {
+      await ref
+          .read(settingsProvider.notifier)
+          .updateSetting('last_ide_file', null);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Deleted ${p.basename(file.path)}.')),
+    );
+    await _reload();
+  }
+
   /// The empty/error state plus, when All-files access is missing, a
   /// second button for the grant. The grant is the fix for a folder that
   /// reports empty while files are in it (build #95): the app could see
@@ -445,6 +496,13 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
                                       subtitle: Text(
                                         _sizeLabel(size),
                                         style: theme.textTheme.bodySmall,
+                                      ),
+                                      trailing: IconButton(
+                                        icon: const Icon(
+                                          Icons.delete_outline,
+                                        ),
+                                        tooltip: 'Delete file',
+                                        onPressed: () => _deleteFile(file),
                                       ),
                                       onTap: () => _open(file),
                                     ),

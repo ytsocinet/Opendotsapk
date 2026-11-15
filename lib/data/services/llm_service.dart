@@ -59,9 +59,18 @@ class LlmService {
 
   final NativeLlama _llm = NativeLlama();
 
+  // Default context window (build #99: raised from 2048). The full local
+  // prompt (saved memories, core skills, tools section) plus history was
+  // starving the context on safe-mode-off turns — the native prefill then
+  // failed silently and the turn timed out with no token. 4096 gives the
+  // prompt headroom; the turn builder uses this as the token budget, so
+  // history grows with it. One source of truth: the field initializer and
+  // [loadModel]'s default both read this, and a test pins it.
+  static const int defaultContextSize = 4096;
+
   String? _modelPath;
   bool _isLoaded = false;
-  int _nCtx = 2048;
+  int _nCtx = defaultContextSize;
   int _gpuLayers = 0;
   int _threads = 4;
 
@@ -197,7 +206,7 @@ class LlmService {
   /// skipped). See [ModelPreflight].
   Future<bool> loadModel(
     String modelPath, {
-    int nCtx = 2048,
+    int nCtx = defaultContextSize,
     int gpuLayers = 0,
     int totalRamMb = 0,
   }) async {

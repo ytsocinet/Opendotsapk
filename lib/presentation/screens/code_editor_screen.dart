@@ -1,7 +1,8 @@
 /// Code editor — one text file, editable, saved back in place.
 ///
 /// v1 is a plain editor: the file's text in a full-screen field, Save
-/// writes it back to the same path. No syntax highlighting, no running
+/// writes it back to the same path. Delete removes the file from disk
+/// after asking first (build #99). No syntax highlighting, no running
 /// code — that is a later step. Files over 5 MB are refused at the
 /// Projects screen, so this screen never has to hold a huge file.
 library;
@@ -9,19 +10,24 @@ library;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
-class CodeEditorScreen extends StatefulWidget {
+import '../../core/utils/ide_file.dart';
+import '../providers/providers.dart';
+
+class CodeEditorScreen extends ConsumerStatefulWidget {
   const CodeEditorScreen({super.key, required this.path});
 
   /// Absolute path of the file being edited.
   final String path;
 
   @override
-  State<CodeEditorScreen> createState() => _CodeEditorScreenState();
+  ConsumerState<CodeEditorScreen> createState() =>
+      _CodeEditorScreenState();
 }
 
-class _CodeEditorScreenState extends State<CodeEditorScreen> {
+class _CodeEditorScreenState extends ConsumerState<CodeEditorScreen> {
   final TextEditingController _controller = TextEditingController();
   bool _loading = true;
   bool _dirty = false;
@@ -80,6 +86,63 @@ class _CodeEditorScreenState extends State<CodeEditorScreen> {
     }
   }
 
+  /// Delete this file from disk, after asking first, and go back to
+  /// Projects. Deleting discards unsaved edits by definition, so the
+  /// confirmation says so when there are any. When the deleted file is
+  /// the remembered active IDE file, that setting is cleared too. A
+  /// failed delete leaves the file, the edits, and the setting alone.
+  Future<void> _deleteFile() async {
+    final name = p.basename(widget.path);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this file?'),
+        content: Text(
+          _dirty
+              ? '"$name" will be permanently deleted, including your '
+                  'unsaved edits.'
+              : '"$name" will be permanently deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!await IdeFile.deleteFile(File(widget.path))) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not delete that file.')),
+      );
+      return;
+    }
+    if (IdeFile.clearsActiveFile(
+      activePath: ref.read(settingsProvider)['last_ide_file'] as String?,
+      deletedPath: widget.path,
+    )) {
+      await ref
+          .read(settingsProvider.notifier)
+          .updateSetting('last_ide_file', null);
+    }
+    if (!mounted) return;
+    // The file is gone: allow the pop past the unsaved-edits guard and
+    // go back to Projects, which reloads its list on return. The pop
+    // goes through a post-frame callback, like the confirmed discard in
+    // onPopInvokedWithResult — a pop in the same frame as the setState
+    // would still see the old canPop and be vetoed.
+    setState(() => _allowPop = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.pop(context);
+    });
+  }
+
   Future<bool> _confirmDiscard() async {
     if (!_dirty) return true;
     final discard = await showDialog<bool>(
@@ -129,6 +192,11 @@ class _CodeEditorScreenState extends State<CodeEditorScreen> {
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Delete file',
+              onPressed: _loading || _error != null ? null : _deleteFile,
+            ),
             IconButton(
               icon: const Icon(Icons.save_outlined),
               tooltip: 'Save',

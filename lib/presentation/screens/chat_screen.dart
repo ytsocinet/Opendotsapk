@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
@@ -18,6 +19,7 @@ import '../widgets/chat_empty_state.dart';
 import '../widgets/chat_message_tile.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/motion.dart';
+import '../../core/utils/ide_file.dart';
 import '../../core/utils/log.dart';
 import '../../core/utils/text_utils.dart';
 import '../../core/utils/turn_builder.dart';
@@ -399,6 +401,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   .stop(),
             ),
 
+            // Active IDE file — tap to open it in the editor, X to stop
+            // it riding along on turns (it does not delete the file).
+            if ((settings['last_ide_file'] as String?)?.isNotEmpty ??
+                false)
+              _buildActiveFileChip(settings['last_ide_file'] as String),
+
             // Messages list
             Expanded(
               child: messages.isEmpty
@@ -502,6 +510,47 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Banner for the file open in the IDE: the file whose contents ride
+  /// along on every turn until it is cleared or deleted. Tap opens it in
+  /// the editor (same request Code mode sends); the X clears the
+  /// remembered file so it stops riding along. It never deletes the file.
+  Widget _buildActiveFileChip(String path) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Material(
+      color: AppColors.surface,
+      child: InkWell(
+        onTap: () => ref.read(ideOpenRequestProvider.notifier).state++,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+          child: Row(
+            children: [
+              Icon(Icons.code, size: 18, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  p.basename(path),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Stop including this file',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: () => ref
+                    .read(settingsProvider.notifier)
+                    .updateSetting('last_ide_file', null),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -751,6 +800,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         : '\n\nContext from attached documents:\n'
               '${_attachedDocs.map((d) => '--- ${d.name} ---\n${TextUtils.ellipsize(d.text, 4000)}').join('\n\n')}';
 
+    // The file open in the IDE rides along too, so Cypher can pick the
+    // code back up after it was saved and reopened: ask Cypher to start
+    // code, save it, reopen it, and the next turn still sees it. Same
+    // 4000-char cap as an attached document, headed so it is not
+    // mistaken for one. A remembered file that is gone (or unreadable)
+    // clears the setting silently instead of riding along as nothing.
+    final activeFilePath =
+        ref.read(settingsProvider)['last_ide_file'] as String?;
+    final activeFileCtx = await IdeFile.readContext(activeFilePath);
+    if (activeFileCtx == null &&
+        activeFilePath != null &&
+        activeFilePath.isNotEmpty) {
+      unawaited(
+        ref
+            .read(settingsProvider.notifier)
+            .updateSetting('last_ide_file', null),
+      );
+    }
+    final ideCtx = activeFileCtx ?? '';
+
     final display = messageText.isEmpty
         ? (hasImages ? '(image)' : '(document)')
         : messageText;
@@ -787,7 +856,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final sendToCloudOnce = ref.read(cloudOnceProvider.notifier).consume();
 
     final decision = router.decide(
-      prompt: '$display$docCtx',
+      prompt: '$display$docCtx$ideCtx',
       config: routeConfigForTurn(
         mode: '${settings['cloud_mode'] ?? 'auto'}',
         privateMode: settings['private_mode'] as bool? ?? false,
@@ -810,7 +879,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (backgroundMode) BackgroundTaskService.instance.beginWork();
     try {
       if (decision.isCloud) {
-        await _sendViaCloud(decision, '$display$docCtx', imagePath, priorHistory);
+        await _sendViaCloud(decision, '$display$docCtx$ideCtx', imagePath, priorHistory);
         return;
       }
 
@@ -877,7 +946,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         final toolsSection =
             await ref.read(toolRegistryProvider).promptSection();
         final request = await _buildRequest(
-          message: '$display$docCtx',
+          message: '$display$docCtx$ideCtx',
           priorHistory: priorHistory,
           toolsSection: toolsSection,
           safePrompt:

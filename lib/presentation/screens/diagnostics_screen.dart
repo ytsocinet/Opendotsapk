@@ -1,6 +1,11 @@
 /// Diagnostics screen (build #98): the crash log, and the minimal-prompt
 /// safe mode used to test whether the prompt is what kills a local turn.
-///
+/// Build #99 adds the native trace: `native_trace.log` in the same
+/// directory, written by the native glue (via scripts/patch_native_llama.py)
+/// at each generation stage — entered, template applied, tokenized N
+/// tokens, each prefill chunk with its llama_decode return code, first
+/// token, EOS — so a silent native failure (no token, no error, no crash)
+/// is visible instead of surfacing only as a 90-second timeout.
 /// The crash log is the file `crash.log` in the app documents directory,
 /// written by main.dart: uncaught Dart errors are appended synchronously
 /// (`FlutterError.onError` and the `runZonedGuarded` handler), so the
@@ -24,6 +29,18 @@ import '../widgets/screen_section_card.dart';
 class DiagnosticsScreen extends ConsumerStatefulWidget {
   const DiagnosticsScreen({super.key});
 
+  /// File name of the native generation trace in the app documents
+  /// directory (build #99). Must match the path the native glue is told
+  /// to write to (scripts/patch_native_llama.py sets
+  /// "app_flutter/native_trace.log" from Kotlin): if the two disagree,
+  /// the trace section silently shows "No native trace yet".
+  static const String traceFileName = 'native_trace.log';
+
+  /// The trace log file for a documents directory. Pure so it is
+  /// unit-testable without pumping the screen.
+  static File traceFile(Directory docs) =>
+      File('${docs.path}/$traceFileName');
+
   @override
   ConsumerState<DiagnosticsScreen> createState() =>
       _DiagnosticsScreenState();
@@ -37,15 +54,31 @@ class _DiagnosticsScreenState extends ConsumerState<DiagnosticsScreen> {
   int _bytes = 0;
   DateTime? _modified;
 
+  // Native trace (build #99): same shape as the crash log above, one
+  // section per file. Kept as parallel state rather than a shared widget
+  // so the working crash-log section is untouched by this addition.
+  bool _traceLoading = true;
+  String? _traceError;
+  bool _traceExists = false;
+  String? _traceContents;
+  int _traceBytes = 0;
+  DateTime? _traceModified;
+
   @override
   void initState() {
     super.initState();
     _loadLog();
+    _loadTraceLog();
   }
 
   Future<File> _crashLogFile() async {
     final docs = await getApplicationDocumentsDirectory();
     return File('${docs.path}/crash.log');
+  }
+
+  Future<File> _traceLogFile() async {
+    final docs = await getApplicationDocumentsDirectory();
+    return DiagnosticsScreen.traceFile(docs);
   }
 
   Future<void> _loadLog() async {
@@ -87,6 +120,68 @@ class _DiagnosticsScreenState extends ConsumerState<DiagnosticsScreen> {
           _error = 'Could not read the crash log: $e';
         });
       }
+    }
+  }
+
+  Future<void> _loadTraceLog() async {
+    setState(() {
+      _traceLoading = true;
+      _traceError = null;
+    });
+    try {
+      final file = await _traceLogFile();
+      if (!await file.exists()) {
+        if (mounted) {
+          setState(() {
+            _traceLoading = false;
+            _traceExists = false;
+            _traceContents = null;
+            _traceBytes = 0;
+            _traceModified = null;
+          });
+        }
+        return;
+      }
+      final stat = await file.stat();
+      final contents = await file.readAsString();
+      if (mounted) {
+        setState(() {
+          _traceLoading = false;
+          _traceExists = true;
+          _traceContents = contents;
+          _traceBytes = stat.size;
+          _traceModified = stat.modified;
+        });
+      }
+    } catch (e) {
+      // A log that cannot be read is reported, not swallowed: the point
+      // of this screen is evidence, and a failed read is evidence too.
+      if (mounted) {
+        setState(() {
+          _traceLoading = false;
+          _traceError = 'Could not read the native trace: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _clearTraceLog() async {
+    try {
+      final file = await _traceLogFile();
+      if (await file.exists()) await file.delete();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not clear the native trace: $e')),
+        );
+      }
+      return;
+    }
+    await _loadTraceLog();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Native trace cleared')),
+      );
     }
   }
 
@@ -278,6 +373,109 @@ class _DiagnosticsScreenState extends ConsumerState<DiagnosticsScreen> {
                   else if (_contents != null)
                     SelectableText(
                       _contents!,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                      ),
+                    ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          ScreenSection(
+            title: 'Native trace',
+            subtitle:
+                'Generation stages, as the native engine recorded them.',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_traceLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (_traceError != null)
+                  Text(
+                    _traceError!,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: scheme.error,
+                    ),
+                  )
+                else if (!_traceExists)
+                  const ScreenEmptyState(
+                    icon: Icons.timeline_outlined,
+                    title: 'No native trace yet',
+                    message:
+                        'The trace is written when a local turn runs. '
+                        'Open this screen again after a local reply — or '
+                        'after one that timed out.',
+                    compact: true,
+                  )
+                else ...[
+                  Text(
+                    '${_formatBytes(_traceBytes)}'
+                    '${_traceModified != null ? ' · modified ${_formatDate(_traceModified!)}' : ''}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 4,
+                    children: [
+                      TextButton.icon(
+                        icon: const Icon(Icons.copy, size: 18),
+                        label: const Text('Copy'),
+                        onPressed: _traceContents == null
+                            ? null
+                            : () async {
+                                await Clipboard.setData(
+                                  ClipboardData(text: _traceContents!),
+                                );
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content:
+                                          Text('Native trace copied'),
+                                    ),
+                                  );
+                                }
+                              },
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.share, size: 18),
+                        label: const Text('Share'),
+                        onPressed: _traceContents == null
+                            ? null
+                            : () => Share.share(
+                                _traceContents!,
+                                subject: 'Clawzilla native trace',
+                              ),
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('Refresh'),
+                        onPressed: _loadTraceLog,
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.delete_sweep, size: 18),
+                        label: const Text('Clear'),
+                        onPressed: _clearTraceLog,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (_traceContents != null && _traceContents!.isEmpty)
+                    Text(
+                      'The trace file is empty. An empty trace after a '
+                      'local turn means the native glue never wrote to it '
+                      '— the trace path was never set, or the turn never '
+                      'reached the native layer.',
+                      style: theme.textTheme.bodyMedium,
+                    )
+                  else if (_traceContents != null)
+                    SelectableText(
+                      _traceContents!,
                       style: theme.textTheme.bodySmall?.copyWith(
                         fontSize: 12,
                       ),
