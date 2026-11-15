@@ -102,10 +102,11 @@ void main() {
     test('a blank tools section is never included', () {
       final p = buildSystemPrompt(
         nowLine: now,
+        locationLine: location,
         toolsSection: '   ',
       )!;
       expect(p, isNot(contains('   ')));
-      expect(p, now);
+      expect(p, '$now\n\n$location');
     });
   });
 }
