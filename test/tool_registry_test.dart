@@ -284,6 +284,47 @@ void main() {
       expect(section, isNot(contains('send_sms')));
       expect(section, isNot(contains('add_contact')));
     });
+
+    test('tells the model to save code it writes', () async {
+      // Build #100: code Cypher writes must land in the Projects folder,
+      // or there is no file to pick it back up from.
+      final section = await registry.promptSection();
+
+      expect(section, contains('write_project_file'));
+      expect(section, contains('save it with write_project_file'));
+      expect(section, contains('Projects folder'));
+      expect(section, contains('distinct name'));
+      expect(section, contains('Only save code the turn actually produced'));
+    });
+  });
+
+  group('ToolRegistry.distinctPath', () {
+    test('returns the candidate when it is free', () {
+      expect(
+        ToolRegistry.distinctPath('/p/main.dart', (_) => false),
+        '/p/main.dart',
+      );
+    });
+
+    test('suffixed names before the extension, counting up', () {
+      final taken = {'/p/main.dart', '/p/main-2.dart'};
+      expect(
+        ToolRegistry.distinctPath('/p/main.dart', taken.contains),
+        '/p/main-3.dart',
+      );
+    });
+
+    test('appends the suffix when there is no extension', () {
+      final taken = {'/p/README'};
+      expect(
+        ToolRegistry.distinctPath('/p/README', taken.contains),
+        '/p/README-2',
+      );
+    });
+
+    test('returns null when no distinct name is free', () {
+      expect(ToolRegistry.distinctPath('/p/x.dart', (_) => true), isNull);
+    });
   });
 
   group('ToolResult', () {

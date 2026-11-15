@@ -131,4 +131,58 @@ void main() {
       expect(luma(AppColors.surfaceHigh), greaterThan(luma(AppColors.surface)));
     });
   });
+
+  group('AppColors bubble fills follow the brand', () {
+    // Build #100: the bubble fills are tints of the picked brand colour,
+    // not hardcoded greens — so the bubbles change with the theme-colour
+    // setting. `brand` is global mutable state, so every test here
+    // restores it; nothing else in this file may assume it is untouched
+    // after this group runs.
+    const defaultBrand = Color(0xFF00FF66);
+
+    test('derive from the brand hue, keeping their lightness', () {
+      final previous = AppColors.brand;
+      try {
+        // A blue brand: the bubbles must turn blue too, at the same
+        // lightness as the greens they replace.
+        AppColors.brand = const Color(0xFF3B82F6);
+        final ai = HSLColor.fromColor(AppColors.aiBubble);
+        final user = HSLColor.fromColor(AppColors.userBubble);
+
+        expect(ai.hue, closeTo(217.2, 3.0));
+        expect(user.hue, closeTo(217.2, 3.0));
+        expect(ai.lightness, closeTo(0.10, 0.02));
+        expect(user.lightness, closeTo(0.36, 0.02));
+        expect(ai.saturation, greaterThan(0.0));
+        // Roles stay distinct: the user's bubble is the lighter one.
+        expect(
+          AppColors.userBubble.computeLuminance(),
+          greaterThan(AppColors.aiBubble.computeLuminance()),
+        );
+      } finally {
+        AppColors.brand = previous;
+      }
+    });
+
+    test('the default brand resolves to the old greens, to a shade', () {
+      // The old hardcoded fills, kept as the reference: a user on the
+      // default Matrix green must not see the bubbles change at all.
+      final previous = AppColors.brand;
+      try {
+        AppColors.brand = defaultBrand;
+
+        int channel(Color c, int shift) => (c.value >> shift) & 0xFF;
+        void expectNear(Color actual, int r, int g, int b) {
+          expect(channel(actual, 16), closeTo(r, 5));
+          expect(channel(actual, 8), closeTo(g, 5));
+          expect(channel(actual, 0), closeTo(b, 5));
+        }
+
+        expectNear(AppColors.aiBubble, 18, 32, 21);
+        expectNear(AppColors.userBubble, 22, 163, 74);
+      } finally {
+        AppColors.brand = previous;
+      }
+    });
+  });
 }

@@ -474,6 +474,24 @@ class ToolRegistry {
       // No app list is not a reason to hide the tools: the gate still
       // refuses unconnected packages at execution time.
     }
+    // Build #100: code Cypher writes must land in the Projects folder, or
+    // there is no file to pick it back up from. The rule lives here, in
+    // the tools section, because it is about a tool — and because the
+    // section is local-only, it never reaches the cloud path (which cannot
+    // call tools anyway).
+    lines.add(
+      'When you write code in a turn — a fenced code block, especially in '
+      'code mode — save it with write_project_file so the user keeps it '
+      'and you can pick it back up next turn. Pick a sensible filename '
+      'from the language and what the code does (for example "hello.dart" '
+      'or "todo_app.dart"), relative to the Projects folder. If you are '
+      'continuing the file already open in the IDE (shown as "Context '
+      'from the open file in the IDE"), write to that same file. Never '
+      'silently overwrite an unrelated file: if the name is already taken, '
+      'the tool saves it under a distinct name and tells you which — use '
+      'the name it reports. Only save code the turn actually produced; '
+      'do not write a file on turns with no code.',
+    );
     lines.add(
       'If no tool fits the request, answer directly in plain text — do not output a tool block.',
     );
@@ -624,6 +642,33 @@ class ToolRegistry {
     }
   }
 
+  /// Picks a path that does not clobber an existing file, or null when
+  /// none is free.
+  ///
+  /// Build #100: a write to a name that is already taken must never
+  /// silently overwrite an unrelated file. The first free name wins:
+  /// `main.dart` → `main-2.dart` → `main-3.dart`, and an extensionless
+  /// name gets the suffix appended (`README` → `README-2`). Returns
+  /// [candidate] unchanged when it is free, and null after 100 tries
+  /// with no free name. Pure (the existence check is a parameter) so it
+  /// can be unit-tested without touching the disk.
+  static String? distinctPath(
+    String candidate,
+    bool Function(String path) exists,
+  ) {
+    if (!exists(candidate)) return candidate;
+    final dir = p.dirname(candidate);
+    final base = p.basename(candidate);
+    final ext = p.extension(base);
+    final stem =
+        ext.isEmpty ? base : base.substring(0, base.length - ext.length);
+    for (var i = 2; i <= 100; i++) {
+      final next = p.join(dir, '$stem-$i$ext');
+      if (!exists(next)) return next;
+    }
+    return null;
+  }
+
   /// Write a text file inside the Projects folder, creating parent
   /// folders as needed. Content over the cap is refused outright rather
   /// than half-written.
@@ -661,16 +706,41 @@ class ToolRegistry {
         'That path is outside the Projects folder — refused.',
       );
     }
+    // Build #100: never silently overwrite an unrelated file. Writing
+    // to the file already open in the IDE is a continuation, so it keeps
+    // its name; any other existing file gets a distinct name instead.
+    // The actual written path is reported back (relative `path` and
+    // absolute `absolutePath`): the chat turns the written file into the
+    // open file in the IDE, so the next turn reads it back.
+    final active =
+        await DatabaseHelper.instance.getPreference('last_ide_file');
+    final isContinuation = active != null &&
+        active.isNotEmpty &&
+        p.normalize(active) == resolved;
+    final target = isContinuation
+        ? resolved
+        : distinctPath(resolved, (path) => File(path).existsSync());
+    if (target == null) {
+      return ToolResult.failed(
+        'That name is taken in the Projects folder and no distinct name '
+        'was free. Pick another filename.',
+      );
+    }
+    final targetRel = p.relative(target, from: root);
     try {
-      final file = File(resolved);
+      final file = File(target);
       await file.parent.create(recursive: true);
       await file.writeAsString(content);
       return ToolResult.success(
-        'Wrote $rel (${content.length} characters).',
-        data: {'path': rel, 'characters': content.length},
+        'Wrote $targetRel (${content.length} characters).',
+        data: {
+          'path': targetRel,
+          'absolutePath': target,
+          'characters': content.length,
+        },
       );
     } catch (e) {
-      return ToolResult.failed('Could not write $rel: $e');
+      return ToolResult.failed('Could not write $targetRel: $e');
     }
   }
 

@@ -59,6 +59,26 @@ class IdeFile {
       activePath.isNotEmpty &&
       activePath == deletedPath;
 
+  /// The path that becomes the remembered active file after a chat-driven
+  /// tool call, or null when the call produces no active file (build #100).
+  ///
+  /// Only a successful write_project_file does: the file Cypher just
+  /// wrote is the one the next turn should read back, so it becomes the
+  /// open file and the chip shows it. Any other tool — or a failed write
+  /// — leaves the active file alone. The executor reports the actual
+  /// written path in the result data (`absolutePath`); when it is missing
+  /// there is nothing to remember.
+  static String? activeFileAfterWrite({
+    required String toolName,
+    required bool success,
+    required Map<String, dynamic>? data,
+  }) {
+    if (toolName != 'write_project_file' || !success) return null;
+    final absolute = data?['absolutePath'] as String?;
+    if (absolute == null || absolute.isEmpty) return null;
+    return absolute;
+  }
+
   /// Deletes [file] from disk. True when the delete succeeded; false when
   /// it failed (missing file, permissions). A failed delete never clears
   /// the active file — the file is still there.

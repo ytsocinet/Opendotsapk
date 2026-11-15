@@ -11,8 +11,10 @@ import 'package:flutter/material.dart';
 
 import '../constants/app_constants.dart';
 
-/// Semantic colours that are *not* derivable from the seed (success/warning
-/// states, the two chat bubble roles, the glow behind AI content).
+/// Semantic colours. Most are *not* derivable from the seed
+/// (success/warning states, the glow behind AI content); the two chat
+/// bubble roles ARE derived from it, so they follow the theme-colour
+/// setting instead of staying Matrix green.
 class AppColors {
   AppColors._();
 
@@ -42,9 +44,34 @@ class AppColors {
   /// Raised surface (dialogs, expanded cards, the input bar).
   static const Color surfaceHigh = Color(0xFF141D15);
 
-  /// The model's own bubble; the user's is a solid Matrix green.
-  static const Color aiBubble = Color(0xFF122015);
-  static const Color userBubble = Color(0xFF16A34A);
+  /// The model's own bubble — a dark tint of the picked brand colour, so
+  /// it follows the theme-colour setting instead of staying Matrix green.
+  /// Same hue as the brand, low saturation and lightness, so the
+  /// near-white transcript text stays readable on it whatever the pick.
+  /// With the default brand (0xFF00FF66) this resolves to (18, 33, 24),
+  /// the old 0xFF122015 to within a shade.
+  static Color get aiBubble => _brandTint(saturation: 0.28, lightness: 0.10);
+
+  /// The user's bubble — a stronger tint of the picked brand colour, so
+  /// it follows the theme-colour setting too. With the default brand this
+  /// resolves to (22, 162, 78), the old 0xFF16A34A to within a shade.
+  /// Lighter than [aiBubble] so the two roles stay distinct.
+  static Color get userBubble =>
+      _brandTint(saturation: 0.76, lightness: 0.36);
+
+  /// A tint of [brand] at a fixed saturation and lightness: the hue is
+  /// the brand's, so the colour follows the theme-colour setting, while
+  /// the lightness is fixed, so text contrast never depends on the pick.
+  static Color _brandTint({
+    required double saturation,
+    required double lightness,
+  }) {
+    final hsl = HSLColor.fromColor(brand);
+    return hsl
+        .withSaturation(saturation)
+        .withLightness(lightness)
+        .toColor();
+  }
 }
 
 class AppTheme {

@@ -158,4 +158,61 @@ void main() {
       expect(await IdeFile.deleteFile(file), isFalse);
     });
   });
+
+  group('activeFileAfterWrite', () {
+    test('a successful project write becomes the active file', () {
+      expect(
+        IdeFile.activeFileAfterWrite(
+          toolName: 'write_project_file',
+          success: true,
+          data: {
+            'path': 'main.dart',
+            'absolutePath': '/projects/main.dart',
+          },
+        ),
+        '/projects/main.dart',
+      );
+    });
+
+    test('any other tool leaves the active file alone', () {
+      expect(
+        IdeFile.activeFileAfterWrite(
+          toolName: 'create_note',
+          success: true,
+          data: {'absolutePath': '/projects/note.txt'},
+        ),
+        isNull,
+      );
+    });
+
+    test('a failed write leaves the active file alone', () {
+      expect(
+        IdeFile.activeFileAfterWrite(
+          toolName: 'write_project_file',
+          success: false,
+          data: {'absolutePath': '/projects/main.dart'},
+        ),
+        isNull,
+      );
+    });
+
+    test('a write with no reported path leaves the active file alone', () {
+      expect(
+        IdeFile.activeFileAfterWrite(
+          toolName: 'write_project_file',
+          success: true,
+          data: {'path': 'main.dart'},
+        ),
+        isNull,
+      );
+      expect(
+        IdeFile.activeFileAfterWrite(
+          toolName: 'write_project_file',
+          success: true,
+          data: null,
+        ),
+        isNull,
+      );
+    });
+  });
 }

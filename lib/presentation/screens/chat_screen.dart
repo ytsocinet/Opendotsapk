@@ -396,9 +396,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               onManageModels: _showModelSelector,
               onClear: _clearChat,
               onExport: _exportChat,
-              onStopSpeaking: () => ref
-                  .read(textToSpeechProvider.notifier)
-                  .stop(),
             ),
 
             // Active IDE file — tap to open it in the editor, X to stop
@@ -971,6 +968,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             toolName: call.tool,
             params: call.params,
           );
+          // Build #100: a file Cypher just wrote becomes the open file in
+          // the IDE, so the next turn reads it back and Cypher can pick
+          // the code up where it left off. The chip shows it as soon as
+          // the setting lands.
+          final written = IdeFile.activeFileAfterWrite(
+            toolName: call.tool,
+            success: result.isSuccess,
+            data: result.data,
+          );
+          if (written != null) {
+            await ref
+                .read(settingsProvider.notifier)
+                .updateSetting('last_ide_file', written);
+          }
           // Clear the tool JSON out of the bubble before the answer streams.
           _pendingTokens = '';
           _flushTimer?.cancel();
@@ -1888,11 +1899,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
 /// The header above the transcript.
 ///
-/// App identity on the left, stop-voice and the overflow menu on the right.
-/// The live model used to sit here as a chip; it was removed Nov 12, 2026
-/// because it crowded the header and pushed the stop-voice button
-/// off-screen. The weights line below still shows which model is loaded,
-/// and "Change model" still lives in the overflow menu.
+/// App identity on the left, the overflow menu on the right. The live
+/// model used to sit here as a chip; it was removed Nov 12, 2026
+/// because it crowded the header. The stop-voice button was removed in
+/// build #100 for the same reason — the bubble's replay icon already
+/// swaps to a stop on the same path, so the header button was redundant.
+/// The weights line below still shows which model is loaded, and
+/// "Change model" still lives in the overflow menu.
 class _ChatHeader extends StatefulWidget {
   const _ChatHeader({
     required this.modelPath,
@@ -1902,7 +1915,6 @@ class _ChatHeader extends StatefulWidget {
     required this.onManageModels,
     required this.onClear,
     required this.onExport,
-    required this.onStopSpeaking,
   });
 
   final String? modelPath;
@@ -1922,11 +1934,6 @@ class _ChatHeader extends StatefulWidget {
   final VoidCallback onManageModels;
   final VoidCallback onClear;
   final VoidCallback onExport;
-
-  /// Cuts off the voice reading a reply aloud, right now. The button is
-  /// always there so it can be hit the moment the voice is unwanted —
-  /// stopping an idle engine is a harmless no-op.
-  final VoidCallback onStopSpeaking;
 
   @override
   State<_ChatHeader> createState() => _ChatHeaderState();
@@ -2074,29 +2081,10 @@ class _ChatHeaderState extends State<_ChatHeader>
                       ),
                       const Spacer(),
                       // No model chip here any more (Nov 12, 2026 — Aaron
-                      // asked for it gone): it crowded the header and pushed
-                      // the stop-voice button off-screen. The weights line
-                      // below still shows which model is loaded.
-                      // Stop voice: cuts off the voice reading a reply
-                      // aloud, right now (Nov 11, 2026 — Aaron asked for a
-                      // way to cut it off mid-speech, e.g. while listening
-                      // to something else). It sits in the header so it is
-                      // always one tap away, and stopping an idle engine
-                      // is a harmless no-op. Big and filled since Nov 12,
-                      // 2026: the small outlined grey icon could barely be
-                      // seen or tapped.
-                      IconButton(
-                        icon: const Icon(Icons.volume_off),
-                        tooltip: 'Stop voice',
-                        iconSize: 28,
-                        style: IconButton.styleFrom(
-                          backgroundColor: scheme.errorContainer,
-                          foregroundColor: scheme.onErrorContainer,
-                          minimumSize: const Size(48, 48),
-                        ),
-                        onPressed: widget.onStopSpeaking,
-                      ),
-                      const SizedBox(width: 4),
+                      // asked for it gone): it crowded the header. The
+                      // stop-voice button is gone too (build #100): the
+                      // bubble's replay icon already swaps to a stop on
+                      // the same path, so the header button was redundant.
                       // One overflow menu for the rest: Change model,
                       // Clear chat, Export. Clear used to have its own
                       // button in the header; it now lives here so the
