@@ -257,7 +257,7 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                   avatar: const Icon(Icons.image_outlined, size: 18),
                   tooltip: 'Open Artistly (images)',
                   onPressed: () =>
-                      unawaited(_openUrl('https://artistly.ai')),
+                      unawaited(_openUrl('https://app.artistly.ai/login')),
                 ),
                 const SizedBox(width: 8),
                 ActionChip(
@@ -265,7 +265,7 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                   avatar: const Icon(Icons.movie_outlined, size: 18),
                   tooltip: 'Open VideoExpress (video)',
                   onPressed: () =>
-                      unawaited(_openUrl('https://videoexpress.ai')),
+                      unawaited(_openUrl('https://app.videoexpress.ai/login')),
                 ),
               ],
             ),

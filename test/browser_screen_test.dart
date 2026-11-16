@@ -193,7 +193,17 @@ void main() {
       await pumpBrowser(tester, platform);
       await tester.tap(find.text('Artistly'));
       await tester.pump();
-      expect(loaded.last, Uri.parse('https://artistly.ai'));
+      expect(loaded.last, Uri.parse('https://app.artistly.ai/login'));
+    });
+
+    testWidgets('VideoExpress chip tap reaches its login page (build #112)',
+        (tester) async {
+      final loaded = <Uri>[];
+      final platform = FakeWebViewPlatform(loaded);
+      await pumpBrowser(tester, platform);
+      await tester.tap(find.text('VideoExpress'));
+      await tester.pump();
+      expect(loaded.last, Uri.parse('https://app.videoexpress.ai/login'));
     });
 
     testWidgets('typing a domain and pressing Go reaches loadRequest',
