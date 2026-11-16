@@ -34,6 +34,12 @@ class _PromptLabScreenState extends ConsumerState<PromptLabScreen>
   String _result = '';
   String? _error;
 
+  // Settings notifier captured in initState (build #101): `ref` cannot
+  // be used in dispose() — the element is already unmounted by then —
+  // so the dispose safety-net writes through this instead. Nullable so
+  // dispose stays safe if initState never finished assigning it.
+  SettingsNotifier? _settings;
+
   @override
   void initState() {
     super.initState();
@@ -41,6 +47,11 @@ class _PromptLabScreenState extends ConsumerState<PromptLabScreen>
       vsync: this,
       duration: AppMotion.base,
     );
+    // Capture the notifier here, while `ref` is still legal (build
+    // #101): reading it in dispose() throws "Cannot use ref after the
+    // widget was disposed", which is the crash this screen used to hit
+    // every time it closed.
+    _settings = ref.read(settingsProvider.notifier);
     // Load the persisted Lab parameters (build #97): the sliders used
     // to be local-only state, so leaving the Lab reset them to 0.7 /
     // 40 / 512. Lab-specific keys — Prompt Lab is a raw test bench, so
@@ -61,10 +72,11 @@ class _PromptLabScreenState extends ConsumerState<PromptLabScreen>
     // change that never saw an onChangeEnd (e.g. an accessibility
     // adjustment, which fires onChanged but not onChangeEnd). Writes
     // are idempotent upserts, and these keys only ever change here.
-    final notifier = ref.read(settingsProvider.notifier);
-    notifier.updateSetting('lab_temperature', _temperature);
-    notifier.updateSetting('lab_top_k', _topK);
-    notifier.updateSetting('lab_max_tokens', _maxTokens);
+    // The notifier was captured in initState (build #101): a ref.read
+    // here throws, because the element is already unmounted.
+    _settings?.updateSetting('lab_temperature', _temperature);
+    _settings?.updateSetting('lab_top_k', _topK);
+    _settings?.updateSetting('lab_max_tokens', _maxTokens);
     _controller.dispose();
     _promptController.dispose();
     _scrollController.dispose();

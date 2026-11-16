@@ -850,6 +850,15 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     _loadSettings();
   }
 
+  /// Test-only constructor (build #101): builds a notifier from [initial]
+  /// state without loading anything from the database or probing
+  /// connectivity. The default constructor's `_loadSettings()` touches
+  /// sqflite and the network, neither of which exists in a widget test —
+  /// a Prompt Lab dispose test needs a notifier that never leaves memory.
+  @visibleForTesting
+  SettingsNotifier.test(Map<String, dynamic> initial)
+      : super(Map<String, dynamic>.from(initial));
+
   Future<void> _loadSettings() async {
     final contextSize = await _db.getPreference('context_size');
     if (contextSize != null) {
