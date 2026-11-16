@@ -15,6 +15,16 @@
 ///    happen and confirms it themselves. Those tools therefore return
 ///    [ToolStatus.requiresUserAction] — not success — because at the moment we
 ///    return, nothing has happened yet.
+///
+///    Exception, Nov 16, 2026 (build #110): Aaron explicitly overrode this
+///    rule for send_sms, create_calendar_event, add_contact, and set_alarm
+///    — "I want Cypher to send, no tap for me." Those four use silent
+///    privileged APIs (SmsManager, ContentResolver, AlarmManager), default
+///    to allow with no ask prompt ([ToolPermissionStore.silentTools]), and
+///    report [ToolStatus.success] only when the write actually happened.
+///    The risk stands and is recorded in the permission store: with no
+///    confirmation step, a wrong recipient or a wrong time goes out as-is.
+///    Everything else in this file still follows rule 2.
 library;
 
 import 'dart:convert';
@@ -54,22 +64,27 @@ class ToolRegistry {
       ToolDefinition(
         name: 'send_sms',
         description:
-            'Compose an SMS to a recipient in the messaging app. The '
-            'user must tap send; this does not send anything by itself.',
+            'Send an SMS to a phone number or a contact name right now, '
+            'with no confirmation. Only use when the user asked for a '
+            'message to be sent.',
         parameters: {
-          'recipient': {'type': 'string', 'description': 'Phone number'},
+          'recipient': {
+            'type': 'string',
+            'description': 'Phone number, or a contact name to look up',
+          },
           'message': {'type': 'string', 'description': 'Message content'},
         },
         required: ['recipient', 'message'],
-        implemented: false,
-        unimplementedReason: 'Opens the system SMS composer; not yet wired.',
+        implemented: true,
       ),
     );
 
     add(
       ToolDefinition(
         name: 'create_calendar_event',
-        description: 'Create a calendar event.',
+        description:
+            'Create a calendar event right now, with no confirmation. '
+            'Only use when the user asked for an event to be added.',
         parameters: {
           'title': {'type': 'string', 'description': 'Event title'},
           'start_time': {
@@ -80,37 +95,42 @@ class ToolRegistry {
           'location': {'type': 'string', 'description': 'Event location'},
         },
         required: ['title', 'start_time'],
-        implemented: false,
-        unimplementedReason: 'Needs a calendar insert Intent; not yet wired.',
+        implemented: true,
       ),
     );
 
     add(
       ToolDefinition(
         name: 'add_contact',
-        description: 'Add a new contact.',
+        description:
+            'Add a new contact right now, with no confirmation. Only use '
+            'when the user asked for a contact to be saved.',
         parameters: {
           'name': {'type': 'string', 'description': 'Contact name'},
           'phone': {'type': 'string', 'description': 'Phone number'},
           'email': {'type': 'string', 'description': 'Email'},
         },
         required: ['name'],
-        implemented: false,
-        unimplementedReason: 'Needs a contacts insert Intent; not yet wired.',
+        implemented: true,
       ),
     );
 
     add(
       ToolDefinition(
         name: 'set_alarm',
-        description: 'Set an alarm.',
+        description:
+            'Set an alarm that rings on this phone right now, with no '
+            'confirmation. Time is HH:MM or ISO8601. Only use when the '
+            'user asked for an alarm.',
         parameters: {
-          'time': {'type': 'string', 'description': 'Alarm time (ISO8601)'},
+          'time': {
+            'type': 'string',
+            'description': 'Alarm time (HH:MM or ISO8601)',
+          },
           'label': {'type': 'string', 'description': 'Alarm label'},
         },
         required: ['time'],
-        implemented: false,
-        unimplementedReason: 'Needs the AlarmClock Intent; not yet wired.',
+        implemented: true,
       ),
     );
 
@@ -581,6 +601,14 @@ class ToolRegistry {
         return _executeOpenApp(params);
       case 'share_to_app':
         return _executeShareToApp(params);
+      case 'send_sms':
+        return _executeSendSms(params);
+      case 'create_calendar_event':
+        return _executeCreateCalendarEvent(params);
+      case 'add_contact':
+        return _executeAddContact(params);
+      case 'set_alarm':
+        return _executeSetAlarm(params);
       case 'read_project_file':
         return _executeReadProjectFile(params);
       case 'write_project_file':
@@ -1354,6 +1382,220 @@ class ToolRegistry {
       return ToolResult.failed('Could not share to that app: ${e.message}');
     }
   }
+
+  /// Asks Android for [permission] (system runtime dialog on first use)
+  /// and reports the outcome. Mirrors the location service
+  /// (`Permission.location.request().isGranted`). A channel failure is a
+  /// denial, not a grant: failing closed is the only safe direction.
+  Future<PermissionStatus> _ensurePermission(Permission permission) async {
+    try {
+      final current = await permission.status;
+      if (current.isGranted) return current;
+      return await permission.request();
+    } catch (_) {
+      return PermissionStatus.denied;
+    }
+  }
+
+  /// The denial message for a silent tool: what to grant, and where. A
+  /// permanent denial means the system dialog will not show again, so
+  /// that one names Settings explicitly.
+  ToolResult _permissionDenied(String what, PermissionStatus status) {
+    if (status.isPermanentlyDenied) {
+      return ToolResult.requiresPermission(
+        '$what permission is denied — allow it in Settings → Apps → '
+        'Clawzilla → Permissions, then ask again.',
+      );
+    }
+    return ToolResult.requiresPermission(
+      '$what permission was not granted, so nothing was done.',
+    );
+  }
+
+  /// Sends an SMS with SmsManager — no composer, no confirmation. The
+  /// recipient may be a phone number or a contact name (the native side
+  /// looks the name up). Returns success only when SmsManager accepted
+  /// the message; a wrong-but-valid recipient goes out as-is, which is
+  /// the silent behaviour Aaron asked for (build #110).
+  Future<ToolResult> _executeSendSms(Map<String, dynamic> params) async {
+    final recipient = (params['recipient'] as String?)?.trim();
+    final message = (params['message'] as String?)?.trim();
+    if (recipient == null || recipient.isEmpty) {
+      return ToolResult.failed('send_sms requires a "recipient".');
+    }
+    if (message == null || message.isEmpty) {
+      return ToolResult.failed('send_sms requires a "message".');
+    }
+    final permission = await _ensurePermission(Permission.sms);
+    if (!permission.isGranted) {
+      return _permissionDenied('SMS', permission);
+    }
+    try {
+      final result = await _appsChannel.invokeMethod<String>(
+        'sendSms',
+        {'recipient': recipient, 'message': message},
+      );
+      return switch (result) {
+        'ok' => ToolResult.success('Sent the SMS to $recipient.'),
+        'no_number' => ToolResult.failed(
+          'No phone number found for "$recipient" — check the name or '
+          'number.',
+        ),
+        _ => ToolResult.failed('Could not send the SMS.'),
+      };
+    } on PlatformException catch (e) {
+      return ToolResult.failed('Could not send the SMS: ${e.message}');
+    }
+  }
+
+  /// Creates a calendar event with ContentResolver — no calendar app,
+  /// no confirmation. The native side picks the primary calendar (or
+  /// the first visible one). End defaults to one hour after start.
+  Future<ToolResult> _executeCreateCalendarEvent(
+    Map<String, dynamic> params,
+  ) async {
+    final title = (params['title'] as String?)?.trim();
+    final startRaw = (params['start_time'] as String?)?.trim();
+    if (title == null || title.isEmpty) {
+      return ToolResult.failed('create_calendar_event requires a "title".');
+    }
+    final start = startRaw == null ? null : DateTime.tryParse(startRaw);
+    if (start == null) {
+      return ToolResult.failed(
+        'create_calendar_event requires a readable "start_time" '
+        '(ISO8601, e.g. 2026-11-17T14:00:00).',
+      );
+    }
+    final endRaw = (params['end_time'] as String?)?.trim();
+    final end = (endRaw == null || endRaw.isEmpty)
+        ? start.add(const Duration(hours: 1))
+        : DateTime.tryParse(endRaw);
+    if (end == null) {
+      return ToolResult.failed(
+        'create_calendar_event could not read "end_time" '
+        '(ISO8601, e.g. 2026-11-17T15:00:00).',
+      );
+    }
+    final location = (params['location'] as String?)?.trim();
+    final permission = await _ensurePermission(
+      Permission.calendarFullAccess,
+    );
+    if (!permission.isGranted) {
+      return _permissionDenied('Calendar', permission);
+    }
+    try {
+      final created = await _appsChannel.invokeMethod<bool>(
+        'insertCalendarEvent',
+        {
+          'title': title,
+          'beginMillis': start.millisecondsSinceEpoch,
+          'endMillis': end.millisecondsSinceEpoch,
+          if (location != null && location.isNotEmpty) 'location': location,
+        },
+      );
+      if (created != true) {
+        return ToolResult.failed(
+          'Could not create the calendar event — no calendar on this '
+          'phone accepted it.',
+        );
+      }
+      return ToolResult.success('Created the calendar event "$title".');
+    } on PlatformException catch (e) {
+      return ToolResult.failed(
+        'Could not create the calendar event: ${e.message}',
+      );
+    }
+  }
+
+  /// Adds a contact with ContentResolver — no contacts app, no
+  /// confirmation. The contact is stored locally (no account).
+  Future<ToolResult> _executeAddContact(Map<String, dynamic> params) async {
+    final name = (params['name'] as String?)?.trim();
+    if (name == null || name.isEmpty) {
+      return ToolResult.failed('add_contact requires a "name".');
+    }
+    final phone = (params['phone'] as String?)?.trim();
+    final email = (params['email'] as String?)?.trim();
+    final permission = await _ensurePermission(Permission.contacts);
+    if (!permission.isGranted) {
+      return _permissionDenied('Contacts', permission);
+    }
+    try {
+      final added = await _appsChannel.invokeMethod<bool>(
+        'insertContact',
+        {
+          'name': name,
+          if (phone != null && phone.isNotEmpty) 'phone': phone,
+          if (email != null && email.isNotEmpty) 'email': email,
+        },
+      );
+      if (added != true) {
+        return ToolResult.failed('Could not add the contact.');
+      }
+      return ToolResult.success('Added "$name" to contacts.');
+    } on PlatformException catch (e) {
+      return ToolResult.failed('Could not add the contact: ${e.message}');
+    }
+  }
+
+  /// Sets an alarm with AlarmManager (setAlarmClock) — no clock app, no
+  /// confirmation. The alarm rings on this phone: the native receiver
+  /// plays the alarm tone on loop with a notification to dismiss it.
+  /// Hour/minute/label only — the alarm takes no absolute date, so a
+  /// time already past today rings tomorrow.
+  Future<ToolResult> _executeSetAlarm(Map<String, dynamic> params) async {
+    final timeRaw = (params['time'] as String?)?.trim();
+    final when = timeRaw == null ? null : _parseAlarmTime(timeRaw);
+    if (when == null) {
+      return ToolResult.failed(
+        'set_alarm requires a readable "time" (ISO8601, e.g. '
+        '2026-11-17T06:00:00, or "06:00").',
+      );
+    }
+    final label = (params['label'] as String?)?.trim();
+    try {
+      final result = await _appsChannel.invokeMethod<String>(
+        'setAlarm',
+        {
+          'hour': when.hour,
+          'minute': when.minute,
+          if (label != null && label.isNotEmpty) 'label': label,
+        },
+      );
+      return switch (result) {
+        'ok' => ToolResult.success(
+          'Set the alarm for ${_twoDigits(when.hour)}:'
+          '${_twoDigits(when.minute)}.',
+        ),
+        'exact_alarm_denied' => ToolResult.requiresPermission(
+          'Alarms & reminders is off for Clawzilla — I opened Settings '
+          'so you can turn it on, then ask again.',
+        ),
+        _ => ToolResult.failed('Could not set the alarm.'),
+      };
+    } on PlatformException catch (e) {
+      return ToolResult.failed('Could not set the alarm: ${e.message}');
+    }
+  }
+
+  /// Reads an alarm time: a full ISO8601 timestamp first, or a bare
+  /// "HH:MM" (the model often gives just the time — take today at that
+  /// hour; the native side rolls it to tomorrow if it already passed).
+  DateTime? _parseAlarmTime(String raw) {
+    final full = DateTime.tryParse(raw.trim());
+    if (full != null) return full;
+    final m = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(raw.trim());
+    if (m == null) return null;
+    final hour = int.tryParse(m.group(1)!);
+    final minute = int.tryParse(m.group(2)!);
+    if (hour == null || minute == null || hour > 23 || minute > 59) {
+      return null;
+    }
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day, hour, minute);
+  }
+
+  String _twoDigits(int value) => value.toString().padLeft(2, '0');
 
   /// The connected-apps gate, fail-closed: any read failure refuses the
   /// open/share rather than letting it through on an unknown list.

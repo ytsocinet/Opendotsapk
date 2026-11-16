@@ -139,9 +139,16 @@ void main() {
         expect(offered, contains(tool));
       }
 
-      // These do nothing yet, so the model must not see them.
-      expect(offered, isNot(contains('send_sms')));
-      expect(offered, isNot(contains('add_contact')));
+      // The four silent tools (build #110): implemented, ungated, and
+      // offered — the model must see them to use them.
+      for (final tool in [
+        'send_sms',
+        'create_calendar_event',
+        'add_contact',
+        'set_alarm',
+      ]) {
+        expect(offered, contains(tool));
+      }
 
       // v1 gate: implemented tools blocked for v1 are also not offered.
       final expectedOffered = registry.tools.values
@@ -152,10 +159,14 @@ void main() {
     });
 
     test('no unimplemented tool can ever report success', () async {
+      // Every registered tool is now implemented — build #110 finished
+      // the last four stubs. The loop below stays as the guard: if a
+      // stub is ever added again, it must fail with `unsupported` and
+      // never claim success.
       final unimplemented = registry.tools.values
           .where((t) => !t.implemented)
           .toList();
-      expect(unimplemented, isNotEmpty);
+      expect(unimplemented, isEmpty);
 
       for (final def in unimplemented) {
         final result = await registry.executeTool(
@@ -213,7 +224,12 @@ void main() {
       expect(registry.isImplemented('share_to_app'), isTrue);
       expect(registry.isImplemented('create_task'), isTrue);
       expect(registry.isImplemented('list_goals'), isTrue);
-      expect(registry.isImplemented('send_sms'), isFalse);
+      // The four silent tools are implemented (build #110) — they send
+      // directly, no Intent stub left.
+      expect(registry.isImplemented('send_sms'), isTrue);
+      expect(registry.isImplemented('create_calendar_event'), isTrue);
+      expect(registry.isImplemented('add_contact'), isTrue);
+      expect(registry.isImplemented('set_alarm'), isTrue);
       expect(registry.isImplemented('nope'), isFalse);
     });
 
@@ -281,8 +297,12 @@ void main() {
       expect(section, contains('create_task'));
       expect(section, contains('list_tasks'));
       expect(section, contains('create_goal'));
-      expect(section, isNot(contains('send_sms')));
-      expect(section, isNot(contains('add_contact')));
+      // The four silent tools are offered now (build #110): the model
+      // must see them in the prompt to use them.
+      expect(section, contains('send_sms'));
+      expect(section, contains('create_calendar_event'));
+      expect(section, contains('add_contact'));
+      expect(section, contains('set_alarm'));
     });
 
     test('tells the model to save code it writes', () async {
@@ -538,6 +558,103 @@ void main() {
         ),
         isNull,
       );
+    });
+  });
+
+  group('silent tools (build #110)', () {
+    test('the v1 gate is empty and the four tools default to allow', () {
+      expect(ToolPermissionStore.v1GatedTools, isEmpty);
+      for (final tool in [
+        'send_sms',
+        'create_calendar_event',
+        'add_contact',
+        'set_alarm',
+      ]) {
+        expect(ToolPermissionStore.isV1Gated(tool), isFalse);
+        expect(
+          ToolPermissionStore.defaultFor(tool),
+          ToolPermission.allow,
+          reason: '$tool must run without an ask prompt',
+        );
+        expect(registry.isImplemented(tool), isTrue);
+      }
+    });
+
+    test('send_sms refuses bad input before touching the channel', () async {
+      // No recipient / no message: validation fails first, so the
+      // SmsManager channel is never called — safe in a unit test, where
+      // the channel has no native side.
+      for (final params in [
+        <String, dynamic>{},
+        {'recipient': 'LaKisha'},
+        {'message': 'hello'},
+        {'recipient': '', 'message': 'hello'},
+        {'recipient': 'LaKisha', 'message': ''},
+      ]) {
+        final result = await registry.executeTool(
+          toolName: 'send_sms',
+          params: params,
+        );
+        expect(result.status, ToolStatus.failed);
+        expect(result.isSuccess, isFalse);
+      }
+    });
+
+    test('create_calendar_event refuses bad input before touching the channel',
+        () async {
+      // Every case here fails in validation — a start time that parses
+      // would reach the permission check, and the channel has no native
+      // side in a unit test.
+      for (final params in [
+        <String, dynamic>{},
+        {'title': 'Dentist'},
+        {'title': 'Dentist', 'start': 'not a time'},
+        {'title': '', 'start': '2026-11-17T09:00:00'},
+        {
+          'title': 'Dentist',
+          'start': '2026-11-17T09:00:00',
+          'end': '2026-11-17T08:00:00',
+        },
+      ]) {
+        final result = await registry.executeTool(
+          toolName: 'create_calendar_event',
+          params: params,
+        );
+        expect(result.status, ToolStatus.failed);
+        expect(result.isSuccess, isFalse);
+      }
+    });
+
+    test('add_contact refuses bad input before touching the channel',
+        () async {
+      for (final params in [
+        <String, dynamic>{},
+        {'name': ''},
+      ]) {
+        final result = await registry.executeTool(
+          toolName: 'add_contact',
+          params: params,
+        );
+        expect(result.status, ToolStatus.failed);
+        expect(result.isSuccess, isFalse);
+      }
+    });
+
+    test('set_alarm refuses bad input before touching the channel', () async {
+      for (final params in [
+        <String, dynamic>{},
+        {'time': 'not a time'},
+        {'time': '25:00'},
+        {'time': '7:5'},
+        {'time': ''},
+      ]) {
+        final result = await registry.executeTool(
+          toolName: 'set_alarm',
+          params: params,
+        );
+        expect(result.status, ToolStatus.failed);
+        expect(result.isSuccess, isFalse);
+      }
     });
   });
 }

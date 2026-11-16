@@ -20,6 +20,40 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
+    <!-- Silent tools (build #110, Nov 16, 2026): Aaron wants Cypher to
+         send with no tap, so these four tools use privileged APIs
+         directly instead of system Intents. All four are dangerous
+         permissions — the Dart side requests each at runtime on first
+         use (permission_handler, mirroring the location service), and a
+         denial fails gracefully with a message, never a crash.
+         - SEND_SMS: SmsManager sends the text. The native side also
+           looks a contact name up to a number, so READ_CONTACTS is
+           declared too (the contacts request covers both).
+         - READ_CALENDAR + WRITE_CALENDAR: ContentResolver insert. Both
+           must be declared: permission_handler's calendarFullAccess
+           requests the pair together and returns denied immediately if
+           either is missing from the manifest.
+         - READ_CONTACTS + WRITE_CONTACTS: contact insert (write) and
+           the SMS name lookup (read); one contacts request covers both.
+         - SET_ALARM is normal (auto-granted). USE_EXACT_ALARM is normal
+           too (auto-granted on Android 13+), and SCHEDULE_EXACT_ALARM is
+           the user-granted special permission for Android 12 — both are
+           declared so AlarmManager exact alarms work on every version;
+           on this phone (Android 14) USE_EXACT_ALARM already covers it.
+         - WAKE_LOCK (normal, auto-granted): the alarm receiver holds a
+           partial wake lock while the alarm tone plays, so the phone
+           stays awake until it is dismissed. Sideloaded debug APK, so
+           no Play Store review concern. -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <uses-permission android:name="android.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- All-files access (build #95): listing a shared-storage folder
          with raw file paths needs this on Android 11+ — without the
          grant, Directory.list() yields nothing and Projects reports a
@@ -42,14 +76,15 @@
     </queries>
 
     <!-- Removed for v1 (held until testing is done):
-         SEND_SMS, READ_CONTACTS, WRITE_CONTACTS, READ_CALENDAR, WRITE_CALENDAR,
-         SET_ALARM, USE_EXACT_ALARM,
-         QUERY_ALL_PACKAGES, WAKE_LOCK
+         QUERY_ALL_PACKAGES
          (FOREGROUND_SERVICE, FOREGROUND_SERVICE_MICROPHONE and POST_NOTIFICATIONS
          came back for Cypher always-listening; ACCESS_FINE_LOCATION and
          ACCESS_COARSE_LOCATION came back for live location;
          MANAGE_EXTERNAL_STORAGE came back in build #95 for the Projects
-         folder — see above.) -->
+         folder — see above; SEND_SMS, READ_CONTACTS, WRITE_CONTACTS,
+         READ_CALENDAR, WRITE_CALENDAR, SET_ALARM, USE_EXACT_ALARM,
+         SCHEDULE_EXACT_ALARM and WAKE_LOCK came back in build #110 for
+         the four silent tools — see above.) -->
     <application
         android:label="Clawzilla"
         android:icon="@mipmap/ic_launcher"
@@ -136,6 +171,16 @@
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="microphone|dataSync"
+            android:exported="false" />
+
+        <!-- Alarm receiver (build #110): AlarmManager fires this when a
+             silent set_alarm goes off. Not exported — only explicit
+             intents from this app reach it — and no intent-filter, for
+             the same reason. It plays the alarm tone on loop and posts
+             the dismiss notification; it holds a partial wake lock while
+             ringing. -->
+        <receiver
+            android:name=".AlarmReceiver"
             android:exported="false" />
 
         <meta-data

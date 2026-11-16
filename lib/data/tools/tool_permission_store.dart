@@ -42,25 +42,57 @@ class ToolPermissionStore {
   /// Aaron approved live location (Nov 11, 2026) so the model can know
   /// where he is and the temperature. It defaults to ask, and the
   /// location permission itself is requested at runtime.
-  static const Set<String> v1GatedTools = {
+  ///
+  /// The last four — send_sms, create_calendar_event, add_contact,
+  /// set_alarm — left the gate in build #110 (Nov 16, 2026), when Aaron
+  /// approved them all and chose silent execution ("I want Cypher to
+  /// send, no tap for me"). They are NOT in [silentTools] by accident:
+  /// see below. The gate itself is kept empty rather than deleted: if a
+  /// tool ever needs gating again, adding its name back here re-blocks
+  /// it everywhere (model list, execution, Tools screen) in one place.
+  static const Set<String> v1GatedTools = {};
+
+  static bool isV1Gated(String toolName) => v1GatedTools.contains(toolName);
+
+  /// Tools that run silently: no in-app ask prompt, no system UI to
+  /// confirm in. Aaron chose this explicitly (Nov 16, 2026, build #110)
+  /// for all four — he wants Cypher to send the SMS, create the event,
+  /// add the contact, and set the alarm with no tap from him.
+  ///
+  /// The risk is stated here on purpose, not hidden: with no
+  /// confirmation step, a wrong recipient or a wrong time goes out
+  /// exactly as the model called it. The registry guards this the only
+  /// way it can — a tool reports success only when the write actually
+  /// happened, and a failure reports clearly — but it cannot catch a
+  /// wrong-but-valid call. Aaron can flip any of these back to ask (or
+  /// block) on the Tools screen; a stored value is respected over this
+  /// default (see [load]).
+  static const Set<String> silentTools = {
     'send_sms',
     'create_calendar_event',
     'add_contact',
     'set_alarm',
   };
 
-  static bool isV1Gated(String toolName) => v1GatedTools.contains(toolName);
+  static bool isSilent(String toolName) => silentTools.contains(toolName);
 
   final Map<String, ToolPermission> _cache = {};
 
-  /// Every tool starts at [ToolPermission.ask].
+  /// Every tool starts at [ToolPermission.ask] — except the four in
+  /// [silentTools], which start at [ToolPermission.allow] by Aaron's
+  /// explicit choice (Nov 16, 2026): he wants no tap for those.
   ///
-  /// Not `allow`: a default of allow means a fresh install silently executes
-  /// whatever the model decides to call. `ask` costs one tap and is the only
-  /// honest default when the action leaves the device (SMS, contacts) or
-  /// reveals where the user is.
-  static ToolPermission defaultFor(String toolName) =>
-      isV1Gated(toolName) ? ToolPermission.block : ToolPermission.ask;
+  /// Not `allow` generally: a default of allow means a fresh install
+  /// silently executes whatever the model decides to call. `ask` costs
+  /// one tap and is the only honest default when the action leaves the
+  /// device (SMS, contacts) or reveals where the user is — unless the
+  /// user has said otherwise for that tool, which Aaron has for the
+  /// silent four.
+  static ToolPermission defaultFor(String toolName) {
+    if (isV1Gated(toolName)) return ToolPermission.block;
+    if (isSilent(toolName)) return ToolPermission.allow;
+    return ToolPermission.ask;
+  }
 
   /// Reads persisted permissions. Unknown tools keep the default.
   Future<void> load(Iterable<String> toolNames) async {
