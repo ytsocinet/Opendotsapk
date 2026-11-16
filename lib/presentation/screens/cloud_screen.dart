@@ -405,8 +405,9 @@ class _CloudModelsScreenState extends ConsumerState<CloudModelsScreen> {
       }
       final cfg = await SecureStore.instance.providerConfig(p.id);
       final stored = cfg['model'] as String?;
-      // OpenRouter and Ollama ids fetched live are valid even when they
-      // are not in the pinned catalog; anything else unknown is retired.
+      // OpenRouter, Ollama and Custom ids fetched live are valid even
+      // when they are not in the pinned catalog; anything else unknown
+      // is retired.
       final retired = stored != null && !p.acceptsStoredModel(stored);
       final modelId = retired ? p.defaultModel.id : (stored ?? p.defaultModel.id);
       try {
@@ -645,6 +646,7 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
     });
     if (widget.provider.id == 'openrouter') _fetchOpenRouterModels();
     if (widget.provider.id == 'ollama') _fetchOllamaModels();
+    if (widget.provider.id == 'custom') _fetchCustomModels();
   }
 
   /// Pull OpenRouter's live model list (public endpoint, no key). A
@@ -682,6 +684,30 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
     try {
       final baseUrl = await _effectiveBaseUrl();
       final models = await CloudService.fetchOllamaModels(baseUrl);
+      if (!mounted) return;
+      setState(() => _fetchedModels = models);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _fetchError = '$e');
+    } finally {
+      if (mounted) setState(() => _fetchingModels = false);
+    }
+  }
+
+  /// Pull a Custom endpoint's live model list (build #105): same
+  /// GET {baseUrl}/models as Ollama, at whatever base URL is in force —
+  /// the typed field first, so a just-typed but unsaved URL is what gets
+  /// asked. A failure leaves the pinned 'default' in place and shows
+  /// the error instead of the list, exactly like the Ollama fetch above.
+  Future<void> _fetchCustomModels() async {
+    if (_fetchingModels) return;
+    setState(() {
+      _fetchingModels = true;
+      _fetchError = null;
+    });
+    try {
+      final baseUrl = await _effectiveBaseUrl();
+      final models = await CloudService.fetchCustomModels(baseUrl);
       if (!mounted) return;
       setState(() => _fetchedModels = models);
     } catch (e) {
@@ -744,6 +770,10 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
           if (widget.provider.id == 'ollama') ...[
             const SizedBox(height: 20),
             _ollamaModelsSection(activeModel),
+          ],
+          if (widget.provider.id == 'custom') ...[
+            const SizedBox(height: 20),
+            _customModelsSection(activeModel),
           ],
         ],
       ),
@@ -921,7 +951,22 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
     );
   }
 
-  /// A live model list shared by OpenRouter and Ollama: the fetched
+  /// The live Custom list (build #105): every model the endpoint's
+  /// server has, fetched from GET {baseUrl}/models. Tapping one
+  /// selects it exactly like a catalog model — the router accepts the
+  /// stored id even though it is not the pinned 'default'.
+  Widget _customModelsSection(String? activeModel) {
+    return _liveModelsSection(
+      activeModel,
+      subtitle: 'Live from this endpoint — tap one to use it.',
+      emptyText: 'No models on this server yet.',
+      errorSuffix:
+          'Check the Base URL above and that the server is running.',
+      onRefresh: _fetchCustomModels,
+    );
+  }
+
+  /// A live model list shared by OpenRouter, Ollama and Custom: the fetched
   /// models the pinned catalog does not already show, with a search box
   /// and a refresh button. A failed fetch leaves the pinned catalog in
   /// place and shows the error instead of the list.
@@ -1135,6 +1180,7 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
     // The server may have changed with the URL — re-list its models so
     // the picker below is not showing the old server's models.
     if (widget.provider.id == 'ollama') _fetchOllamaModels();
+    if (widget.provider.id == 'custom') _fetchCustomModels();
   }
 
   /// The base URL the provider will actually be dialed at: whatever is typed
@@ -1225,9 +1271,10 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
       // A saved model can die underneath the app — providers retire IDs
       // (Gemini 2.0 Flash, Groq's Llamas) — so a stored id that is no
       // longer in the provider's list falls back to the default instead
-      // of sending a 404 to the API on every cloud turn. OpenRouter and
-      // Ollama are the exceptions: their lists are fetched live, so a
-      // stored id that is not in the pinned catalog is still a real model.
+      // of sending a 404 to the API on every cloud turn. OpenRouter,
+      // Ollama and Custom are the exceptions: their lists are fetched
+      // live, so a stored id that is not in the pinned catalog is still
+      // a real model.
       final stored = cfg['model'] as String?;
       final modelId = stored != null && p.acceptsStoredModel(stored)
           ? stored

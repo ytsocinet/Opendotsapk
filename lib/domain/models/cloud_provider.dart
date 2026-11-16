@@ -91,13 +91,14 @@ class CloudProvider {
 
   /// Whether a stored model id is usable for this provider, even when it
   /// is not in the hardcoded catalog. OpenRouter's list is fetched live
-  /// from their /models endpoint, and Ollama's list is fetched live from
-  /// the user's own server, so a stored id the app has never seen is
-  /// still a real model on that server; every other provider only accepts
-  /// ids from its pinned list.
+  /// from their /models endpoint, and the Ollama and Custom lists are
+  /// fetched live from the server at the saved base URL, so a stored id
+  /// the app has never seen is still a real model on that server; every
+  /// other provider only accepts ids from its pinned list.
   bool acceptsStoredModel(String modelId) {
     if (modelById(modelId) != null) return true;
-    return (id == 'openrouter' || id == 'ollama') && modelId.isNotEmpty;
+    return (id == 'openrouter' || id == 'ollama' || id == 'custom') &&
+        modelId.isNotEmpty;
   }
 
   /// First model, used as the default when a provider is first configured.

@@ -1,15 +1,16 @@
 /// Build #103: the Ollama provider lists the server's live models.
+/// Build #105 extends the same live list to the Custom provider.
 ///
 /// Covers the two units the feature rests on:
 ///  * `CloudProvider.acceptsStoredModel` — the router's gate: an unlisted
-///    id is now accepted for Ollama (like OpenRouter), so a model picked
-///    from the server's live list survives `_refreshRouter` instead of
-///    falling back to the pinned llama3.2. Every other provider still
-///    only accepts its pinned ids.
+///    id is now accepted for Ollama and Custom (like OpenRouter), so a
+///    model picked from the server's live list survives `_refreshRouter`
+///    instead of falling back to the pinned llama3.2 or 'default'. Every
+///    other provider still only accepts its pinned ids.
 ///  * `CloudService.parseOpenAiModelList` — the /v1/models payload parser
-///    shared by the OpenRouter and Ollama live lists, tested against a
-///    realistic Ollama-shaped payload (ids only, no names, no context
-///    lengths) without a network call. The router's keep-vs-fallback
+///    shared by the OpenRouter, Ollama and Custom live lists, tested
+///    against a realistic Ollama-shaped payload (ids only, no names, no
+///    context lengths) without a network call. The router's keep-vs-fallback
 ///    decision itself lives in the screen's private `_refreshRouter` and
 ///    is covered here through the gate it consults.
 library;
@@ -23,6 +24,7 @@ void main() {
     final ollama = CloudCatalog.byId('ollama')!;
     final gemini = CloudCatalog.byId('gemini')!;
     final openRouter = CloudCatalog.byId('openrouter')!;
+    final custom = CloudCatalog.byId('custom')!;
 
     test('ollama accepts an unlisted model id from its server', () {
       expect(ollama.acceptsStoredModel('my-server-model:3b'), isTrue);
@@ -43,6 +45,18 @@ void main() {
 
     test('openrouter still accepts any non-empty id', () {
       expect(openRouter.acceptsStoredModel('some/future-model'), isTrue);
+    });
+
+    test('custom accepts an unlisted model id from its server', () {
+      expect(custom.acceptsStoredModel('my-server-model:3b'), isTrue);
+    });
+
+    test("custom still accepts its pinned 'default'", () {
+      expect(custom.acceptsStoredModel('default'), isTrue);
+    });
+
+    test('custom rejects an empty model id', () {
+      expect(custom.acceptsStoredModel(''), isFalse);
     });
   });
 

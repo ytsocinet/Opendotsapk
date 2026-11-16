@@ -180,7 +180,23 @@ class CloudService {
   /// payload parses exactly like OpenRouter's. [baseUrl] is the
   /// OpenAI-compatible base (already ending in /v1) — the endpoint is
   /// {baseUrl}/models. No key is sent: a LAN server is usually open.
-  static Future<List<CloudModel>> fetchOllamaModels(String baseUrl) async {
+  static Future<List<CloudModel>> fetchOllamaModels(String baseUrl) =>
+      _fetchOpenAiCompatibleModels(baseUrl, 'Ollama');
+
+  /// Fetch a Custom endpoint's live model list (build #105). Same
+  /// OpenAI-compatible /models shape as Ollama; [baseUrl] is the saved
+  /// (or typed) base URL. No key is sent: a self-hosted server is
+  /// usually open.
+  static Future<List<CloudModel>> fetchCustomModels(String baseUrl) =>
+      _fetchOpenAiCompatibleModels(baseUrl, 'Custom');
+
+  /// Shared GET {baseUrl}/models for the Ollama and Custom live lists.
+  /// [source] names the provider in errors only, so the Ollama strings
+  /// are unchanged.
+  static Future<List<CloudModel>> _fetchOpenAiCompatibleModels(
+    String baseUrl,
+    String source,
+  ) async {
     final trimmed = baseUrl.endsWith('/')
         ? baseUrl.substring(0, baseUrl.length - 1)
         : baseUrl;
@@ -188,11 +204,11 @@ class CloudService {
     final res = await http.get(uri).timeout(const Duration(seconds: 15));
     if (res.statusCode != 200) {
       throw CloudException(
-        'Ollama model list failed (HTTP ${res.statusCode})',
+        '$source model list failed (HTTP ${res.statusCode})',
         statusCode: res.statusCode,
       );
     }
-    return parseOpenAiModelList(jsonDecode(res.body), 'Ollama');
+    return parseOpenAiModelList(jsonDecode(res.body), source);
   }
 
   /// Parse an OpenAI-compatible /models payload — `{"data": [...]}` with
