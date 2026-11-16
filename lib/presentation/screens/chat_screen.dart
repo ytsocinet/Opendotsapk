@@ -69,6 +69,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _isThinking = false;
   String _currentResponse = '';
 
+  /// Which engine answered the last routed turn (build #106), e.g.
+  /// "Custom · qwen2.5-coder:3b" or "On-device · gemma-3-1b". Shown in
+  /// the header so a cloud turn that silently ran locally is visible.
+  /// Null until the first routed turn — a fresh open stays quiet.
+  String? _lastEngineLabel;
+
   /// Where the user is and what the temperature is, for the system prompt.
   /// Fetched in the background (free Open-Meteo + Nominatim, no key) and
   /// cached 30 minutes; null until the first fetch lands or when the
@@ -389,6 +395,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           children: [
             _ChatHeader(
               modelPath: modelPath,
+              engineLabel: _lastEngineLabel,
               alwaysListening:
                   settings['always_listening'] as bool? ?? false,
               onToggleWake: _toggleWakeListening,
@@ -863,7 +870,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       hasImages: hasImages,
       localVisionReady: llmService.isVisionLoaded,
       localModelReady: llmService.isLoaded,
+      // The provider the user explicitly picked on the Cloud screen
+      // (build #106): without this the router always used the first
+      // candidate, so the saved Gemini key outranked the HP.
+      preferredProviderId: settings['active_cloud_provider'] as String?,
     );
+
+    // Engine label (build #106): the header shows which engine this turn
+    // is using, so a cloud turn that silently ran locally is visible
+    // instead of only discoverable from which timer fired. Refused turns
+    // leave the previous label alone — nothing answered.
+    final localPath = settings['model_path'] as String?;
+    final engineLabel = engineLabelFor(
+      decision,
+      localModelName: localPath == null || localPath.trim().isEmpty
+          ? null
+          : ModelPreflight.friendlyName(localPath.split('/').last),
+    );
+    if (engineLabel != null && mounted) {
+      setState(() => _lastEngineLabel = engineLabel);
+    }
 
     // Background mode: keep the app alive while Cypher works on this
     // turn, so Android cannot sleep it mid-reply. Armed here, after
@@ -1009,8 +1035,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         await _finishAssistantMessage();
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text('Error: $e')));
+          // Build #106: the error must stay up long enough to read — the
+          // default ~4s is why "it goes away too fast".
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 10),
+              content: Text('Error: $e'),
+            ),
+          );
         }
       } finally {
         if (mounted) {
@@ -1319,8 +1351,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     } catch (e) {
       Log.w('cloud turn failed: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+        // Build #106: same 10s as the local error — the default ~4s is
+        // too short to read a timeout message.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 10),
+            content: Text('$e'),
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -1909,6 +1947,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 class _ChatHeader extends StatefulWidget {
   const _ChatHeader({
     required this.modelPath,
+    this.engineLabel,
     required this.alwaysListening,
     required this.onToggleWake,
     required this.onOpenMenu,
@@ -1918,6 +1957,11 @@ class _ChatHeader extends StatefulWidget {
   });
 
   final String? modelPath;
+
+  /// Which engine answered the last turn (build #106), e.g.
+  /// "Custom · qwen2.5-coder:3b" or "On-device · gemma-3-1b". Null
+  /// until the first routed turn, so a fresh open stays quiet.
+  final String? engineLabel;
 
   /// Drives the WAKE: ON/OFF pill. Read from settings by the parent so the
   /// header itself stays a plain StatefulWidget.
@@ -1989,8 +2033,9 @@ class _ChatHeaderState extends State<_ChatHeader>
                 bottom: false,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-                  // Clawziod look: the header is three rows — the title row,
-                  // then the weights line, then the WAKE pill.
+                  // Clawziod look: the header is four rows — the title row,
+                  // then the weights line, then the engine line (build
+                  // #106), then the WAKE pill.
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -2149,8 +2194,20 @@ class _ChatHeaderState extends State<_ChatHeader>
                               color: scheme.onSurfaceVariant,
                             ),
                       ),
+                      // Engine line (build #106): which engine answered the
+                      // last turn. Hidden until the first routed turn.
+                      if (widget.engineLabel != null)
+                        Text(
+                          'ENGINE: ${widget.engineLabel}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                        ),
                       const SizedBox(height: 4),
-                      // Pills: wake state on a third row in a Wrap so it
+                      // Pills: wake state on the last row in a Wrap so it
                       // flows instead of squeezing. The AIR-GAP badge is
                       // gone — it was a label, not a control, and the app
                       // already runs local inference by default.

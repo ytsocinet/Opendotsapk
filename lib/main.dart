@@ -104,6 +104,18 @@ Future<void> main() async {
     Log.w('startup routing probe failed, defaulting to online: $e');
   }
 
+  // Router candidates live only in memory (build #106): without a refresh
+  // here, every restart left the router with no cloud at all until the
+  // user re-saved a URL or re-tapped a model on the Cloud screen. The
+  // refresh reads stored config only — no network — so it cannot hang
+  // startup the way a live probe could. Guarded like the blocks above:
+  // a keystore wobble must never stop the app from opening.
+  try {
+    await RouterService.instance.refreshCandidates();
+  } catch (e) {
+    Log.w('startup router refresh failed, cloud turns stay local: $e');
+  }
+
   // WorkManager can fail on some devices/emulators; never let it block startup.
   try {
     await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);

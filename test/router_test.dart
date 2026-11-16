@@ -26,6 +26,14 @@ void main() {
     modelId: 'claude-3-5-haiku-latest',
   );
 
+  ({CloudProvider provider, String modelId}) gemini() =>
+      (provider: CloudCatalog.byId('gemini')!, modelId: 'gemini-3.8-flash');
+
+  ({CloudProvider provider, String modelId}) custom() => (
+    provider: CloudCatalog.byId('custom')!,
+    modelId: 'qwen2.5-coder:3b',
+  );
+
   const auto = RoutingConfig(mode: 'auto');
 
   group('hard rules', () {
@@ -286,6 +294,203 @@ void main() {
         final d = router.decide(prompt: p, config: auto, localModelReady: true);
         expect(d.reason, isNotEmpty);
       }
+    });
+  });
+
+  group('preferred provider (build #106)', () {
+    test('picked provider wins over the first candidate', () {
+      // The bug this fixes: the saved Gemini key outranked Ollama/Custom
+      // in catalog order, so cloud turns went to Gemini and stalled on
+      // its 60s timer while the HP was never asked.
+      router.setCandidates([gemini(), custom()]);
+      final d = router.decide(
+        prompt: 'write a complex algorithm with a proof',
+        config: auto,
+        localModelReady: true,
+        preferredProviderId: 'custom',
+      );
+      expect(d.isCloud, isTrue);
+      expect(d.provider?.id, 'custom');
+      expect(d.modelId, 'qwen2.5-coder:3b');
+    });
+
+    test('a short hello goes to the picked provider in auto mode', () {
+      // Without a pick the short-prompt tiebreaker keeps "hello" local.
+      // With one, the pick itself counts toward cloud.
+      router.setCandidates([gemini(), custom()]);
+      final d = router.decide(
+        prompt: 'hello',
+        config: auto,
+        localModelReady: true,
+        preferredProviderId: 'custom',
+      );
+      expect(d.isCloud, isTrue);
+      expect(d.provider?.id, 'custom');
+      expect(d.reason, contains('cloud provider picked'));
+    });
+
+    test('falls back to the first candidate when the pick is missing', () {
+      router.setCandidates([gemini()]);
+      final d = router.decide(
+        prompt: 'x' * 2000,
+        config: auto,
+        localModelReady: true,
+        preferredProviderId: 'custom',
+      );
+      expect(d.isCloud, isTrue);
+      expect(d.provider?.id, 'gemini');
+      expect(d.modelId, 'gemini-3.8-flash');
+    });
+
+    test('personal-data turns stay local even with a pick', () {
+      router.setCandidates([gemini(), custom()]);
+      final d = router.decide(
+        prompt: 'my password is x',
+        config: auto,
+        localModelReady: true,
+        preferredProviderId: 'custom',
+      );
+      expect(d.isCloud, isFalse);
+    });
+
+    test('private mode still wins over a pick', () {
+      router.setCandidates([gemini(), custom()]);
+      final d = router.decide(
+        prompt: 'explain quantum computing in depth',
+        config: const RoutingConfig(mode: 'auto', privateMode: true),
+        localModelReady: true,
+        preferredProviderId: 'custom',
+      );
+      expect(d.isCloud, isFalse);
+      expect(d.reason.toLowerCase(), contains('private'));
+    });
+
+    test('cloud mode uses the picked provider', () {
+      router.setCandidates([gemini(), custom()]);
+      final d = router.decide(
+        prompt: 'hi',
+        config: const RoutingConfig(mode: 'cloud'),
+        localModelReady: true,
+        preferredProviderId: 'custom',
+      );
+      expect(d.isCloud, isTrue);
+      expect(d.provider?.id, 'custom');
+    });
+
+    test('no local model loaded uses the picked provider', () {
+      router.setCandidates([gemini(), custom()]);
+      final d = router.decide(
+        prompt: 'hello',
+        config: auto,
+        preferredProviderId: 'custom',
+      );
+      expect(d.isCloud, isTrue);
+      expect(d.provider?.id, 'custom');
+    });
+
+    test('no candidates still stays local even with a pick', () {
+      final d = router.decide(
+        prompt: 'hello',
+        config: auto,
+        localModelReady: true,
+        preferredProviderId: 'custom',
+      );
+      expect(d.isCloud, isFalse);
+      expect(d.reason, contains('No cloud model'));
+    });
+  });
+
+  group('refreshCandidates (build #106)', () {
+    test('rebuilds candidates from stored config', () async {
+      await router.refreshCandidates(
+        hasApiKey: (id) async => id == 'gemini' || id == 'custom',
+        providerConfig: (id) async => id == 'custom'
+            ? {'model': 'qwen2.5-coder:3b'}
+            : const <String, String>{},
+      );
+      expect(router.hasCloud, isTrue);
+      // Catalog order: gemini first, so a scoring turn uses it…
+      final scored = router.decide(
+        prompt: 'x' * 2000,
+        config: auto,
+        localModelReady: true,
+      );
+      expect(scored.isCloud, isTrue);
+      expect(scored.provider?.id, 'gemini');
+      // …but the stored custom model is kept for the picked provider.
+      final picked = router.decide(
+        prompt: 'hello',
+        config: auto,
+        localModelReady: true,
+        preferredProviderId: 'custom',
+      );
+      expect(picked.isCloud, isTrue);
+      expect(picked.provider?.id, 'custom');
+      expect(picked.modelId, 'qwen2.5-coder:3b');
+    });
+
+    test('a retired stored model falls back to the provider default', () async {
+      await router.refreshCandidates(
+        hasApiKey: (id) async => id == 'gemini',
+        providerConfig: (id) async => {'model': 'gemini-2.0-flash-retired'},
+      );
+      final d = router.decide(
+        prompt: 'x' * 2000,
+        config: auto,
+        localModelReady: true,
+      );
+      expect(d.isCloud, isTrue);
+      expect(d.modelId, 'gemini-3.8-flash');
+    });
+
+    test('key-optional providers are candidates without a key', () async {
+      await router.refreshCandidates(
+        hasApiKey: (id) async => false,
+        providerConfig: (id) async => const <String, String>{},
+      );
+      expect(router.hasCloud, isTrue);
+      final d = router.decide(
+        prompt: 'x' * 2000,
+        config: auto,
+        localModelReady: true,
+      );
+      expect(d.isCloud, isTrue);
+      // Ollama comes before Custom in catalog order.
+      expect(d.provider?.id, 'ollama');
+    });
+  });
+
+  group('engine label (build #106)', () {
+    test('a cloud decision names the provider and model', () {
+      final d = RouteDecision(
+        target: RouteTarget.cloud,
+        reason: 'Cloud mode is on',
+        provider: CloudCatalog.byId('gemini'),
+        modelId: 'gemini-3.8-flash',
+      );
+      expect(engineLabelFor(d), 'Google Gemini · gemini-3.8-flash');
+    });
+
+    test('a local decision names the loaded model', () {
+      const d = RouteDecision(target: RouteTarget.local, reason: 'On-device');
+      expect(
+        engineLabelFor(d, localModelName: 'gemma-3-1b'),
+        'On-device · gemma-3-1b',
+      );
+    });
+
+    test('a local decision without a loaded model reads plain', () {
+      const d = RouteDecision(target: RouteTarget.local, reason: 'On-device');
+      expect(engineLabelFor(d), 'On-device');
+      expect(engineLabelFor(d, localModelName: ''), 'On-device');
+    });
+
+    test('a refused decision has no label', () {
+      const d = RouteDecision(
+        target: RouteTarget.refused,
+        reason: 'No vision model',
+      );
+      expect(engineLabelFor(d), isNull);
     });
   });
 

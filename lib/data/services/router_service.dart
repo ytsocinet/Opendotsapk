@@ -17,12 +17,15 @@
 ///  * Long inputs, code, and explicit "think hard" phrasing push to cloud.
 ///  * Short, conversational, or personal-data turns stay local.
 ///  * Battery saver and metered networks push to local.
+///  * An explicitly picked cloud provider counts toward cloud, so a short
+///    turn still reaches the provider the user pointed at (build #106).
 library;
 
 import 'dart:io';
 
 import '../../core/utils/log.dart';
 import '../../domain/models/cloud_provider.dart';
+import 'secure_store.dart';
 
 enum RouteTarget { local, cloud, refused }
 
@@ -142,6 +145,46 @@ class RouterService {
     Log.i('router: ${list.length} cloud candidate(s) configured');
   }
 
+  /// Rebuild the candidate list from stored provider config (build #106).
+  ///
+  /// This is the logic the Cloud screen used to run on key save, key
+  /// remove, base-URL save and model pick — extracted so app startup can
+  /// run it too. Candidates live only in memory, so without a refresh at
+  /// startup every restart left the router with no cloud at all until the
+  /// user re-saved something. Reads stored config only: no network calls,
+  /// so it cannot hang startup the way a live probe could.
+  ///
+  /// The [hasApiKey] and [providerConfig] overrides are the test seam
+  /// (same pattern as [dnsLookupOverride]): production leaves them null
+  /// and the real keystore is read.
+  Future<void> refreshCandidates({
+    Future<bool> Function(String providerId)? hasApiKey,
+    Future<Map<String, String>> Function(String providerId)? providerConfig,
+  }) async {
+    final hasKey = hasApiKey ?? SecureStore.instance.hasApiKey;
+    final readConfig = providerConfig ?? SecureStore.instance.providerConfig;
+    final candidates = <({CloudProvider provider, String modelId})>[];
+    for (final p in CloudCatalog.providers) {
+      final has = await hasKey(p.id);
+      if (!has && !CloudCatalog.keyOptional.contains(p.id)) continue;
+
+      final cfg = await readConfig(p.id);
+      // A saved model can die underneath the app — providers retire IDs
+      // (Gemini 2.0 Flash, Groq's Llamas) — so a stored id that is no
+      // longer in the provider's list falls back to the default instead
+      // of sending a 404 to the API on every cloud turn. OpenRouter,
+      // Ollama and Custom are the exceptions: their lists are fetched
+      // live, so a stored id that is not in the pinned catalog is still
+      // a real model.
+      final stored = cfg['model'] as String?;
+      final modelId = stored != null && p.acceptsStoredModel(stored)
+          ? stored
+          : p.defaultModel.id;
+      candidates.add((provider: p, modelId: modelId));
+    }
+    setCandidates(candidates);
+  }
+
   /// True when at least one cloud provider is configured. On a fresh install
   /// this is false, and [decide] then refuses cloud for every turn.
   bool get hasCloud => _candidates.isNotEmpty;
@@ -159,12 +202,18 @@ class RouterService {
   ///
   /// [prompt] is the user's text, [hasImages] whether a picture is attached,
   /// and [localVisionReady] whether the on-device model can actually see.
+  /// [preferredProviderId] is the provider the user explicitly picked on
+  /// the Cloud screen (`active_cloud_provider`): when it has a configured
+  /// candidate, cloud turns use it instead of the first candidate, and in
+  /// auto mode the pick itself counts as a reason to go cloud — a short
+  /// "hello" still reaches the picked provider.
   RouteDecision decide({
     required String prompt,
     required RoutingConfig config,
     bool hasImages = false,
     bool localVisionReady = false,
     bool localModelReady = false,
+    String? preferredProviderId,
   }) {
     // ---- hard rules -------------------------------------------------------
 
@@ -226,6 +275,24 @@ class RouterService {
       );
     }
 
+    // The provider the user explicitly picked on the Cloud screen
+    // (`active_cloud_provider`), when it is actually configured.
+    // Everything below uses it instead of `_candidates.first`, so a
+    // picked Custom/HP endpoint is used instead of whatever provider
+    // happens to come first in the catalog (build #106: the saved
+    // Gemini key used to outrank Ollama/Custom, so cloud turns went
+    // to Gemini and stalled on its 60s timer while the HP was never
+    // asked). A pick that is not configured falls back to the first
+    // candidate — never to local on the pick's account.
+    ({CloudProvider provider, String modelId})? preferred;
+    for (final c in _candidates) {
+      if (c.provider.id == preferredProviderId) {
+        preferred = c;
+        break;
+      }
+    }
+    final pick = preferred ?? _candidates.first;
+
     // ---- explicit user mode ----------------------------------------------
     if (config.mode == 'local') {
       return const RouteDecision(
@@ -236,7 +303,7 @@ class RouterService {
     }
 
     if (!localModelReady) {
-      final c = _candidates.first;
+      final c = pick;
       return RouteDecision(
         target: RouteTarget.cloud,
         provider: c.provider,
@@ -247,7 +314,7 @@ class RouterService {
     }
 
     if (config.mode == 'cloud') {
-      final c = _candidates.first;
+      final c = pick;
       return RouteDecision(
         target: RouteTarget.cloud,
         provider: c.provider,
@@ -258,16 +325,27 @@ class RouterService {
     }
 
     // ---- auto: score it ---------------------------------------------------
-    return _score(prompt, config, hasImages: hasImages);
+    return _score(prompt, config, hasImages: hasImages, preferred: preferred);
   }
 
   RouteDecision _score(
     String prompt,
     RoutingConfig config, {
     bool hasImages = false,
+    ({CloudProvider provider, String modelId})? preferred,
   }) {
     var cloudScore = 0;
     final reasons = <String>[];
+
+    // An explicit pick is itself a reason to go cloud (build #106): the
+    // user pointed at a provider, so a short conversational turn still
+    // goes there instead of staying local on the tiebreaker below. Worth
+    // the same as a long input — a personal-data turn (-4) or a metered
+    // connection (-3) still keeps the turn local.
+    if (preferred != null) {
+      cloudScore += 3;
+      reasons.add('cloud provider picked');
+    }
 
     if (prompt.length > config.longInputThreshold) {
       cloudScore += 3;
@@ -363,7 +441,7 @@ class RouterService {
     }
 
     if (cloudScore >= 3) {
-      final c = _candidates.first;
+      final c = preferred ?? _candidates.first;
       final why = reasons.isEmpty
           ? 'better suited to a larger model'
           : reasons.take(2).join(', ');
@@ -421,4 +499,19 @@ class RouterService {
     }
     return false;
   }
+}
+
+/// Header label for the engine that answered a turn (build #106), or null
+/// when no engine answered — a refused turn leaves the previous label
+/// alone. Cloud turns read "Custom · qwen2.5-coder:3b"; local turns read
+/// "On-device", plus the friendly name of the loaded model when there is
+/// one. [localModelName] is that friendly name, not a file path.
+String? engineLabelFor(RouteDecision decision, {String? localModelName}) {
+  if (decision.isRefused) return null;
+  if (decision.isCloud) {
+    return '${decision.provider!.displayName} · ${decision.modelId}';
+  }
+  return localModelName == null || localModelName.isEmpty
+      ? 'On-device'
+      : 'On-device · $localModelName';
 }

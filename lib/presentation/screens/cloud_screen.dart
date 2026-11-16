@@ -18,7 +18,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/motion.dart';
-import '../../core/utils/log.dart';
 import '../../data/services/cloud_service.dart';
 import '../../data/services/router_service.dart';
 import '../../data/services/secure_store.dart';
@@ -1261,27 +1260,8 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
   }
 
   /// Push the saved providers into the router so its decisions reflect reality.
-  Future<void> _refreshRouter() async {
-    final candidates = <({CloudProvider provider, String modelId})>[];
-    for (final p in CloudCatalog.providers) {
-      final has = await SecureStore.instance.hasApiKey(p.id);
-      if (!has && !CloudCatalog.keyOptional.contains(p.id)) continue;
-
-      final cfg = await SecureStore.instance.providerConfig(p.id);
-      // A saved model can die underneath the app — providers retire IDs
-      // (Gemini 2.0 Flash, Groq's Llamas) — so a stored id that is no
-      // longer in the provider's list falls back to the default instead
-      // of sending a 404 to the API on every cloud turn. OpenRouter,
-      // Ollama and Custom are the exceptions: their lists are fetched
-      // live, so a stored id that is not in the pinned catalog is still
-      // a real model.
-      final stored = cfg['model'] as String?;
-      final modelId = stored != null && p.acceptsStoredModel(stored)
-          ? stored
-          : p.defaultModel.id;
-      candidates.add((provider: p, modelId: modelId));
-    }
-    RouterService.instance.setCandidates(candidates);
-    Log.i('cloud: router now has ${candidates.length} candidate(s)');
-  }
+  /// Push the saved providers into the router so its decisions reflect reality.
+  /// Delegates to [RouterService.refreshCandidates] (build #106) — the same
+  /// logic, shared with the startup refresh in main.dart.
+  Future<void> _refreshRouter() => RouterService.instance.refreshCandidates();
 }

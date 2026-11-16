@@ -11,8 +11,9 @@
 ///    shared by the OpenRouter, Ollama and Custom live lists, tested
 ///    against a realistic Ollama-shaped payload (ids only, no names, no
 ///    context lengths) without a network call. The router's keep-vs-fallback
-///    decision itself lives in the screen's private `_refreshRouter` and
-///    is covered here through the gate it consults.
+///    decision itself lives in `RouterService.refreshCandidates`
+///    (build #106: moved out of the screen's private `_refreshRouter`)
+///    and is covered by its tests in router_test.dart.
 library;
 
 import 'package:clawzilla/data/services/cloud_service.dart';
