@@ -175,26 +175,40 @@ class CloudService {
     return text.trim();
   }
 
-  /// Fetch OpenRouter's live model list. The endpoint is public — no key
-  /// needed — so the list can be refreshed without a saved key. Entries
-  /// carry no prices (the cost estimator only knows the pinned catalog),
-  /// and the display name falls back to the id when OpenRouter sends none.
-  static Future<List<CloudModel>> fetchOpenRouterModels() async {
-    final uri = Uri.parse('https://openrouter.ai/api/v1/models');
-    final res =
-        await http.get(uri).timeout(const Duration(seconds: 15));
+  /// Fetch a self-hosted Ollama / LM Studio server's live model list.
+  /// The server speaks the OpenAI-compatible /models shape, so the
+  /// payload parses exactly like OpenRouter's. [baseUrl] is the
+  /// OpenAI-compatible base (already ending in /v1) — the endpoint is
+  /// {baseUrl}/models. No key is sent: a LAN server is usually open.
+  static Future<List<CloudModel>> fetchOllamaModels(String baseUrl) async {
+    final trimmed = baseUrl.endsWith('/')
+        ? baseUrl.substring(0, baseUrl.length - 1)
+        : baseUrl;
+    final uri = Uri.parse('$trimmed/models');
+    final res = await http.get(uri).timeout(const Duration(seconds: 15));
     if (res.statusCode != 200) {
       throw CloudException(
-        'OpenRouter model list failed (HTTP ${res.statusCode})',
+        'Ollama model list failed (HTTP ${res.statusCode})',
         statusCode: res.statusCode,
       );
     }
-    final decoded = jsonDecode(res.body);
+    return parseOpenAiModelList(jsonDecode(res.body), 'Ollama');
+  }
+
+  /// Parse an OpenAI-compatible /models payload — `{"data": [...]}` with
+  /// an `id` per entry — into models. Shared by the OpenRouter and
+  /// Ollama live lists; public so it can be unit-tested without a
+  /// network call. Entries carry no prices (the cost estimator only
+  /// knows the pinned catalog), the display name falls back to the id
+  /// when the server sends none, and the context length defaults to
+  /// 128k when it is missing (Ollama sends neither).
+  static List<CloudModel> parseOpenAiModelList(
+    Object? decoded,
+    String source,
+  ) {
     final data = decoded is Map ? decoded['data'] : null;
     if (data is! List) {
-      throw const CloudException(
-        'OpenRouter sent an unexpected model list.',
-      );
+      throw CloudException('$source sent an unexpected model list.');
     }
     final models = <CloudModel>[];
     for (final entry in data) {
@@ -207,13 +221,30 @@ class CloudService {
         CloudModel(
           id: id,
           displayName: name is String && name.isNotEmpty ? name : id,
-          contextTokens:
-              contextLength is int && contextLength > 0 ? contextLength : 128000,
+          contextTokens: contextLength is int && contextLength > 0
+              ? contextLength
+              : 128000,
         ),
       );
     }
     models.sort((a, b) => a.id.compareTo(b.id));
     return models;
+  }
+
+  /// Fetch OpenRouter's live model list. The endpoint is public — no key
+  /// needed — so the list can be refreshed without a saved key. Entries
+  /// carry no prices (the cost estimator only knows the pinned catalog),
+  /// and the display name falls back to the id when OpenRouter sends none.
+  static Future<List<CloudModel>> fetchOpenRouterModels() async {
+    final uri = Uri.parse('https://openrouter.ai/api/v1/models');
+    final res = await http.get(uri).timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw CloudException(
+        'OpenRouter model list failed (HTTP ${res.statusCode})',
+        statusCode: res.statusCode,
+      );
+    }
+    return parseOpenAiModelList(jsonDecode(res.body), 'OpenRouter');
   }
 
   void dispose() => _client.close();

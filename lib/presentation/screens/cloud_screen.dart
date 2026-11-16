@@ -402,8 +402,8 @@ class _CloudModelsScreenState extends ConsumerState<CloudModelsScreen> {
       }
       final cfg = await SecureStore.instance.providerConfig(p.id);
       final stored = cfg['model'] as String?;
-      // OpenRouter ids fetched live are valid even when they are not in
-      // the pinned catalog; anything else unknown is retired.
+      // OpenRouter and Ollama ids fetched live are valid even when they
+      // are not in the pinned catalog; anything else unknown is retired.
       final retired = stored != null && !p.acceptsStoredModel(stored);
       final modelId = retired ? p.defaultModel.id : (stored ?? p.defaultModel.id);
       try {
@@ -609,9 +609,10 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
   bool _busy = false;
   String? _status;
 
-  // OpenRouter only: the live model list from their public /models
-  // endpoint, fetched when the screen opens. Catalog models are always
-  // shown; these are the rest of what the key can actually reach.
+  // OpenRouter and Ollama: the live model list, fetched when the screen
+  // opens. Catalog models are always shown; these are the rest of what
+  // the server can actually reach — OpenRouter's public /models
+  // endpoint, or the user's own Ollama server at its saved base URL.
   List<CloudModel> _fetchedModels = [];
   bool _fetchingModels = false;
   String? _fetchError;
@@ -640,6 +641,7 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
           cfg['baseUrl'] ?? widget.provider.defaultBaseUrl;
     });
     if (widget.provider.id == 'openrouter') _fetchOpenRouterModels();
+    if (widget.provider.id == 'ollama') _fetchOllamaModels();
   }
 
   /// Pull OpenRouter's live model list (public endpoint, no key). A
@@ -653,6 +655,30 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
     });
     try {
       final models = await CloudService.fetchOpenRouterModels();
+      if (!mounted) return;
+      setState(() => _fetchedModels = models);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _fetchError = '$e');
+    } finally {
+      if (mounted) setState(() => _fetchingModels = false);
+    }
+  }
+
+  /// Pull the user's own Ollama server's live model list (build #103):
+  /// GET {baseUrl}/models at whatever base URL is in force — the typed
+  /// field first, so a just-typed but unsaved URL is what gets asked.
+  /// A failure leaves the pinned llama3.2 in place and shows the error
+  /// instead of the list, exactly like the OpenRouter fetch above.
+  Future<void> _fetchOllamaModels() async {
+    if (_fetchingModels) return;
+    setState(() {
+      _fetchingModels = true;
+      _fetchError = null;
+    });
+    try {
+      final baseUrl = await _effectiveBaseUrl();
+      final models = await CloudService.fetchOllamaModels(baseUrl);
       if (!mounted) return;
       setState(() => _fetchedModels = models);
     } catch (e) {
@@ -711,6 +737,10 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
           if (widget.provider.id == 'openrouter') ...[
             const SizedBox(height: 20),
             _openRouterModelsSection(activeModel),
+          ],
+          if (widget.provider.id == 'ollama') ...[
+            const SizedBox(height: 20),
+            _ollamaModelsSection(activeModel),
           ],
         ],
       ),
@@ -772,6 +802,17 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
                   label: const Text('Remove'),
                 ),
               ],
+              // Key-optional providers (Ollama, Custom) never have a key,
+              // so the Test button above would never appear for them —
+              // and the connection could never be verified from this
+              // screen. Show it anyway: the test needs no key for them.
+              if (!_hasKey &&
+                  CloudCatalog.keyOptional.contains(widget.provider.id))
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _test,
+                  icon: const Icon(Icons.wifi_tethering, size: 18),
+                  label: const Text('Test connection'),
+                ),
             ],
           ),
           if (_status != null) ...[
@@ -853,6 +894,41 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
   /// model — the router accepts the stored id even though it is not in
   /// the pinned list.
   Widget _openRouterModelsSection(String? activeModel) {
+    return _liveModelsSection(
+      activeModel,
+      subtitle: 'Live from OpenRouter — tap one to use it.',
+      emptyText: 'No live models loaded yet.',
+      errorSuffix: 'The models above still work.',
+      onRefresh: _fetchOpenRouterModels,
+    );
+  }
+
+  /// The live Ollama list (build #103): every model the user's own
+  /// server has pulled, fetched from GET {baseUrl}/models. Tapping one
+  /// selects it exactly like a catalog model — the router accepts the
+  /// stored id even though it is not in the pinned list.
+  Widget _ollamaModelsSection(String? activeModel) {
+    return _liveModelsSection(
+      activeModel,
+      subtitle: 'Live from your server — tap one to use it.',
+      emptyText: 'No models on this server yet.',
+      errorSuffix:
+          'Check the Base URL above and that the server is running.',
+      onRefresh: _fetchOllamaModels,
+    );
+  }
+
+  /// A live model list shared by OpenRouter and Ollama: the fetched
+  /// models the pinned catalog does not already show, with a search box
+  /// and a refresh button. A failed fetch leaves the pinned catalog in
+  /// place and shows the error instead of the list.
+  Widget _liveModelsSection(
+    String? activeModel, {
+    required String subtitle,
+    required String emptyText,
+    required String errorSuffix,
+    required VoidCallback onRefresh,
+  }) {
     final query = _modelFilter.trim().toLowerCase();
     final catalogIds = widget.provider.models.map((m) => m.id).toSet();
     final shown = _fetchedModels
@@ -866,7 +942,7 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
         .toList();
     return ScreenSection(
       title: 'Browse all models',
-      subtitle: 'Live from OpenRouter — tap one to use it.',
+      subtitle: subtitle,
       padding: EdgeInsets.zero,
       child: Column(
         children: [
@@ -893,8 +969,7 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
                         )
                       : const Icon(Icons.refresh),
                   tooltip: 'Refresh model list',
-                  onPressed:
-                      _fetchingModels ? null : _fetchOpenRouterModels,
+                  onPressed: _fetchingModels ? null : onRefresh,
                 ),
               ],
             ),
@@ -903,8 +978,7 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Text(
-                'Could not load the live list: $_fetchError '
-                'The models above still work.',
+                'Could not load the live list: $_fetchError $errorSuffix',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             )
@@ -918,7 +992,7 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
               child: Text(
                 _fetchedModels.isEmpty
-                    ? 'No live models loaded yet.'
+                    ? emptyText
                     : 'No models match "$_modelFilter".',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
@@ -1055,6 +1129,9 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('Base URL saved.')));
     _refreshRouter();
+    // The server may have changed with the URL — re-list its models so
+    // the picker below is not showing the old server's models.
+    if (widget.provider.id == 'ollama') _fetchOllamaModels();
   }
 
   /// The base URL the provider will actually be dialed at: whatever is typed
@@ -1073,14 +1150,33 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
       _status = 'Testing…';
     });
     try {
+      // Test the model cloud turns would actually use — the stored pick
+      // when there is one, else the provider default. Testing the
+      // default regardless would report failure for a picked model the
+      // server does have (build #103: a model picked from the Ollama
+      // live list is not the pinned llama3.2 default).
+      final cfg = await SecureStore.instance.providerConfig(
+        widget.provider.id,
+      );
+      final stored = cfg['model'] as String?;
+      final modelId =
+          stored != null && widget.provider.acceptsStoredModel(stored)
+              ? stored
+              : widget.provider.defaultModel.id;
       final reply = await CloudService.instance.testConnection(
         provider: widget.provider,
-        modelId: widget.provider.defaultModel.id,
+        modelId: modelId,
       );
       if (!mounted) return;
+      // No key exists for key-optional providers, so the "key works"
+      // note would be nonsense for them.
+      final keyWorksNote =
+          CloudCatalog.keyOptional.contains(widget.provider.id)
+              ? ''
+              : ' The key works, though.';
       setState(
         () => _status = reply.isEmpty
-            ? 'The provider replied but sent no text. The key works, though.'
+            ? 'The provider replied but sent no text.$keyWorksNote'
             : 'OK — the model replied: "$reply"',
       );
     } catch (e) {
@@ -1126,9 +1222,9 @@ class _CloudProviderScreenState extends ConsumerState<CloudProviderScreen> {
       // A saved model can die underneath the app — providers retire IDs
       // (Gemini 2.0 Flash, Groq's Llamas) — so a stored id that is no
       // longer in the provider's list falls back to the default instead
-      // of sending a 404 to the API on every cloud turn. OpenRouter is
-      // the exception: its list is fetched live, so a stored id that is
-      // not in the pinned catalog is still a real model.
+      // of sending a 404 to the API on every cloud turn. OpenRouter and
+      // Ollama are the exceptions: their lists are fetched live, so a
+      // stored id that is not in the pinned catalog is still a real model.
       final stored = cfg['model'] as String?;
       final modelId = stored != null && p.acceptsStoredModel(stored)
           ? stored
