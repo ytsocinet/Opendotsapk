@@ -72,11 +72,25 @@ class _PromptLabScreenState extends ConsumerState<PromptLabScreen>
     // change that never saw an onChangeEnd (e.g. an accessibility
     // adjustment, which fires onChanged but not onChangeEnd). Writes
     // are idempotent upserts, and these keys only ever change here.
-    // The notifier was captured in initState (build #101): a ref.read
-    // here throws, because the element is already unmounted.
-    _settings?.updateSetting('lab_temperature', _temperature);
-    _settings?.updateSetting('lab_top_k', _topK);
-    _settings?.updateSetting('lab_max_tokens', _maxTokens);
+    //
+    // Deferred past the frame (build #102): the notifier was captured
+    // in initState (build #101) so no `ref` is used here, but writing
+    // provider state from dispose() is still illegal — the tree is
+    // mid-unmount, so Riverpod refuses the change ("Tried to modify a
+    // provider while the widget tree was building", the CI failure on
+    // #101). The save runs in a post-frame callback, after the unmount
+    // frame has finished and the tree is idle. Values are captured
+    // into locals now, so the callback never touches the disposed
+    // state object.
+    final temperature = _temperature;
+    final topK = _topK;
+    final maxTokens = _maxTokens;
+    final settings = _settings;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      settings?.updateSetting('lab_temperature', temperature);
+      settings?.updateSetting('lab_top_k', topK);
+      settings?.updateSetting('lab_max_tokens', maxTokens);
+    });
     _controller.dispose();
     _promptController.dispose();
     _scrollController.dispose();

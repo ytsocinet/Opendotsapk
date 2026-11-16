@@ -6,9 +6,12 @@
 /// the element is already unmounted — so every exit from the Lab threw
 /// `Bad state: Cannot use "ref" after the widget was disposed`.
 ///
-/// The fix captures the notifier in `initState` and writes through it in
-/// `dispose()`. This pumps the real screen, swaps it away, and asserts
-/// both that no error fires and that the dispose save still ran.
+/// The fix captures the notifier in `initState` and defers the save
+/// past the frame (build #102): writing provider state from `dispose()`
+/// is illegal even through a captured notifier, because the tree is
+/// mid-unmount. This pumps the real screen, swaps it away, flushes the
+/// deferred save with an extra pump, and asserts both that no error
+/// fires and that the dispose save still ran.
 library;
 
 import 'package:flutter/material.dart';
@@ -87,13 +90,20 @@ void main() {
       );
       await tester.pump();
 
+      // One more frame: the dispose save is deferred past the frame
+      // (build #102 — a post-frame callback), so it only lands on a
+      // later pump. Without this the assertions below could run before
+      // the save.
+      await tester.pump();
+
       expect(find.text('gone'), findsOneWidget);
       expect(
         tester.takeException(),
         isNull,
         reason:
-            'leaving the Lab must not throw: dispose may not use ref, the '
-            'notifier it writes through has to be captured in initState',
+            'leaving the Lab must not throw: the dispose save is deferred '
+            'past the frame, so no provider state may change while the '
+            'tree is building or unmounting',
       );
 
       // And the safety-net still ran: the Lab parameters were persisted
