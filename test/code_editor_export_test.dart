@@ -53,13 +53,34 @@ void main() {
           child: MaterialApp(home: CodeEditorScreen(path: filePath)),
         ),
       );
+      // The editor loads the file asynchronously, so give the read time
+      // to finish and the rebuild time to run before tapping anything.
+      // This matters: while loading, the body is an indeterminate
+      // CircularProgressIndicator (which schedules frames forever, so
+      // pumpAndSettle would never settle on it) and the Download
+      // button is disabled, so a tap before the load finishes is a
+      // no-op and no snackbar ever appears. The TextField itself is
+      // not autofocused, so no cursor blink is involved.
+      await tester.pump();
+      await tester.pump();
       await tester.pump();
 
       expect(find.text('hello.dart'), findsOneWidget);
       expect(find.byTooltip('Download file'), findsOneWidget);
+      // Pin the loaded state before tapping: the editor field is only
+      // built once the file has loaded, so this fails fast with a
+      // clear message instead of silently tapping a disabled button.
+      expect(find.byType(TextField), findsOneWidget);
 
       await tester.tap(find.byTooltip('Download file'));
-      await tester.pumpAndSettle();
+      // Bounded pumps, not pumpAndSettle: the export fails fast here
+      // (no path_provider channel in a widget test) and the snackbar
+      // needs a frame to appear. Three short pumps are enough for the
+      // failure to surface, and 300ms total stays well under the
+      // snackbar's 4s auto-dismiss.
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
 
       // No share sheet in a widget test, so the export fails here — but
       // it must fail loudly and leave the editor usable.

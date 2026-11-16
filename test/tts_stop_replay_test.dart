@@ -120,6 +120,14 @@ void main() {
         ),
       ),
     );
+    // Let the tile's entrance finish before any tap: the tile scales in
+    // over 400 ms (plus a 400 ms fade), and a zero-duration pump does not
+    // advance the fake clock, so after pumpWidget alone the tile is still
+    // ~0 scale and its stop/replay button does not hit-test — taps miss
+    // (failure 2). A fixed 500 ms pump settles it. Not pumpAndSettle:
+    // the avatar's pulse animation repeats forever, so pumpAndSettle
+    // would never return.
+    await tester.pump(const Duration(milliseconds: 500));
     await tester.pump();
   }
 
@@ -240,9 +248,17 @@ void main() {
       expect(engine.spoken, ['Hello there', 'Hello there']);
 
       // Release the replay so nothing dangles: the replay's guard clears
-      // the id once its speak returns.
+      // the id once its speak returns. stop() only releases a speak that
+      // has already filed its completer — if it runs before the replay's
+      // speak() files _pendingDone, the replay parks on its 4s
+      // duration-estimate cap instead ('Hello there' is 2 words: 1 + 3s).
+      // Pumping past the cap is the backstop either way, so the replay
+      // always returns and clears the id: the test never depends on which
+      // side of that race wins, and no parked speak (pending fake timer)
+      // survives to the post-test invariant check.
       await tts.stop();
       await tester.pump();
+      await tester.pump(const Duration(seconds: 5));
       expect(container.read(speakingMessageIdProvider), isNull);
     });
 
@@ -284,8 +300,13 @@ void main() {
       expect(container.read(speakingMessageIdProvider), 'msg-2');
       expect(engine.spoken, ['First answer', 'Second answer']);
 
+      // Same release as the stop-then-replay test: stop() releases the
+      // replay only if its speak already filed its completer; the 5s pump
+      // fires the replay's 4s cap as a backstop ('Second answer' is also
+      // 2 words), so the id clears either way and no parked speak survives.
       await tts.stop();
       await tester.pump();
+      await tester.pump(const Duration(seconds: 5));
       expect(container.read(speakingMessageIdProvider), isNull);
     });
   });
