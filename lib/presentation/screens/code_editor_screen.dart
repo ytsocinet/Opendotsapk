@@ -12,6 +12,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/utils/ide_file.dart';
 import '../providers/providers.dart';
@@ -143,6 +145,26 @@ class _CodeEditorScreenState extends ConsumerState<CodeEditorScreen> {
     });
   }
 
+  /// Download/export the open file: one tap hands the current text —
+  /// including unsaved edits — to the share sheet, so Aaron can save it
+  /// to Downloads, Drive, or send it elsewhere. The share sheet is the
+  /// existing export plumbing (the chat export uses it) and needs no new
+  /// permission. Written to a temp file under its real name so the
+  /// shared file keeps its filename.
+  Future<void> _exportFile() async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final file = File(p.join(dir.path, p.basename(widget.path)));
+      await file.writeAsString(_controller.text);
+      await Share.shareXFiles([XFile(file.path)], text: 'Clawzilla file');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not export: $e')),
+      );
+    }
+  }
+
   Future<bool> _confirmDiscard() async {
     if (!_dirty) return true;
     final discard = await showDialog<bool>(
@@ -192,6 +214,11 @@ class _CodeEditorScreenState extends ConsumerState<CodeEditorScreen> {
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.download_outlined),
+              tooltip: 'Download file',
+              onPressed: _loading || _error != null ? null : _exportFile,
+            ),
             IconButton(
               icon: const Icon(Icons.delete_outline),
               tooltip: 'Delete file',

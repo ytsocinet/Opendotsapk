@@ -39,6 +39,7 @@ import '../../data/services/background_task_service.dart';
 import '../../data/services/wake_service.dart';
 import '../../data/tools/tool_registry.dart';
 import '../widgets/biometric_gate.dart';
+import '../../domain/models/cloud_provider.dart';
 import '../../domain/models/local_model.dart';
 import '../../domain/models/models.dart';
 
@@ -902,7 +903,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (backgroundMode) BackgroundTaskService.instance.beginWork();
     try {
       if (decision.isCloud) {
-        await _sendViaCloud(decision, '$display$docCtx$ideCtx', imagePath, priorHistory);
+        await _sendViaCloud(
+          decision,
+          '$display$docCtx$ideCtx',
+          imagePath,
+          priorHistory,
+          userMessage,
+        );
         return;
       }
 
@@ -963,9 +970,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       });
 
       try {
-        // Tools are local-only: the cloud path builds its own request and
-        // never parses tool calls, so a tools section there would only make
-        // the model print raw JSON.
+        // The full tool set is local-only: the cloud path carries only
+        // the file tools and runs its own one-round file-tool loop
+        // (build #107), so a full tools section on a cloud turn would
+        // only make the model print raw JSON for tools it cannot call.
         final toolsSection =
             await ref.read(toolRegistryProvider).promptSection();
         final request = await _buildRequest(
@@ -1274,6 +1282,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     String prompt,
     String? imagePath,
     List<ChatMessage> priorHistory,
+    ChatMessage userMessage,
   ) async {
     final provider = decision.provider;
     if (provider == null) {
@@ -1287,19 +1296,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
 
     try {
-      // Same newest-first, budgeted selection as the local path. This used to
-      // be `history.take(12)`, i.e. the twelve OLDEST messages.
-      final request = await _buildRequest(
-        message: prompt,
-        priorHistory: priorHistory,
-      );
-      final messages = <Map<String, String>>[
-        if (request.systemPrompt != null)
-          {'role': 'system', 'content': request.systemPrompt!},
-        ...request.history,
-        {'role': 'user', 'content': request.prompt},
-      ];
-
       final imagesB64 = <String>[];
       if (imagePath != null) {
         try {
@@ -1311,42 +1307,79 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
       final cloud = ref.read(cloudServiceProvider);
 
-      // Listen through a subscription rather than `await for` so Stop has
-      // something it can actually cancel.
-      final completer = Completer<void>();
-      _cloudCompleter = completer;
-      _cloudSub = cloud
-          .stream(
-            provider: provider,
-            turn: CloudTurn(
-              modelId: decision.modelId,
-              messages: messages,
-              imageBase64: imagesB64,
-            ),
-          )
-          .listen(
-            (token) {
-              if (_stopRequested) return;
-              _bufferToken(token);
-            },
-            onError: (Object e) {
-              if (!completer.isCompleted) completer.completeError(e);
-            },
-            onDone: () {
-              if (!completer.isCompleted) completer.complete();
-            },
-            cancelOnError: true,
-          );
+      // File tools on the cloud path (build #107): the cloud model gets
+      // read/write_project_file plus the #100 save rule — and nothing
+      // else. The full tool set stays local-only, so a cloud turn can
+      // never open an app or read the location.
+      final fileTools =
+          await ref.read(toolRegistryProvider).fileToolsSection();
+      final request = await _buildRequest(
+        message: prompt,
+        priorHistory: priorHistory,
+        toolsSection: fileTools,
+      );
+      await _streamCloudReply(
+        cloud: cloud,
+        provider: provider,
+        modelId: decision.modelId,
+        messages: _cloudMessages(request),
+        imagesB64: imagesB64,
+      );
+      _flushNow();
 
-      try {
-        await completer.future;
-      } finally {
-        await _cloudSub?.cancel();
-        _cloudSub = null;
-        _cloudCompleter = null;
+      // One file-tool round per cloud turn, mirroring the local path: if
+      // the reply was a file-tool call, run it and generate a brief
+      // answer from the result. The raw JSON never reaches the
+      // transcript — the follow-up answer replaces it. A call naming any
+      // other tool is left as a plain answer: phone-side tools never run
+      // on a cloud turn.
+      final call = parseToolCall(_currentResponse);
+      if (call != null &&
+          ToolRegistry.isCloudFileTool(call.tool) &&
+          !_stopRequested) {
+        final registry = ref.read(toolRegistryProvider);
+        final result = await registry.executeTool(
+          toolName: call.tool,
+          params: call.params,
+        );
+        // Build #100, same as the local path: a file Cypher just wrote
+        // becomes the open file in the IDE, so the next turn reads it
+        // back and Cypher can pick the code up where it left off. The
+        // chip shows it as soon as the setting lands.
+        final written = IdeFile.activeFileAfterWrite(
+          toolName: call.tool,
+          success: result.isSuccess,
+          data: result.data,
+        );
+        if (written != null) {
+          await ref
+              .read(settingsProvider.notifier)
+              .updateSetting('last_ide_file', written);
+        }
+        // Clear the tool JSON out of the bubble before the answer streams.
+        _pendingTokens = '';
+        _flushTimer?.cancel();
+        _flushTimer = null;
+        if (mounted) {
+          setState(() => _currentResponse = '');
+        }
+        final followUp = await _buildRequest(
+          message:
+              'The tool "${call.tool}" returned:\n${TextUtils.ellipsize(result.toJson(), 2000)}\n'
+              'Answer the user briefly based on this result. Do not call another tool — answer directly in plain text.',
+          priorHistory: [...priorHistory, userMessage],
+          // No tools section: this turn answers, it does not act.
+        );
+        await _streamCloudReply(
+          cloud: cloud,
+          provider: provider,
+          modelId: decision.modelId,
+          messages: _cloudMessages(followUp),
+          imagesB64: const [],
+        );
+        _flushNow();
       }
 
-      _flushNow();
       await _finishAssistantMessage();
     } catch (e) {
       Log.w('cloud turn failed: $e');
@@ -1370,6 +1403,74 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         // reading earlier messages while it generated.
         _scrollToBottom(force: true);
       }
+    }
+  }
+
+  /// The wire messages for a cloud turn: the system prompt (when the
+  /// budget kept one), the budgeted history, and the question last.
+  /// Same newest-first, budgeted selection as the local path — this used
+  /// to be `history.take(12)`, i.e. the twelve OLDEST messages.
+  List<Map<String, String>> _cloudMessages(
+    ({
+      String prompt,
+      String? systemPrompt,
+      List<Map<String, String>> history,
+    }) request,
+  ) {
+    return <Map<String, String>>[
+      if (request.systemPrompt != null)
+        {'role': 'system', 'content': request.systemPrompt!},
+      ...request.history,
+      {'role': 'user', 'content': request.prompt},
+    ];
+  }
+
+  /// Streams one cloud reply into [_currentResponse], awaiting its end.
+  ///
+  /// Listened through a subscription rather than `await for` so Stop has
+  /// something it can actually cancel. The completer is held in
+  /// [_cloudCompleter] so Stop can release the wait: cancelling the
+  /// subscription alone never completes it, so without this the cloud
+  /// turn would hang at `await completer.future` forever and the Stop
+  /// button would stick.
+  Future<void> _streamCloudReply({
+    required CloudService cloud,
+    required CloudProvider provider,
+    required String modelId,
+    required List<Map<String, String>> messages,
+    required List<String> imagesB64,
+  }) async {
+    final completer = Completer<void>();
+    _cloudCompleter = completer;
+    _cloudSub = cloud
+        .stream(
+          provider: provider,
+          turn: CloudTurn(
+            modelId: modelId,
+            messages: messages,
+            imageBase64: imagesB64,
+          ),
+        )
+        .listen(
+          (token) {
+            if (_stopRequested) return;
+            _bufferToken(token);
+          },
+          onError: (Object e) {
+            if (!completer.isCompleted) completer.completeError(e);
+          },
+          onDone: () {
+            if (!completer.isCompleted) completer.complete();
+          },
+          cancelOnError: true,
+        );
+
+    try {
+      await completer.future;
+    } finally {
+      await _cloudSub?.cancel();
+      _cloudSub = null;
+      _cloudCompleter = null;
     }
   }
 

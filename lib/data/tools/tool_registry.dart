@@ -443,9 +443,9 @@ class ToolRegistry {
   /// plus the enabled connected apps with their exact package names, so
   /// the model never has to guess one. The connected-apps gate still
   /// refuses unconnected packages at execution time; this list only tells
-  /// the model which packages are valid. Local chat only: the cloud path
-  /// never parses tool calls, so a tools section there would only make
-  /// the model print raw JSON.
+  /// the model which packages are valid. The full section is local-only:
+  /// the cloud path gets only the file tools, via [fileToolsSection],
+  /// and parses one file-tool round there.
   Future<String> promptSection() async {
     final tools = toolsForModel;
     if (tools.isEmpty) return '';
@@ -474,12 +474,59 @@ class ToolRegistry {
       // No app list is not a reason to hide the tools: the gate still
       // refuses unconnected packages at execution time.
     }
-    // Build #100: code Cypher writes must land in the Projects folder, or
-    // there is no file to pick it back up from. The rule lives here, in
-    // the tools section, because it is about a tool — and because the
-    // section is local-only, it never reaches the cloud path (which cannot
-    // call tools anyway).
+    lines.add(_fileSaveRule);
     lines.add(
+      'If no tool fits the request, answer directly in plain text — do not output a tool block.',
+    );
+    return lines.join('\n');
+  }
+
+  /// The file tools a cloud turn may run — and nothing else.
+  ///
+  /// Build #107: a cloud turn may read and write inside the Projects
+  /// folder, but it never touches a phone-side tool (open_app, location,
+  /// notes, tasks, goals). The chat screen enforces this with
+  /// [isCloudFileTool] before executing anything a cloud reply asked for.
+  static const Set<String> cloudFileTools = {
+    'read_project_file',
+    'write_project_file',
+  };
+
+  /// Whether [toolName] may run on a cloud turn: file tools only.
+  static bool isCloudFileTool(String toolName) =>
+      cloudFileTools.contains(toolName);
+
+  /// The tools section for the cloud system prompt, or '' when there is
+  /// nothing to offer.
+  ///
+  /// File tools only — read/write_project_file — plus the #100 save rule
+  /// that tells the model to save code it writes. No connected-apps list:
+  /// a cloud turn cannot open apps, so naming them would only invite a
+  /// tool call the cloud round refuses.
+  Future<String> fileToolsSection() async {
+    final tools = toolsForModel
+        .where((t) => cloudFileTools.contains(t.name))
+        .toList();
+    if (tools.isEmpty) return '';
+    final lines = <String>[
+      'You can use tools. When the user asks for something a tool can do, '
+          'reply with ONLY a JSON block like this and nothing else:',
+      '```json',
+      '{"tool": "write_project_file", "params": {"path": "hello.dart", "content": "..."}}',
+      '```',
+      'Tools:',
+      for (final t in tools) '- ${t.name}: ${t.description}',
+      _fileSaveRule,
+      'If no tool fits the request, answer directly in plain text — do not output a tool block.',
+    ];
+    return lines.join('\n');
+  }
+
+  /// Build #100: code Cypher writes must land in the Projects folder, or
+  /// there is no file to pick it back up from. The rule lives with the
+  /// tools sections, because it is about a tool — shared by the local
+  /// section and the cloud file-tools section so the two cannot drift.
+  static const String _fileSaveRule =
       'When you write code in a turn — a fenced code block, especially in '
       'code mode — save it with write_project_file so the user keeps it '
       'and you can pick it back up next turn. Pick a sensible filename '
@@ -490,13 +537,7 @@ class ToolRegistry {
       'silently overwrite an unrelated file: if the name is already taken, '
       'the tool saves it under a distinct name and tells you which — use '
       'the name it reports. Only save code the turn actually produced; '
-      'do not write a file on turns with no code.',
-    );
-    lines.add(
-      'If no tool fits the request, answer directly in plain text — do not output a tool block.',
-    );
-    return lines.join('\n');
-  }
+      'do not write a file on turns with no code.';
 
   /// Executes a tool.
   ///
@@ -581,6 +622,71 @@ class ToolRegistry {
     return raw.trim();
   }
 
+  /// Why the Projects folder cannot be used right now, or null when it
+  /// looks fine.
+  ///
+  /// Pure so the branches are unit-testable: the callers supply what they
+  /// observed — whether the folder path is set, whether it exists on
+  /// disk, whether All-files access is granted — and this only picks the
+  /// message. Build #107: without All-files access a shared-storage
+  /// folder still "exists" but cannot be listed or written, so the model
+  /// must be told the grant is missing — not that no folder is picked, or
+  /// Aaron gets asked to pick the folder again when it is already set. A
+  /// folder that is genuinely gone (access granted, still not there) is
+  /// the only case that asks for another pick.
+  static String? projectsFolderProblem({
+    required String? root,
+    required bool folderExists,
+    required bool accessGranted,
+  }) {
+    if (root == null || root.trim().isEmpty) {
+      return 'No Projects folder is picked yet. Ask the user to pick one in '
+          'Settings → Projects folder first.';
+    }
+    if (!accessGranted) {
+      return 'The Projects folder is set to $root, but Clawzilla cannot '
+          'open it — All files access is off. Ask the user to grant it '
+          'from Projects → Allow file access. Do not ask them to pick the '
+          'folder again — it is already set.';
+    }
+    if (!folderExists) {
+      return 'That folder no longer exists — ask the user to pick another '
+          'one in Settings → Projects folder.';
+    }
+    return null;
+  }
+
+  /// The Projects folder problem, if any, as the tool result the model
+  /// should see — or null when the folder looks usable.
+  ///
+  /// No access is a permission the user can grant, not a failure of the
+  /// tool, so it reports [ToolStatus.requiresPermission] rather than a
+  /// generic failure the model would relay as "pick a folder".
+  Future<ToolResult?> _projectsFolderProblem(String root) async {
+    var folderExists = false;
+    try {
+      folderExists = await Directory(root).exists();
+    } catch (_) {
+      folderExists = false;
+    }
+    var accessGranted = true;
+    try {
+      accessGranted =
+          await Permission.manageExternalStorage.status.isGranted;
+    } catch (_) {
+      // The check itself cannot run: fail open and let the IO speak.
+      accessGranted = true;
+    }
+    final message = projectsFolderProblem(
+      root: root,
+      folderExists: folderExists,
+      accessGranted: accessGranted,
+    );
+    if (message == null) return null;
+    if (!accessGranted) return ToolResult.requiresPermission(message);
+    return ToolResult.failed(message);
+  }
+
   /// Resolve [relativePath] inside [root], or null when it escapes.
   ///
   /// Absolute paths and `..` segments are refused: a model that guesses
@@ -615,6 +721,8 @@ class ToolRegistry {
         'Settings → Projects folder first.',
       );
     }
+    final problem = await _projectsFolderProblem(root);
+    if (problem != null) return problem;
     final resolved = _resolveInside(root, rel);
     if (resolved == null) {
       return ToolResult.failed(
@@ -638,6 +746,11 @@ class ToolRegistry {
         data: {'path': rel, 'content': shown, 'truncated': truncated},
       );
     } catch (e) {
+      // A read that fails after the folder looked usable is usually the
+      // folder going away under us — say which, instead of a bare IO
+      // error the model would relay as "pick a folder".
+      final folderProblem = await _projectsFolderProblem(root);
+      if (folderProblem != null) return folderProblem;
       return ToolResult.failed('Could not read $rel: $e');
     }
   }
@@ -700,6 +813,8 @@ class ToolRegistry {
         'Settings → Projects folder first.',
       );
     }
+    final problem = await _projectsFolderProblem(root);
+    if (problem != null) return problem;
     final resolved = _resolveInside(root, rel);
     if (resolved == null) {
       return ToolResult.failed(
@@ -740,6 +855,10 @@ class ToolRegistry {
         },
       );
     } catch (e) {
+      // Same as the read path: a write that fails after the folder
+      // looked usable is usually access going away, not a missing folder.
+      final folderProblem = await _projectsFolderProblem(root);
+      if (folderProblem != null) return folderProblem;
       return ToolResult.failed('Could not write $targetRel: $e');
     }
   }

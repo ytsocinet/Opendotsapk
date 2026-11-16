@@ -366,10 +366,18 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
     }
   }
 
-  /// Cut off the voice reading this bubble aloud. Same path as the
-  /// stop-voice button in the chat header; the speaking id clears when
-  /// the cancelled speak() returns.
+  /// Cut off the voice reading this bubble aloud. The speaking id is
+  /// cleared synchronously, before the engine call returns, so the bubble
+  /// flips back to the replay icon on the tap (build #107). The old code
+  /// waited for the cancelled speak() to return, which never happened
+  /// when the engine skipped its cancel handler — the stop icon stayed
+  /// stuck until the duration-estimate cap (up to 120s). The engine stop
+  /// still runs, so a voice that keeps talking is cut off too; the clear
+  /// only ever touches this bubble's own id.
   Future<void> _stopSpeaking() async {
+    if (ref.read(speakingMessageIdProvider) == widget.message.id) {
+      ref.read(speakingMessageIdProvider.notifier).state = null;
+    }
     await ref.read(textToSpeechProvider.notifier).stop();
   }
 

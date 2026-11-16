@@ -99,7 +99,10 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
           setState(() {
             _files = [];
             _loading = false;
-            _error = 'That folder no longer exists — pick another one.';
+            // Show the saved path with the error, so Aaron can see what
+            // is set instead of only being told to pick again.
+            _error = 'That folder no longer exists — pick another one.\n'
+                '$folder';
             _filesAccessGranted = filesAccessGranted;
           });
         }
@@ -350,6 +353,40 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
     );
   }
 
+  /// The error state for a folder that cannot be listed.
+  ///
+  /// Build #107: when All-files access is missing, the folder is not
+  /// gone — the app just cannot see it — so the grant is the primary
+  /// action and the message names the cause instead of telling Aaron to
+  /// pick another folder (re-picking the same folder reproduces the same
+  /// error, which is the repeat-ask). The saved path is shown in both
+  /// cases, so he can see what is set. Only when access IS granted and
+  /// the folder is still not there is "pick another folder" primary.
+  Widget _errorState(String? folder) {
+    if (!_filesAccessGranted) {
+      return _stateWithAccessButton(
+        state: ScreenEmptyState(
+          icon: Icons.folder_shared,
+          title: 'File access is off',
+          message: 'Clawzilla can\'t open $folder yet — Android blocks '
+              'the app from this folder until All files access is granted.',
+          actionLabel: 'Allow file access',
+          actionIcon: Icons.folder_shared,
+          onAction: _requestFileAccess,
+        ),
+        secondaryLabel: 'Pick another folder',
+        onSecondary: _pickFolder,
+      );
+    }
+    return ScreenEmptyState(
+      icon: Icons.folder_off_outlined,
+      title: 'Folder unavailable',
+      message: _error!,
+      actionLabel: 'Pick another folder',
+      onAction: _pickFolder,
+    );
+  }
+
   String _sizeLabel(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
@@ -414,17 +451,7 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
                   onAction: _pickFolder,
                 )
               : _error != null
-                  ? _stateWithAccessButton(
-                      state: ScreenEmptyState(
-                        icon: Icons.folder_off_outlined,
-                        title: 'Folder unavailable',
-                        message: _error!,
-                        actionLabel: 'Pick another folder',
-                        onAction: _pickFolder,
-                      ),
-                      secondaryLabel: 'Allow file access',
-                      onSecondary: _requestFileAccess,
-                    )
+                  ? _errorState(folder)
                   : _files.isEmpty
                       ? _stateWithAccessButton(
                           state: ScreenEmptyState(

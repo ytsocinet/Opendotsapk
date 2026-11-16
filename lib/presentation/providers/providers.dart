@@ -180,6 +180,14 @@ class TtsNotifier extends StateNotifier<bool> {
   /// The pitch currently applied to the engine.
   double get pitch => _pitch;
 
+  /// The completer for the utterance `speak()` is currently waiting on,
+  /// if any. The engine's cancel handler is not guaranteed to fire, and
+  /// waiting on it alone left the stop icon stuck until the
+  /// duration-estimate cap (up to 120s) — the same stuck-button shape
+  /// the speech listener above fixed with `_activeCompleter`. `stop()`
+  /// resolves this one, so the awaiting `speak()` returns at once.
+  Completer<void>? _pendingDone;
+
   TtsNotifier(this.ref) : super(false);
 
   Future<void> init() async {
@@ -296,6 +304,7 @@ class TtsNotifier extends StateNotifier<bool> {
     if (!_isReady) await init();
     if (text.trim().isEmpty) return;
     final done = Completer<void>();
+    _pendingDone = done;
     _tts.setCompletionHandler(() {
       if (!done.isCompleted) done.complete();
     });
@@ -305,17 +314,37 @@ class TtsNotifier extends StateNotifier<bool> {
     _tts.setCancelHandler(() {
       if (!done.isCompleted) done.complete();
     });
-    await _tts.speak(text);
-    // ~150 words a minute, plus a margin; never wait forever.
-    final words = text.trim().split(RegExp(r'\s+')).length;
-    final estimate = Duration(seconds: (words / 2.5).ceil() + 3);
-    final cap = estimate > const Duration(seconds: 120)
-        ? const Duration(seconds: 120)
-        : estimate;
-    await done.future.timeout(cap, onTimeout: () {});
+    try {
+      await _tts.speak(text);
+      // ~150 words a minute, plus a margin; never wait forever.
+      final words = text.trim().split(RegExp(r'\s+')).length;
+      final estimate = Duration(seconds: (words / 2.5).ceil() + 3);
+      final cap = estimate > const Duration(seconds: 120)
+          ? const Duration(seconds: 120)
+          : estimate;
+      await done.future.timeout(cap, onTimeout: () {});
+    } finally {
+      // Clear only if this utterance still owns the field: a replay
+      // started mid-speech stops (completing this one) and speaks again,
+      // replacing the field with its own completer — clearing here would
+      // orphan the new utterance, so a later stop() could no longer cut
+      // it off. Same guard as `listenOnce()` above.
+      if (identical(_pendingDone, done)) _pendingDone = null;
+    }
   }
 
+  /// Stop whatever is playing, and release the `speak()` waiting on it.
+  ///
+  /// The engine's cancel handler is not guaranteed to fire, so stopping
+  /// the engine alone left the awaiting `speak()` parked until the
+  /// duration-estimate cap (up to 120s) — the bubble's stop icon stayed
+  /// stuck and a replay queued behind a dead wait. Completing the pending
+  /// completer first makes the return immediate; the cap stays as the
+  /// safety net when nothing calls stop() at all.
   Future<void> stop() async {
+    final pending = _pendingDone;
+    _pendingDone = null;
+    if (pending != null && !pending.isCompleted) pending.complete();
     await _tts.stop();
   }
 }

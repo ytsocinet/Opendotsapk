@@ -429,4 +429,115 @@ void main() {
       expect(extractJsonObject('[1,2,3]'), isNull);
     });
   });
+
+  group('ToolRegistry.fileToolsSection (build #107)', () {
+    test('offers only the file tools, with the save rule', () async {
+      final section = await registry.fileToolsSection();
+      expect(section, contains('read_project_file'));
+      expect(section, contains('write_project_file'));
+      expect(section, contains('save it with write_project_file'));
+      expect(section, contains('Only save code the turn actually produced'));
+    });
+
+    test('never offers a phone-side tool to a cloud turn', () async {
+      final section = await registry.fileToolsSection();
+      for (final tool in [
+        'open_app',
+        'share_to_app',
+        'web_search',
+        'get_location',
+        'create_note',
+        'read_notes',
+        'analyze_image',
+        'create_task',
+        'list_tasks',
+        'create_goal',
+        'send_sms',
+      ]) {
+        expect(
+          section,
+          isNot(contains(tool)),
+          reason: 'cloud turns must never see $tool',
+        );
+      }
+      expect(section, isNot(contains('Connected apps')));
+    });
+  });
+
+  group('ToolRegistry.isCloudFileTool (build #107)', () {
+    test('file tools run on cloud turns, nothing else does', () {
+      expect(ToolRegistry.isCloudFileTool('read_project_file'), isTrue);
+      expect(ToolRegistry.isCloudFileTool('write_project_file'), isTrue);
+      for (final tool in [
+        'open_app',
+        'share_to_app',
+        'web_search',
+        'get_location',
+        'create_note',
+        'create_task',
+        'send_sms',
+        'does_not_exist',
+      ]) {
+        expect(
+          ToolRegistry.isCloudFileTool(tool),
+          isFalse,
+          reason: '$tool must never run on a cloud turn',
+        );
+      }
+    });
+  });
+
+  group('ToolRegistry.projectsFolderProblem (build #107)', () {
+    test('no folder set asks for a pick', () {
+      for (final root in [null, '', '   ']) {
+        final message = ToolRegistry.projectsFolderProblem(
+          root: root,
+          folderExists: false,
+          accessGranted: true,
+        );
+        expect(message, isNotNull);
+        expect(message, contains('No Projects folder is picked yet'));
+      }
+    });
+
+    test('folder set but access off blames the grant, never a re-pick',
+        () {
+      // Without All-files access a shared-storage folder still "exists"
+      // but cannot be listed or written. Either way the model must send
+      // Aaron to the grant, not back to the picker.
+      for (final folderExists in [true, false]) {
+        final message = ToolRegistry.projectsFolderProblem(
+          root: '/storage/emulated/0/Projects',
+          folderExists: folderExists,
+          accessGranted: false,
+        );
+        expect(message, isNotNull);
+        expect(message, contains('All files access is off'));
+        expect(message, contains('already set'));
+        expect(message, isNot(contains('no longer exists')));
+        expect(message, isNot(contains('pick another')));
+      }
+    });
+
+    test('folder genuinely gone asks for another pick', () {
+      final message = ToolRegistry.projectsFolderProblem(
+        root: '/storage/emulated/0/Projects',
+        folderExists: false,
+        accessGranted: true,
+      );
+      expect(message, isNotNull);
+      expect(message, contains('no longer exists'));
+    });
+
+    test('folder set, present, and accessible is fine', () {
+      expect(
+        ToolRegistry.projectsFolderProblem(
+          root: '/storage/emulated/0/Projects',
+          folderExists: true,
+          accessGranted: true,
+        ),
+        isNull,
+      );
+    });
+  });
 }

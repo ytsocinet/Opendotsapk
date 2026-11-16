@@ -15,9 +15,9 @@ library;
 /// of its own — then where the user is and the temperature, then the
 /// personality plus the mode's instruction, when the mode has one, then
 /// the user's saved memories and the core skills. Chat mode adds nothing.
-/// The tools section goes last, and only on the local path: the cloud
-/// path never parses tool calls, so a tools section there would only make
-/// the model print raw JSON.
+/// The tools section goes last. The local path carries the full section;
+/// the cloud path carries only the file-tools section (build #107),
+/// which the cloud turn parses for one file-tool round.
 ///
 /// When [safePrompt] is on, the saved memories, the core skills, and the
 /// tools section are left out — those are the three sections that grew
