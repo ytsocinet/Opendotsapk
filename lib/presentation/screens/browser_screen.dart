@@ -66,6 +66,11 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
   void initState() {
     super.initState();
     _addressController.text = BrowserScreen.braveHome;
+    // Build #111: tapping the bar selects the whole address (see
+    // [_selectAllAddress]) — before this the cursor landed in the middle
+    // of the old URL, so what Aaron typed was inserted into it and the
+    // load failed silently.
+    _addressFocus.addListener(_onAddressFocusChanged);
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
@@ -88,6 +93,22 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
               if (!_addressFocus.hasFocus) _addressController.text = url;
             });
           },
+          onWebResourceError: (error) {
+            // A failed load used to fail silently (build #111): nothing
+            // changed on screen, so a bad address looked like a broken
+            // bar. Main-frame failures now say so, and the stuck progress
+            // bar clears. Sub-frame failures (an ad, a tracker) stay
+            // quiet — the page itself still loaded.
+            if (error.isForMainFrame != true) return;
+            if (!mounted) return;
+            setState(() => _progress = 100);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content:
+                    Text('Could not load this page: ${error.description}'),
+              ),
+            );
+          },
           onNavigationRequest: (request) {
             // A browser, but a plain one: only web pages. Anything else
             // (tel:, mailto:, intent:) stays out — there is no app to hand
@@ -106,9 +127,38 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
 
   @override
   void dispose() {
+    _addressFocus.removeListener(_onAddressFocusChanged);
     _addressController.dispose();
     _addressFocus.dispose();
     super.dispose();
+  }
+
+  void _onAddressFocusChanged() {
+    if (_addressFocus.hasFocus) _selectAllAddress();
+  }
+
+  /// Select the whole address so typing replaces it instead of landing
+  /// inside the old URL. Mobile browsers do this on tap; this screen did
+  /// not (build #111), so the cursor landed mid-URL and typed text was
+  /// inserted into 'https://search.brave.com/' — a garbage URL that failed
+  /// silently. Called on focus and on tap: the tap's own cursor placement
+  /// runs after the focus change, so the focus listener alone is not
+  /// enough.
+  void _selectAllAddress() {
+    final text = _addressController.text;
+    if (text.isEmpty) return;
+    _addressController.selection =
+        TextSelection(baseOffset: 0, extentOffset: text.length);
+  }
+
+  /// Load what is in the address bar (address or Brave search). One path
+  /// for the keyboard Go key and the Go button (build #111): the bar used
+  /// to depend on the keyboard action key alone, so if it did not fire,
+  /// nothing happened at all.
+  void _submitAddress() {
+    final value = _addressController.text.trim();
+    if (value.isEmpty) return;
+    unawaited(_openUrl(toBrowsableUrl(value)));
   }
 
   Future<void> _openUrl(String url) async {
@@ -181,11 +231,14 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                     ),
                     textInputAction: TextInputAction.go,
                     keyboardType: TextInputType.url,
-                    onSubmitted: (value) {
-                      if (value.trim().isEmpty) return;
-                      unawaited(_openUrl(toBrowsableUrl(value)));
-                    },
+                    onTap: _selectAllAddress,
+                    onSubmitted: (_) => _submitAddress(),
                   ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.arrow_forward),
+                  tooltip: 'Go',
+                  onPressed: _submitAddress,
                 ),
               ],
             ),
