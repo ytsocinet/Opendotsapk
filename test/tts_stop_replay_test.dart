@@ -216,7 +216,7 @@ void main() {
     testWidgets('stop then replay re-speaks the same answer', (
       tester,
     ) async {
-      final container = containerWith();
+      final container = containerWith(speakingId: 'msg-1');
       addTearDown(container.dispose);
       final tts = container.read(textToSpeechProvider.notifier);
       final message = ChatMessage(
@@ -226,14 +226,27 @@ void main() {
         timestamp: 0,
       );
 
-      // The stuck state, reproduced: an utterance is playing (parked on
-      // its completer, engine silent) and this bubble is the speaking one.
+      // Pump the tiles FIRST: a speak parked on its duration-estimate
+      // cap must never be outstanding across a pumpWidget — the harness
+      // stalls there for the full 10-minute timeout (builds #107/#108,
+      // reproduced locally with Flutter 3.47.7). The speaking id is
+      // preset, so the stop icon is already showing.
+      await pumpTiles(tester, container, [message]);
+      expect(find.byTooltip('Stop voice'), findsOneWidget);
+
+      // Now reproduce the stuck state: an utterance is playing (parked
+      // on its completer, engine silent) and this bubble is the
+      // speaking one. The speak is started, not awaited: its engine
+      // completer only resolves on a FakeAsync microtask flush, and
+      // nothing flushes while the test body is suspended on it (that
+      // await is what hung builds #107/#108). One pump flushes the
+      // queue and lets the speak park; the spoken log proves it
+      // reached the engine.
       final first = tts.speak('Hello there');
       var firstDone = false;
       unawaited(first.then((_) => firstDone = true));
-      await engine.speakStarted.future;
-      container.read(speakingMessageIdProvider.notifier).state = 'msg-1';
-      await pumpTiles(tester, container, [message]);
+      await tester.pump();
+      expect(engine.spoken, ['Hello there']);
 
       await tester.tap(find.byTooltip('Stop voice'));
       await tester.pump();
@@ -247,24 +260,24 @@ void main() {
       expect(container.read(speakingMessageIdProvider), 'msg-1');
       expect(engine.spoken, ['Hello there', 'Hello there']);
 
-      // Release the replay so nothing dangles: the replay's guard clears
-      // the id once its speak returns. stop() only releases a speak that
-      // has already filed its completer — if it runs before the replay's
-      // speak() files _pendingDone, the replay parks on its 4s
-      // duration-estimate cap instead ('Hello there' is 2 words: 1 + 3s).
-      // Pumping past the cap is the backstop either way, so the replay
-      // always returns and clears the id: the test never depends on which
-      // side of that race wins, and no parked speak (pending fake timer)
-      // survives to the post-test invariant check.
-      await tts.stop();
+      // Release the replay so nothing dangles: stop() completes the
+      // replay's pending completer and the guard in _replayAnswer clears
+      // the id. stop() is fired, not awaited — its engine call only
+      // resolves on a FakeAsync microtask flush, and awaiting it would
+      // hang the test body the same way the speak completer did. The
+      // pumps flush the queue, so the release lands before the expect.
+      // No long backstop pump — the replay is released by stop(), not
+      // by waiting out its 4s cap (the #108 backstop did not fix the
+      // hang, because the hang was never in the tail).
+      unawaited(tts.stop());
       await tester.pump();
-      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
       expect(container.read(speakingMessageIdProvider), isNull);
     });
 
     testWidgets('replay on another bubble stops the current utterance first',
         (tester) async {
-      final container = containerWith();
+      final container = containerWith(speakingId: 'msg-1');
       addTearDown(container.dispose);
       final tts = container.read(textToSpeechProvider.notifier);
       final firstMessage = ChatMessage(
@@ -280,15 +293,22 @@ void main() {
         timestamp: 0,
       );
 
-      final first = tts.speak('First answer');
-      var firstDone = false;
-      unawaited(first.then((_) => firstDone = true));
-      await engine.speakStarted.future;
-      container.read(speakingMessageIdProvider.notifier).state = 'msg-1';
+      // Pump the tiles first (same stall as the stop-then-replay test:
+      // a parked speak must never be outstanding across a pumpWidget).
       await pumpTiles(tester, container, [firstMessage, secondMessage]);
 
       expect(find.byTooltip('Stop voice'), findsOneWidget);
       expect(find.byTooltip('Replay answer'), findsOneWidget);
+
+      // Now start the utterance the replay must cut off. Started, not
+      // awaited (see the stop-then-replay test): the engine completer
+      // only resolves on a microtask flush, so one pump lets the speak
+      // park instead of hanging the test body on the await.
+      final first = tts.speak('First answer');
+      var firstDone = false;
+      unawaited(first.then((_) => firstDone = true));
+      await tester.pump();
+      expect(engine.spoken, ['First answer']);
 
       await tester.tap(find.byTooltip('Replay answer'));
       await tester.pump();
@@ -300,13 +320,13 @@ void main() {
       expect(container.read(speakingMessageIdProvider), 'msg-2');
       expect(engine.spoken, ['First answer', 'Second answer']);
 
-      // Same release as the stop-then-replay test: stop() releases the
-      // replay only if its speak already filed its completer; the 5s pump
-      // fires the replay's 4s cap as a backstop ('Second answer' is also
-      // 2 words), so the id clears either way and no parked speak survives.
-      await tts.stop();
+      // Same release as the stop-then-replay test: stop() is fired, not
+      // awaited — awaiting it would hang on its engine call — and the
+      // pumps flush the queue, so the guard clears the id. No long
+      // backstop pump (see that test — the hang was never in the tail).
+      unawaited(tts.stop());
       await tester.pump();
-      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
       expect(container.read(speakingMessageIdProvider), isNull);
     });
   });
