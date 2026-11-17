@@ -1,8 +1,15 @@
 /// The in-app browser — Aaron's own browser inside Clawzilla.
 ///
 /// One page at a time: no extra tabs, no downloads, no saved history, no
-/// stored logins. It is a fresh browser, not Chrome, so sites ask him to sign
-/// in again. Search goes to Brave Search (Aaron's pick, Nov 7, 2026), never
+/// stored logins. It does not save usernames or passwords — but it does keep
+/// a site's own session (cookies/localStorage) like any browser: nothing in
+/// the app clears them (build #113 audit: no CookieManager/cache clearing
+/// anywhere in lib/ or android/, and the tab stays mounted, so the WebView
+/// is created once per app launch). Once Aaron signs in to Artistly or
+/// VideoExpress, the chip should land him straight in until the site's own
+/// session expires — only a session-only cookie (one the site never gives
+/// an expiry) is lost when the app is killed, and that is the site's
+/// choice, not the app's. Search goes to Brave Search (Aaron's pick, Nov 7, 2026), never
 /// Google. The engine underneath is Android System WebView — Android does not
 /// let an app embed Brave's own engine, so only the search default is Brave.
 ///
@@ -161,6 +168,12 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     unawaited(_openUrl(toBrowsableUrl(value)));
   }
 
+  /// Build #113: back to the Brave home/search page from anywhere in the
+  /// browser. Same load path as the chips — the address bar updates too.
+  void _goHome() {
+    unawaited(_openUrl(BrowserScreen.braveHome));
+  }
+
   Future<void> _openUrl(String url) async {
     _addressController.text = url;
     _addressFocus.unfocus();
@@ -202,6 +215,11 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
             child: Row(
               children: [
+                IconButton(
+                  icon: const Icon(Icons.home),
+                  tooltip: 'Home',
+                  onPressed: _goHome,
+                ),
                 IconButton(
                   icon: const Icon(Icons.arrow_back),
                   tooltip: 'Back',

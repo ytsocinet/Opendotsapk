@@ -15,6 +15,12 @@
 /// the selection behavior, and the error feedback. What they cannot prove:
 /// that a real device keyboard fires onSubmitted (the Go button removes
 /// that dependency) or that a real WebView renders the page.
+///
+/// Build #113 adds the Home button (back to Brave home from anywhere) and
+/// audits the login session: nothing in the app clears WebView cookies or
+/// storage, so a site's own session persists — the test below only pins
+/// the Home button, since session persistence is a platform behavior the
+/// fake platform cannot prove.
 import 'dart:async';
 
 import 'package:clawzilla/presentation/screens/browser_screen.dart';
@@ -306,6 +312,23 @@ void main() {
       );
       await tester.pump();
       expect(find.textContaining('Could not load'), findsNothing);
+    });
+  });
+
+  group('browser home button (build #113)', () {
+    testWidgets('Home loads the Brave home page from another page',
+        (tester) async {
+      final loaded = <Uri>[];
+      final platform = FakeWebViewPlatform(loaded);
+      await pumpBrowser(tester, platform);
+      // Navigate away first, as Aaron does (chip → login page).
+      await tester.tap(find.text('Artistly'));
+      await tester.pump();
+      expect(loaded.last, Uri.parse('https://app.artistly.ai/login'));
+      // Home takes him back to Brave home/search.
+      await tester.tap(find.byTooltip('Home'));
+      await tester.pump();
+      expect(loaded.last, Uri.parse(BrowserScreen.braveHome));
     });
   });
 }
