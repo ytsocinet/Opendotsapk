@@ -13,11 +13,15 @@
 /// Google. The engine underneath is Android System WebView — Android does not
 /// let an app embed Brave's own engine, so only the search default is Brave.
 ///
-/// Aaron-only in v1: the agent (Cypher) gets no tool for this browser. A link
-/// tapped in a chat message opens here instead of leaving the app — the tile
-/// writes [browserOpenRequestProvider] and this screen loads it. The agent
-/// page-reader is a future step, explicitly decided Nov 7, 2026, not this
-/// batch.
+/// A link tapped in a chat message opens here instead of leaving the app —
+/// the tile writes [browserOpenRequestProvider] and this screen loads it.
+///
+/// Build #114: Cypher can now drive this browser through one tool,
+/// `generate_on_site` — it opens Artistly in here, types the prompt, and
+/// hits generate, all inside Aaron's already-signed-in session. The tool
+/// goes through [BrowserDriver], which this screen registers its
+/// controller with below; the agent still cannot browse freely, click
+/// anything else, or touch a login form.
 ///
 /// Browsing is network by definition, the same as the web_search tool the app
 /// already has. The browser only loads a page when Aaron opens it or taps a
@@ -32,6 +36,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../providers/providers.dart';
+import '../../data/services/browser_driver.dart';
 
 /// Turn address-bar text or a tapped link into a URL the WebView can load.
 ///
@@ -80,12 +85,25 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     _addressFocus.addListener(_onAddressFocusChanged);
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      // Build #114: the page can push messages to the driver through the
+      // `Clawzilla` channel (the push path for later recipes; v1 polls
+      // instead). Registered before the first load, since a channel only
+      // takes effect after the next page load.
+      ..addJavaScriptChannel(
+        'Clawzilla',
+        onMessageReceived: (message) {
+          BrowserDriver.instance.onChannelMessage(message.message);
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (progress) {
             if (mounted) setState(() => _progress = progress);
           },
           onPageFinished: (url) async {
+            // Build #114: the driver waits on page loads (the
+            // `generate_on_site` recipe arms its wait before navigating).
+            BrowserDriver.instance.notifyPageFinished(url);
             final title = await _controller.getTitle();
             final canBack = await _controller.canGoBack();
             final canForward = await _controller.canGoForward();
@@ -130,10 +148,16 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
         ),
       )
       ..loadRequest(Uri.parse(BrowserScreen.braveHome));
+    // Build #114: hand the controller to the driver so the
+    // `generate_on_site` tool can drive this tab. The tab stays mounted
+    // for the whole app run, so the controller effectively lives once
+    // per launch.
+    BrowserDriver.instance.registerController(_controller);
   }
 
   @override
   void dispose() {
+    BrowserDriver.instance.unregisterController(_controller);
     _addressFocus.removeListener(_onAddressFocusChanged);
     _addressController.dispose();
     _addressFocus.dispose();
@@ -263,9 +287,11 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
           ),
           // One-tap shortcuts to Aaron's creative tools (Nov 11, 2026):
           // Artistly for images, VideoExpress for video. They are plain
-          // websites — the app just opens them here, it does not drive
-          // them. Sign-in is the site's own; this is a fresh browser, so
-          // he signs in again the first time.
+          // websites. Sign-in is the site's own; the browser keeps the
+          // session (build #113), so a chip lands him straight in once
+          // he has signed in. Build #114: Cypher can also drive Artistly
+          // here through the `generate_on_site` tool — the chips are
+          // still just shortcuts, not the tool itself.
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: Row(

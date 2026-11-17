@@ -38,10 +38,12 @@ import '../../data/services/storage_models_store.dart';
 import '../../data/services/background_task_service.dart';
 import '../../data/services/wake_service.dart';
 import '../../data/tools/tool_registry.dart';
+import '../../data/tools/tool_permission_store.dart';
 import '../widgets/biometric_gate.dart';
 import '../../domain/models/cloud_provider.dart';
 import '../../domain/models/local_model.dart';
 import '../../domain/models/models.dart';
+import '../../domain/models/tool_result.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -974,8 +976,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         // the file tools and runs its own one-round file-tool loop
         // (build #107), so a full tools section on a cloud turn would
         // only make the model print raw JSON for tools it cannot call.
-        final toolsSection =
-            await ref.read(toolRegistryProvider).promptSection();
+        //
+        // Build #114: a tool set to Block in Settings → Tools must not
+        // be offered to the model at all. The registry has no store of
+        // its own, so the blocked names are collected here and passed
+        // in. (Only the prompt list is filtered — execution-time
+        // enforcement for other tools is still the orchestrator's job;
+        // the chat path enforces it for generate_on_site below, because
+        // that tool spends Aaron's Artistly credits.)
+        final blockedTools = <String>{};
+        final permissionNotifier =
+            ref.read(toolPermissionsProvider.notifier);
+        for (final name in ref.read(toolRegistryProvider).tools.keys) {
+          if (permissionNotifier.getPermission(name) ==
+              ToolPermission.block) {
+            blockedTools.add(name);
+          }
+        }
+        final toolsSection = await ref
+            .read(toolRegistryProvider)
+            .promptSection(blockedTools: blockedTools);
         final request = await _buildRequest(
           message: '$display$docCtx$ideCtx',
           priorHistory: priorHistory,
@@ -998,9 +1018,60 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         final call = parseToolCall(_currentResponse);
         if (call != null && !_stopRequested) {
           final registry = ref.read(toolRegistryProvider);
-          final result = await registry.executeTool(
-            toolName: call.tool,
-            params: call.params,
+          // Build #114: the live chat path never consulted the per-tool
+          // permission store — the Tools-screen dropdown for
+          // generate_on_site would have been decorative. This tool spends
+          // Aaron's Artistly credits, so the gate is enforced here:
+          // Block refuses without running, Ask shows a confirmation
+          // dialog first, Allow runs it. Other tools keep their current
+          // behaviour (the orchestrator enforces theirs); only this
+          // tool is gated in the chat path.
+          final permission = ref
+              .read(toolPermissionsProvider.notifier)
+              .getPermission(call.tool);
+          ToolResult result;
+          if (call.tool == 'generate_on_site') {
+            if (permission == ToolPermission.block) {
+              result = ToolResult.failed(
+                'generate_on_site is blocked in Settings → Tools. '
+                'Switch it to Ask or Allow to let Cypher generate.',
+              );
+            } else if (permission == ToolPermission.ask) {
+              final approved =
+                  await _confirmToolCall(call.tool, call.params);
+              result = approved
+                  ? await registry.executeTool(
+                      toolName: call.tool,
+                      params: call.params,
+                    )
+                  : ToolResult.failed(
+                      'You declined to run "generate_on_site".',
+                    );
+            } else {
+              result = await registry.executeTool(
+                toolName: call.tool,
+                params: call.params,
+              );
+            }
+          } else {
+            result = await registry.executeTool(
+              toolName: call.tool,
+              params: call.params,
+            );
+          }
+          // Build #114 audit trail: the live chat path never logged tool
+          // calls, so a generation Cypher ran in Aaron's Artistly
+          // account left no trace. Every call in this path is recorded
+          // now — what ran, with what parameters, what came back, and
+          // under which permission level. The write is fire-and-forget:
+          // logging must never break the turn.
+          unawaited(
+            ToolRegistry.logToolCall(
+              toolName: call.tool,
+              params: call.params,
+              result: result,
+              permissionLevel: permission.wire,
+            ),
           );
           // Build #100: a file Cypher just wrote becomes the open file in
           // the IDE, so the next turn reads it back and Cypher can pick
@@ -1924,6 +1995,51 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ],
       ),
     );
+  }
+
+  /// Asks Aaron to approve one tool call before it runs.
+  ///
+  /// Build #114: the `generate_on_site` tool spends his Artistly
+  /// credits, so Ask must ask — one confirmation showing what Cypher is
+  /// about to do, before anything is clicked in the browser. Returns
+  /// false when he declines, or when the dialog is dismissed. A missing
+  /// context (the screen is gone) also refuses: silence is not consent.
+  Future<bool> _confirmToolCall(
+    String toolName,
+    Map<String, dynamic> params,
+  ) async {
+    final summary = params.entries
+        .map((e) {
+          final value = e.value.toString();
+          final shown = value.length > 200
+              ? '${value.substring(0, 200)}…'
+              : value;
+          return '${e.key}: $shown';
+        })
+        .join('\n');
+    final approved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Run $toolName?'),
+        content: Text(
+          'Cypher wants to run "$toolName" with:\n\n$summary\n\n'
+          'This generates in your Artistly account and can spend '
+          'credits.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Run it'),
+          ),
+        ],
+      ),
+    );
+    return approved ?? false;
   }
 
   void _startVoiceInput() async {

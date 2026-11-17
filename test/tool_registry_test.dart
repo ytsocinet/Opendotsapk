@@ -10,6 +10,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:clawzilla/core/utils/json_extract.dart';
+import 'package:clawzilla/data/services/browser_driver.dart';
 import 'package:clawzilla/data/tools/tool_permission_store.dart';
 import 'package:clawzilla/data/tools/tool_registry.dart';
 import 'package:clawzilla/domain/models/tool_result.dart';
@@ -655,6 +656,103 @@ void main() {
         expect(result.status, ToolStatus.failed);
         expect(result.isSuccess, isFalse);
       }
+    });
+  });
+
+  group('generate_on_site (build #114)', () {
+    test('the tool is registered, implemented, and offered to the model',
+        () {
+      final def = registry.tools['generate_on_site']!;
+      expect(def.implemented, isTrue);
+      expect(def.required, containsAll(['site', 'kind', 'prompt']));
+      expect(
+        registry.toolsForModel.map((t) => t.name),
+        contains('generate_on_site'),
+      );
+    });
+
+    test('defaults to Ask and is never silent', () {
+      expect(
+        ToolPermissionStore.defaultFor('generate_on_site'),
+        ToolPermission.ask,
+      );
+      expect(ToolPermissionStore.isSilent('generate_on_site'), isFalse);
+    });
+
+    test('never runs on a cloud turn', () {
+      expect(ToolRegistry.isCloudFileTool('generate_on_site'), isFalse);
+    });
+
+    test('a non-allowlisted site is refused before anything loads',
+        () async {
+      final result = await registry.executeTool(
+        toolName: 'generate_on_site',
+        params: {'site': 'youtube', 'kind': 'image', 'prompt': 'a cat'},
+      );
+      expect(result.status, ToolStatus.failed);
+      expect(result.message, contains('refused'));
+      expect(result.isSuccess, isFalse);
+    });
+
+    test('VideoExpress is refused as unimplemented, not attempted',
+        () async {
+      final result = await registry.executeTool(
+        toolName: 'generate_on_site',
+        params: {
+          'site': 'videoexpress',
+          'kind': 'video',
+          'prompt': 'a clip',
+        },
+      );
+      expect(result.status, ToolStatus.unsupported);
+      expect(result.isSuccess, isFalse);
+    });
+
+    test('a non-image kind is refused', () async {
+      final result = await registry.executeTool(
+        toolName: 'generate_on_site',
+        params: {'site': 'artistly', 'kind': 'video', 'prompt': 'a clip'},
+      );
+      expect(result.status, ToolStatus.failed);
+      expect(result.isSuccess, isFalse);
+    });
+
+    test('missing or empty prompt is refused before touching the browser',
+        () async {
+      for (final params in [
+        <String, dynamic>{'site': 'artistly', 'kind': 'image'},
+        {'site': 'artistly', 'kind': 'image', 'prompt': ''},
+        {'site': 'artistly', 'kind': 'image', 'prompt': '   '},
+      ]) {
+        final result = await registry.executeTool(
+          toolName: 'generate_on_site',
+          params: params,
+        );
+        expect(result.status, ToolStatus.failed);
+        expect(result.isSuccess, isFalse);
+      }
+    });
+
+    test('with no browser controller registered it fails honestly',
+        () async {
+      BrowserDriver.instance.resetForTest();
+      final result = await registry.executeTool(
+        toolName: 'generate_on_site',
+        params: {'site': 'artistly', 'kind': 'image', 'prompt': 'a cat'},
+      );
+      expect(result.status, ToolStatus.failed);
+      expect(result.message, contains('not ready'));
+      expect(result.isSuccess, isFalse);
+    });
+
+    test('a Blocked tool is hidden from the model prompt', () async {
+      final section = await registry.promptSection(
+        blockedTools: {'generate_on_site'},
+      );
+      expect(section, isNot(contains('generate_on_site')));
+      // And unblocked it is offered.
+      final open = await registry.promptSection();
+      expect(open, contains('generate_on_site'));
     });
   });
 }

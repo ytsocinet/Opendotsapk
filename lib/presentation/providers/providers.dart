@@ -632,6 +632,12 @@ class PermissionsNotifier extends StateNotifier<Map<String, String>> {
     await _store.set(tool, ToolPermission.parse(permission));
     state = Map.from(state)..[tool] = permission;
   }
+
+  /// The permission for [tool], from the persisted store. Falls back to
+  /// the default (ask for most tools) when the store has not loaded yet
+  /// — the safe direction: a tool that has not loaded is asked about,
+  /// never silently run.
+  ToolPermission getPermission(String tool) => _store.get(tool);
 }
 
 // Activity Log Provider

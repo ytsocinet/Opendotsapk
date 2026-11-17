@@ -1,13 +1,13 @@
-/// Tools screen — the nine built-in device tools plus MCP servers.
+/// Tools screen — the ten built-in device tools plus MCP servers.
 ///
 /// The permission model is the important part here. A tool is Allow, Ask, or
 /// Block, and "Ask" means a confirmation sheet on every call. Blocking a tool
 /// is enforced in the agent loop, not just in this UI, so the model cannot
 /// route around it.
 ///
-/// The tools are laid out as a grid because they are scanned, not read: nine
+/// The tools are laid out as a grid because they are scanned, not read: ten
 /// rows of equal content is a column of "more", and the grid lets the status
-/// of all nine be seen at once. Below the two-column breakpoint it collapses
+/// of all ten be seen at once. Below the two-column breakpoint it collapses
 /// to a single column so nothing is truncated on a narrow phone.
 library;
 
@@ -268,6 +268,8 @@ class _ToolCard extends ConsumerWidget {
         return Icons.note_add_outlined;
       case AppConstants.toolReadNotes:
         return Icons.library_books_outlined;
+      case AppConstants.toolGenerateOnSite:
+        return Icons.image_outlined;
       default:
         return Icons.handyman_outlined;
     }
@@ -298,6 +300,9 @@ class _ToolCard extends ConsumerWidget {
         return 'Saves a local note, encrypted at rest.';
       case AppConstants.toolReadNotes:
         return 'Reads your local notes.';
+      case AppConstants.toolGenerateOnSite:
+        return 'Generates an image on Artistly in the browser. Spends '
+            'your Artistly credits — Ask first is the honest default.';
       default:
         return '';
     }

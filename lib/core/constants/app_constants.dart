@@ -115,6 +115,7 @@ Be concise.''';
   static const String toolGetLocation = 'get_location';
   static const String toolCreateNote = 'create_note';
   static const String toolReadNotes = 'read_notes';
+  static const String toolGenerateOnSite = 'generate_on_site';
 
   // ----------------------------------------------------------- permission levels
   static const String permissionAllow = 'allow';
@@ -131,6 +132,10 @@ Be concise.''';
     toolGetLocation: permissionAsk,
     toolCreateNote: permissionAllow,
     toolReadNotes: permissionAllow,
+    // Build #114: Ask by default — every generation can spend Aaron's
+    // Artistly credits, so it asks first until he explicitly chooses
+    // silent. It must NOT be treated as a silent tool.
+    toolGenerateOnSite: permissionAsk,
   };
 
   // -------------------------------------------------------------- personalities

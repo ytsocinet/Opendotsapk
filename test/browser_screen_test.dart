@@ -23,6 +23,7 @@
 /// fake platform cannot prove.
 import 'dart:async';
 
+import 'package:clawzilla/data/services/browser_driver.dart';
 import 'package:clawzilla/presentation/screens/browser_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -49,6 +50,11 @@ class FakePlatformWebViewController extends PlatformWebViewController {
   @override
   Future<void> setPlatformNavigationDelegate(
     PlatformNavigationDelegate delegate,
+  ) async {}
+
+  @override
+  Future<void> addJavaScriptChannel(
+    JavaScriptChannelParams params,
   ) async {}
 
   @override
@@ -329,6 +335,18 @@ void main() {
       await tester.tap(find.byTooltip('Home'));
       await tester.pump();
       expect(loaded.last, Uri.parse(BrowserScreen.braveHome));
+    });
+  });
+
+  group('browser driver registration (build #114)', () {
+    testWidgets('the screen hands its controller to the driver',
+        (tester) async {
+      BrowserDriver.instance.resetForTest();
+      addTearDown(BrowserDriver.instance.resetForTest);
+      final loaded = <Uri>[];
+      final platform = FakeWebViewPlatform(loaded);
+      await pumpBrowser(tester, platform);
+      expect(BrowserDriver.instance.hasController, isTrue);
     });
   });
 }

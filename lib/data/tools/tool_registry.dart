@@ -38,7 +38,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/utils/json_extract.dart';
+import '../../core/utils/log.dart';
 import '../../domain/models/tool_result.dart';
+import '../services/browser_driver.dart';
 import '../services/connected_apps_store.dart';
 import '../services/llm_service.dart';
 import '../services/location_weather_service.dart';
@@ -130,6 +132,41 @@ class ToolRegistry {
           'label': {'type': 'string', 'description': 'Alarm label'},
         },
         required: ['time'],
+        implemented: true,
+      ),
+    );
+
+    add(
+      ToolDefinition(
+        name: 'generate_on_site',
+        description:
+            'Generate an image on Artistly inside the in-app browser, '
+            'using the user\'s own signed-in session. Only use when the '
+            'user asked for an image to be generated. This build only '
+            'generates images on Artistly ("site": "artistly", "kind": '
+            '"image"); VideoExpress video is not built yet, and any other '
+            'site is refused. The user must already be signed in to '
+            'Artistly in the browser — never ask for, type, or read a '
+            'password.',
+        parameters: {
+          'site': {
+            'type': 'string',
+            'description': '"artistly" (only site built in this build)',
+          },
+          'kind': {
+            'type': 'string',
+            'description': '"image" (only kind built in this build)',
+          },
+          'prompt': {
+            'type': 'string',
+            'description': 'What to generate, in the user\'s words',
+          },
+          'options': {
+            'type': 'object',
+            'description': 'Optional style/size settings (may be ignored)',
+          },
+        },
+        required: ['site', 'kind', 'prompt'],
         implemented: true,
       ),
     );
@@ -466,8 +503,15 @@ class ToolRegistry {
   /// the model which packages are valid. The full section is local-only:
   /// the cloud path gets only the file tools, via [fileToolsSection],
   /// and parses one file-tool round there.
-  Future<String> promptSection() async {
-    final tools = toolsForModel;
+  ///
+  /// Build #114: [blockedTools] hides tools the user set to Block in
+  /// Settings → Tools from the model. The registry has no permission
+  /// store of its own, so the caller (the chat screen, which owns the
+  /// store) passes the blocked names in.
+  Future<String> promptSection({Set<String> blockedTools = const {}}) async {
+    final tools = toolsForModel
+        .where((t) => !blockedTools.contains(t.name))
+        .toList();
     if (tools.isEmpty) return '';
     final lines = <String>[
       'You can use tools. When the user asks for something a tool can do, '
@@ -589,6 +633,8 @@ class ToolRegistry {
     switch (toolName) {
       case 'web_search':
         return _executeWebSearch(params);
+      case 'generate_on_site':
+        return _executeGenerateOnSite(params);
       case 'create_note':
         return _executeCreateNote(params);
       case 'read_notes':
@@ -635,6 +681,36 @@ class ToolRegistry {
         return _executeDeleteGoal(params);
       default:
         return ToolResult.unsupported('No implementation for "$toolName".');
+    }
+  }
+
+  /// Records one tool call in the activity log — what ran, with what
+  /// parameters, what came back, and under which permission level.
+  ///
+  /// Build #114: the live chat path never logged tool calls, so a
+  /// generation Cypher ran in Aaron's Artistly account left no trace.
+  /// The orchestrator has its own private logger for its path; this is
+  /// the shared one for callers that run tools directly (the chat
+  /// screen). Logging must never break the user's request, so a failure
+  /// here is swallowed after one warning.
+  static Future<void> logToolCall({
+    required String toolName,
+    required Map<String, dynamic> params,
+    required ToolResult result,
+    required String permissionLevel,
+  }) async {
+    try {
+      await DatabaseHelper.instance.insertActivityLog(
+        id: const Uuid().v4(),
+        toolName: toolName,
+        params: jsonEncode(params),
+        result: result.toJson(),
+        status: result.status.wire,
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+        permissionLevel: permissionLevel,
+      );
+    } catch (e) {
+      Log.w('ToolRegistry: could not record activity for "$toolName": $e');
     }
   }
 
@@ -1645,6 +1721,96 @@ class ToolRegistry {
       );
     } catch (e) {
       return ToolResult.failed('Search failed: $e');
+    }
+  }
+
+  /// Generates media on a website through the in-app browser.
+  ///
+  /// Build #114: one self-contained call — the chat path runs exactly
+  /// one tool round per turn, so the whole generation (navigate, fill,
+  /// click, wait for the result) has to happen inside this call.
+  ///
+  /// Guardrails, in order: the site allowlist is enforced here before
+  /// anything loads; only Artistly images are built in this build
+  /// (VideoExpress video is refused as unimplemented, not attempted);
+  /// the driver acts inside Aaron's already-signed-in session and never
+  /// sees, stores, types, or reads credentials. Local-only: the cloud
+  /// path offers only the file tools, so this tool never appears on a
+  /// cloud turn.
+  Future<ToolResult> _executeGenerateOnSite(
+    Map<String, dynamic> params,
+  ) async {
+    final site = (params['site'] as String?)?.trim().toLowerCase();
+    final kind = (params['kind'] as String?)?.trim().toLowerCase();
+    final prompt = (params['prompt'] as String?)?.trim();
+
+    if (site == null || site.isEmpty) {
+      return ToolResult.failed(
+        'generate_on_site requires a "site".',
+      );
+    }
+    if (!BrowserDriver.allowedSites.contains(site)) {
+      return ToolResult.failed(
+        'Cypher can only generate on Artistly and VideoExpress — '
+        '"$site" is refused. Nothing was opened.',
+      );
+    }
+    if (kind == null || kind.isEmpty) {
+      return ToolResult.failed('generate_on_site requires a "kind".');
+    }
+    if (site == 'videoexpress') {
+      // The allowlist names both sites, but only the Artistly image
+      // recipe is built in this build. Refused as unimplemented — the
+      // model is told plainly, and nothing is opened. This runs before
+      // the kind check so a video request to VideoExpress reports "not
+      // built yet" instead of "bad kind".
+      return ToolResult.unsupported(
+        'Generating on VideoExpress is not built yet — Artistly images '
+        'only in this build. Nothing was opened.',
+      );
+    }
+    if (kind != 'image') {
+      return ToolResult.failed(
+        'Only "image" generation is built in this build — "$kind" is '
+        'not supported yet.',
+      );
+    }
+    if (prompt == null || prompt.isEmpty) {
+      return ToolResult.failed(
+        'generate_on_site requires a non-empty "prompt".',
+      );
+    }
+
+    final result =
+        await BrowserDriver.instance.generateOnArtistly(prompt: prompt);
+    switch (result.status) {
+      case BrowserGenerationStatus.ready:
+        return ToolResult.success(
+          result.message,
+          data: {
+            'site': site,
+            'kind': kind,
+            'prompt': prompt,
+            'status': 'ready',
+            'urls': result.urls,
+          },
+        );
+      case BrowserGenerationStatus.generating:
+        // The generation started — the click landed — but no result
+        // appeared within the poll cap. Success is honest here: the
+        // action (starting the generation) happened; the result is
+        // pending, and the message says exactly that.
+        return ToolResult.success(
+          result.message,
+          data: {
+            'site': site,
+            'kind': kind,
+            'prompt': prompt,
+            'status': 'generating',
+          },
+        );
+      case BrowserGenerationStatus.failed:
+        return ToolResult.failed(result.message);
     }
   }
 
