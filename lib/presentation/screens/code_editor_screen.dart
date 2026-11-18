@@ -252,7 +252,11 @@ class _CodeEditorScreenState extends ConsumerState<CodeEditorScreen> {
                       expands: true,
                       keyboardType: TextInputType.multiline,
                       textAlignVertical: TextAlignVertical.top,
-                      style: theme.textTheme.bodyMedium,
+                      // Code, not UI text: monospace survives the Inter
+                      // switch (build #118) for the editor surface.
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontFamily: 'monospace',
+                      ),
                       decoration: const InputDecoration(
                         border: InputBorder.none,
                         hintText: 'Empty file — start typing.',

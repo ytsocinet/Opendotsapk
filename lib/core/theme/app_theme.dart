@@ -12,9 +12,8 @@ import 'package:flutter/material.dart';
 import '../constants/app_constants.dart';
 
 /// Semantic colours. Most are *not* derivable from the seed
-/// (success/warning states, the glow behind AI content); the two chat
-/// bubble roles ARE derived from it, so they follow the theme-colour
-/// setting instead of staying Matrix green.
+/// (success/warning states); the two chat bubble roles ARE derived from it,
+/// so they follow the theme-colour setting instead of staying Matrix green.
 class AppColors {
   AppColors._();
 
@@ -34,15 +33,27 @@ class AppColors {
   static const Color warning = Color(0xFFFBBF24);
   static const Color danger = Color(0xFFF87171);
 
-  /// Page background — pitch black, darker than the cards so elevation reads
-  /// even at 0dp. Clawziod look (was 0xFF070B08).
-  static const Color background = Color(0xFF050807);
+  /// Page background — upstream LocalMind's soft charcoal, not black.
+  /// Upstream's page is *lighter* than its panels, the reverse of the old
+  /// terminal look (pitch black 0xFF050807 over near-black cards).
+  static const Color background = Color(0xFF212121);
 
-  /// Card / sheet surface.
-  static const Color surface = Color(0xFF0E1510);
+  /// Card / sheet surface — upstream's panel charcoal.
+  static const Color surface = Color(0xFF171717);
 
-  /// Raised surface (dialogs, expanded cards, the input bar).
-  static const Color surfaceHigh = Color(0xFF141D15);
+  /// Raised surface (dialogs, expanded cards, the input bar) — upstream's
+  /// input/card fill.
+  static const Color surfaceHigh = Color(0xFF2F2F2F);
+
+  /// The one border colour: upstream's thin grey. Cards, dialogs and bubbles
+  /// use this — nothing gets a green border any more (build #118).
+  static const Color border = Color(0xFF424242);
+
+  /// Primary text — upstream's near-white.
+  static const Color text = Color(0xFFECECEC);
+
+  /// Muted text — upstream's grey.
+  static const Color muted = Color(0xFFB4B4B4);
 
   /// The model's own bubble — a dark tint of the picked brand colour, so
   /// it follows the theme-colour setting instead of staying Matrix green.
@@ -56,8 +67,7 @@ class AppColors {
   /// it follows the theme-colour setting too. With the default brand this
   /// resolves to (22, 162, 78), the old 0xFF16A34A to within a shade.
   /// Lighter than [aiBubble] so the two roles stay distinct.
-  static Color get userBubble =>
-      _brandTint(saturation: 0.76, lightness: 0.36);
+  static Color get userBubble => _brandTint(saturation: 0.76, lightness: 0.36);
 
   /// A tint of [brand] at a fixed saturation and lightness: the hue is
   /// the brand's, so the colour follows the theme-colour setting, while
@@ -67,19 +77,17 @@ class AppColors {
     required double lightness,
   }) {
     final hsl = HSLColor.fromColor(brand);
-    return hsl
-        .withSaturation(saturation)
-        .withLightness(lightness)
-        .toColor();
+    return hsl.withSaturation(saturation).withLightness(lightness).toColor();
   }
 }
 
 class AppTheme {
   AppTheme._();
 
-  /// Corner radius used everywhere. 16 for containers, 12 for controls —
-  /// large enough to feel soft, small enough not to look like a toy.
-  static const double radiusLarge = 16;
+  /// Corner radii, upstream LocalMind's values: 12 for cards and inputs,
+  /// 8 for buttons. [radiusMedium] stays 12 — it is what cards, bubbles and
+  /// inputs read in the screens — while buttons read [radiusSmall].
+  static const double radiusLarge = 12;
   static const double radiusMedium = 12;
   static const double radiusSmall = 8;
 
@@ -88,40 +96,56 @@ class AppTheme {
   /// The seed is [AppColors.brand], which the app root sets from the
   /// theme-colour setting before building the theme — Matrix green unless
   /// the user picked another colour. Everything derived from the seed
-  /// (buttons, sliders, card borders, selected states) follows it; the
-  /// fixed near-black surfaces stay put.
+  /// (buttons, sliders, selected states) follows it; the fixed charcoal
+  /// surfaces stay put.
   ///
   /// Dark is not a preference here: the app is a long-session chat client and
-  /// a model download progress screen, both of which people run at night. The
-  /// surfaces are stepped (`background < surface < surfaceHigh`) instead of
-  /// relying on elevation shadows, because shadows on near-black are invisible
-  /// and elevation then carries no information.
+  /// a model download progress screen, both of which people run at night.
+  /// The surfaces are upstream's stepped charcoals (`surface` darker than
+  /// `background`, `surfaceHigh` lighter than both) instead of relying on
+  /// elevation shadows, because shadows on charcoal carry little
+  /// information and elevation then reads as a border instead.
   static ThemeData get dark {
     final seed = AppColors.brand;
-    final scheme =
-        ColorScheme.fromSeed(
-          seedColor: seed,
-          brightness: Brightness.dark,
-        ).copyWith(
-          primary: seed,
-          secondary: AppColors.accent,
-          surface: AppColors.surface,
-          surfaceContainerLowest: AppColors.background,
-          surfaceContainerLow: Color(0xFF0A0F0B),
-          surfaceContainer: AppColors.surface,
-          surfaceContainerHigh: AppColors.surfaceHigh,
-          surfaceContainerHighest: Color(0xFF1B261C),
-          error: AppColors.danger,
-          outline: const Color(0xFF223526),
-        );
+    final scheme = ColorScheme.fromSeed(
+      seedColor: seed,
+      brightness: Brightness.dark,
+    ).copyWith(
+      primary: seed,
+      secondary: AppColors.accent,
+      surface: AppColors.surface,
+      surfaceContainerLowest: AppColors.background,
+      surfaceContainerLow: const Color(0xFF1E1E1E),
+      surfaceContainer: AppColors.surface,
+      surfaceContainerHigh: AppColors.surfaceHigh,
+      surfaceContainerHighest: AppColors.surfaceHigh,
+      error: AppColors.danger,
+      outline: AppColors.border,
+      onSurface: AppColors.text,
+      onSurfaceVariant: AppColors.muted,
+    );
 
     final text = _textTheme(scheme);
 
     return ThemeData(
       useMaterial3: true,
-      // Clawziod look: monospace everywhere. 'monospace' is a built-in
-      // generic family, so this needs no font download.
-      fontFamily: 'monospace',
+      // Body/UI text is the platform default sans (Roboto on Android), not
+      // Inter — deliberately (build #118). Inter was tried via google_fonts
+      // 6.3.3 (resolves cleanly, runtime download, no .ttf in the repo) and
+      // rejected: wiring it into this getter makes every plain unit test
+      // that builds the theme fail. GoogleFonts.interTextTheme() fires a
+      // fire-and-forget font load that needs ServicesBinding, path_provider
+      // and the network, and its loader *rethrows* on failure as an
+      // unhandled async error — so the theme smoke test, whose whole point
+      // is to be a binding-free plain-expect guard, goes red, and so would
+      // any future plain test that touches AppTheme.dark. The fixes are all
+      // worse than the font: network-dependent test runs, or .ttf test
+      // fixtures (binary files the push path cannot push), or hardcoding
+      // google_fonts' internal variant family names. Literal Inter can
+      // still land later as bundled .ttf assets through a push route that
+      // carries binaries. Monospace survives only where it is content, not
+      // chrome: code blocks (flutter_markdown pins those itself) and the
+      // CLAWZILLA wordmark.
       colorScheme: scheme,
       scaffoldBackgroundColor: AppColors.background,
       textTheme: text,
@@ -170,10 +194,8 @@ class AppTheme {
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusLarge),
-          // Terminal panels: a thin green border instead of the grey outline.
-          side: BorderSide(
-            color: scheme.primary.withValues(alpha: 0.28),
-          ),
+          // Upstream look: a thin grey border, no green, no glow.
+          side: const BorderSide(color: AppColors.border),
         ),
       ),
       dialogTheme: DialogThemeData(
@@ -181,9 +203,7 @@ class AppTheme {
         backgroundColor: AppColors.surfaceHigh,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusLarge + 4),
-          side: BorderSide(
-            color: scheme.primary.withValues(alpha: 0.28),
-          ),
+          side: const BorderSide(color: AppColors.border),
         ),
         titleTextStyle: text.titleLarge,
         contentTextStyle: text.bodyMedium,
@@ -220,7 +240,7 @@ class AppTheme {
         style: FilledButton.styleFrom(
           minimumSize: const Size(64, 48),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(radiusMedium),
+            borderRadius: BorderRadius.circular(radiusSmall),
           ),
           textStyle: text.labelLarge,
         ),
@@ -232,7 +252,7 @@ class AppTheme {
           backgroundColor: scheme.primary,
           foregroundColor: scheme.onPrimary,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(radiusMedium),
+            borderRadius: BorderRadius.circular(radiusSmall),
           ),
           textStyle: text.labelLarge,
         ),
@@ -240,7 +260,7 @@ class AppTheme {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(radiusMedium),
+            borderRadius: BorderRadius.circular(radiusSmall),
           ),
           textStyle: text.labelLarge,
         ),
@@ -249,7 +269,7 @@ class AppTheme {
         style: OutlinedButton.styleFrom(
           minimumSize: const Size(64, 48),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(radiusMedium),
+            borderRadius: BorderRadius.circular(radiusSmall),
           ),
           textStyle: text.labelLarge,
         ),
@@ -258,7 +278,7 @@ class AppTheme {
         style: ButtonStyle(
           shape: WidgetStatePropertyAll(
             RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(radiusMedium),
+              borderRadius: BorderRadius.circular(radiusSmall),
             ),
           ),
         ),
@@ -376,12 +396,13 @@ class AppTheme {
   /// 1.4 for body) because chat is a line-oriented format: looser leading
   /// makes a transcript feel like a slide deck. Sizes are otherwise stock so
   /// the system font-scaling slider keeps behaving the way users expect.
+  /// No fontFamily is pinned here: body/UI text renders in the platform
+  /// default sans (see the note on the ThemeData above for why Inter is
+  /// not wired in).
   static TextTheme _textTheme(ColorScheme scheme) {
-    const color = Color(0xFFE9ECF5);
-    const muted = Color(0xFF9AA3B5);
+    const color = AppColors.text;
+    const muted = AppColors.muted;
 
-    // `.apply` pins monospace onto every style: the ThemeData fontFamily
-    // above is the fallback, this is the guarantee.
     return TextTheme(
       displaySmall: const TextStyle(
         fontSize: 34,
@@ -431,6 +452,6 @@ class AppTheme {
         fontWeight: FontWeight.w500,
         color: muted,
       ),
-    ).apply(fontFamily: 'monospace');
+    );
   }
 }

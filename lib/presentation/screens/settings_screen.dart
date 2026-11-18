@@ -291,17 +291,10 @@ class _ProminentModelsSection extends ConsumerWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        border: Border.all(
-          color: scheme.primary.withValues(alpha: 0.3),
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: scheme.primary.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        // Upstream look (build #118): thin grey border, no glow. The
+        // accent-tint gradient fill stays — it is what marks this card as
+        // the prominent one, the same way a selected state keeps its tint.
+        border: Border.all(color: AppColors.border, width: 1.5),
       ),
       child: Material(
         color: Colors.transparent,
@@ -323,13 +316,7 @@ class _ProminentModelsSection extends ConsumerWidget {
                   decoration: BoxDecoration(
                     color: scheme.primary,
                     shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: scheme.primary.withValues(alpha: 0.4),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
+                    // Upstream look (build #118): no glow under the badge.
                   ),
                   child: ClipOval(
                     child: Image.asset(

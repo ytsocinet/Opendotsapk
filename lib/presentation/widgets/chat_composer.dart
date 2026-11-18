@@ -114,31 +114,21 @@ class _ChatComposerState extends State<ChatComposer>
       animation: _focusController,
       builder: (context, child) {
         final borderWidth = 1.5 + (_focusController.value * 1.5);
-        final glowOpacity = _focusController.value * 0.15;
 
         return Container(
           padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
           decoration: BoxDecoration(
             color: AppColors.surfaceHigh,
+            // Upstream look (build #118): the top border stays grey when
+            // focused — it only thickens — and the green focus glow is gone.
             border: Border(
               top: BorderSide(
                 color: widget.focusNode.hasFocus
-                    ? scheme.primary.withValues(
-                        alpha: 0.5 + 0.3 * _focusController.value,
-                      )
+                    ? scheme.outline
                     : scheme.outlineVariant.withValues(alpha: 0.5),
                 width: borderWidth,
               ),
             ),
-            boxShadow: [
-              if (widget.focusNode.hasFocus)
-                BoxShadow(
-                  color: scheme.primary.withValues(alpha: glowOpacity),
-                  blurRadius: 20,
-                  spreadRadius: 2,
-                  offset: const Offset(0, -4),
-                ),
-            ],
           ),
           // No bottom inset here: the chat screen wraps the composer and
           // the mode bar below it in one SafeArea, so the inset is applied

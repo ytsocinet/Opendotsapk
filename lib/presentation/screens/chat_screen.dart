@@ -2415,16 +2415,9 @@ class _ChatHeaderState extends State<_ChatHeader>
                           height: 36,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            border: Border.all(
-                              color: AppColors.brand.withValues(alpha: 0.4),
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.brand.withValues(alpha: 0.2),
-                                blurRadius: 8,
-                                spreadRadius: 1,
-                              ),
-                            ],
+                            // Upstream look (build #118): thin grey border,
+                            // no green glow.
+                            border: Border.all(color: AppColors.border),
                           ),
                           child: ClipOval(
                             child: Image.asset(
@@ -2452,7 +2445,12 @@ class _ChatHeaderState extends State<_ChatHeader>
                           children: [
                             Text(
                               'CLAWZILLA',
-                              style: Theme.of(context).textTheme.titleLarge,
+                              // Wordmark keeps monospace (build #118) — the
+                              // theme no longer pins it globally.
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleLarge
+                                  ?.copyWith(fontFamily: 'monospace'),
                             ),
                             Text(
                               'LOCAL AGENT',
@@ -2460,6 +2458,7 @@ class _ChatHeaderState extends State<_ChatHeader>
                                   ?.copyWith(
                                     letterSpacing: 2.0,
                                     color: scheme.onSurfaceVariant,
+                                    fontFamily: 'monospace',
                                   ),
                             ),
                           ],
@@ -4136,16 +4135,10 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                 decoration: BoxDecoration(
                   color: AppColors.accent.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: AppColors.accent.withValues(alpha: 0.35),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.accent.withValues(alpha: 0.15),
-                      blurRadius: 8,
-                      spreadRadius: 1,
-                    ),
-                  ],
+                  // Upstream look (build #118): thin grey border, no glow.
+                  // The faint accent fill stays, so the mark still reads as
+                  // Cypher.
+                  border: Border.all(color: AppColors.border),
                 ),
                 child: ClipOval(
                   child: Image.asset(

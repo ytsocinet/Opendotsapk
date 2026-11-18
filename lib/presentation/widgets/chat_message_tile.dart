@@ -166,29 +166,21 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
       constraints: BoxConstraints(maxWidth: maxWidth),
       decoration: BoxDecoration(
         color: isUser ? AppColors.userBubble : AppColors.aiBubble,
-        // Clawziod look: terminal panels — 12 px rounding and a thin green
-        // border on both roles (the user bubble used to have no border).
+        // Upstream look (build #118): 12 px rounding and a thin grey
+        // border on both roles — no green border, no green glow. Both
+        // bubbles share one soft drop shadow for depth.
         borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
         border: Border.all(
-          color: AppColors.brand.withValues(alpha: isUser ? 0.25 : 0.35),
+          color: scheme.outlineVariant.withValues(alpha: 0.45),
         ),
-        boxShadow: isUser
-            ? [
-                BoxShadow(
-                  color: AppColors.brand.withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                  spreadRadius: 0,
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 4,
-                  offset: const Offset(0, 1),
-                  spreadRadius: 0,
-                ),
-              ],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+            spreadRadius: 0,
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -433,18 +425,15 @@ class _AssistantAvatarState extends State<_AssistantAvatar>
           width: 30,
           height: 30,
           decoration: BoxDecoration(
-            color: AppColors.accent.withValues(alpha: 0.12),
+            // The fill breathes gently with the pulse controller (the old
+            // green glow is gone with build #118); the border stays grey.
+            color: AppColors.accent.withValues(
+              alpha: 0.12 + (0.03 * _pulseController.value),
+            ),
             shape: BoxShape.circle,
-            border: Border.all(color: AppColors.accent.withValues(alpha: 0.28)),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.accent.withValues(
-                  alpha: 0.15 + (0.1 * _pulseController.value),
-                ),
-                blurRadius: 8,
-                spreadRadius: 1,
-              ),
-            ],
+            // Upstream look (build #118): thin grey border, no green glow.
+            // The faint accent fill stays, so the mark still reads as Cypher.
+            border: Border.all(color: AppColors.border),
           ),
           child: ClipOval(
             child: Image.asset(

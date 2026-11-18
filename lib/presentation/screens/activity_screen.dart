@@ -421,7 +421,6 @@ class _DetailLine extends StatelessWidget {
             TextSpan(
               text: value,
               style: theme.textTheme.bodySmall?.copyWith(
-                fontFamily: 'monospace',
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),

@@ -140,9 +140,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     height: 36,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      border: Border.all(
-                        color: AppColors.brand.withValues(alpha: 0.4),
-                      ),
+                      // Upstream look (build #118): thin grey border.
+                      border: Border.all(color: AppColors.border),
                     ),
                     child: ClipOval(
                       child: Image.asset(
@@ -158,12 +157,19 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('CLAWZILLA', style: textTheme.titleLarge),
+                      // Wordmark keeps monospace (build #118) — the theme
+                      // no longer pins it globally.
+                      Text(
+                        'CLAWZILLA',
+                        style: textTheme.titleLarge
+                            ?.copyWith(fontFamily: 'monospace'),
+                      ),
                       Text(
                         'LOCAL AGENT',
                         style: textTheme.labelSmall?.copyWith(
                           letterSpacing: 2.0,
                           color: scheme.onSurfaceVariant,
+                          fontFamily: 'monospace',
                         ),
                       ),
                     ],

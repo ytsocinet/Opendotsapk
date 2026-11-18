@@ -64,7 +64,10 @@ void main() {
     });
 
     test('keeps the shared corner radii', () {
-      expect(AppTheme.radiusLarge, 16.0);
+      // Upstream LocalMind's radii (build #118): 12 for cards/inputs, 8 for
+      // buttons. radiusMedium stays 12 — it is what cards, bubbles and
+      // inputs read — while buttons read radiusSmall.
+      expect(AppTheme.radiusLarge, 12.0);
       expect(AppTheme.radiusMedium, 12.0);
       expect(AppTheme.radiusSmall, 8.0);
     });
@@ -86,6 +89,9 @@ void main() {
       'background': AppColors.background,
       'surface': AppColors.surface,
       'surfaceHigh': AppColors.surfaceHigh,
+      'border': AppColors.border,
+      'text': AppColors.text,
+      'muted': AppColors.muted,
       'aiBubble': AppColors.aiBubble,
       'userBubble': AppColors.userBubble,
     };
@@ -110,25 +116,42 @@ void main() {
       expect(AppColors.accent, const Color(0xFF10B981));
     });
 
-    test('uses the Clawziod canvas and monospace type', () {
-      // Pitch black, not the old near-black; monospace on every style, so a
-      // screen that hand-writes its own TextStyle without the theme font is
-      // the only way non-mono text can still slip in.
-      expect(AppColors.background, const Color(0xFF050807));
+    test('uses the upstream charcoal canvas and the platform sans', () {
+      // Soft charcoal, not the old pitch black; no font family pinned on
+      // any style, so body/UI text renders in the platform default sans
+      // (Roboto on Android). Literal Inter was tried via google_fonts and
+      // rejected — see the note on AppTheme.dark: it breaks plain tests
+      // that build the theme. Monospace survives only where it is content
+      // (code blocks, editor, log dumps, wordmark), never on theme styles.
+      expect(AppColors.background, const Color(0xFF212121));
+      expect(AppColors.surface, const Color(0xFF171717));
+      expect(AppColors.surfaceHigh, const Color(0xFF2F2F2F));
+      expect(AppColors.border, const Color(0xFF424242));
+      expect(AppColors.text, const Color(0xFFECECEC));
+      expect(AppColors.muted, const Color(0xFFB4B4B4));
       final theme = AppTheme.dark;
-      expect(theme.textTheme.bodyMedium?.fontFamily, 'monospace');
-      expect(theme.textTheme.titleLarge?.fontFamily, 'monospace');
-      expect(theme.textTheme.labelSmall?.fontFamily, 'monospace');
+      // No family is pinned anywhere in AppTheme, so every style inherits
+      // the Material default sans: 'Roboto' (Typography.blackMountainView).
+      // That is the platform default on Android too.
+      expect(theme.textTheme.bodyMedium?.fontFamily, 'Roboto');
+      expect(theme.textTheme.titleLarge?.fontFamily, 'Roboto');
+      expect(theme.textTheme.labelSmall?.fontFamily, 'Roboto');
     });
 
     test('surfaces are stepped so elevation reads without shadows', () {
-      // background < surface < surfaceHigh. Kept as an ordering rather than
+      // Upstream's stepping is the reverse of the old terminal look: the
+      // page background is the lightest of the three charcoals, the card
+      // surface is darker than the page, and the raised surface (inputs,
+      // dialogs) is lighter than both. Kept as an ordering rather than
       // exact values so the palette can be re-tuned without breaking the
       // relationship the theme depends on.
       double luma(Color c) => c.computeLuminance();
 
-      expect(luma(AppColors.surface), greaterThan(luma(AppColors.background)));
-      expect(luma(AppColors.surfaceHigh), greaterThan(luma(AppColors.surface)));
+      expect(luma(AppColors.surface), lessThan(luma(AppColors.background)));
+      expect(
+        luma(AppColors.surfaceHigh),
+        greaterThan(luma(AppColors.background)),
+      );
     });
   });
 
