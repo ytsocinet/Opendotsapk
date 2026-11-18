@@ -550,6 +550,8 @@ void main() {
         'list_tasks',
         'create_goal',
         'list_goals',
+        // Build #116: Artistly generation runs on cloud turns too.
+        'generate_on_site',
       ]) {
         // The '- name:' list line, not a bare substring: the JSON
         // example at the top of the section names open_app too.
@@ -559,13 +561,10 @@ void main() {
       expect(section, contains('Only save code the turn actually produced'));
     });
 
-    test('never offers generate_on_site or analyze_image to a cloud turn',
-        () async {
-      // generate_on_site drives the in-app browser through the live
-      // controller (local-only, #114); analyze_image needs a loaded
-      // local vision model, which a cloud turn never has.
+    test('never offers analyze_image to a cloud turn', () async {
+      // analyze_image needs a loaded local vision model, which a cloud
+      // turn never has. generate_on_site joined the cloud set in #116.
       final section = await registry.cloudToolsSection();
-      expect(section, isNot(contains('generate_on_site')));
       expect(section, isNot(contains('analyze_image')));
     });
 
@@ -593,12 +592,11 @@ void main() {
           reason: '$tool must run on a cloud turn',
         );
       }
-      expect(ToolRegistry.cloudTools.length, 22);
+      expect(ToolRegistry.cloudTools.length, 23);
     });
 
-    test('generate_on_site, analyze_image, and unknown names do not', () {
+    test('analyze_image and unknown names do not', () {
       for (final tool in [
-        'generate_on_site',
         'analyze_image',
         'does_not_exist',
       ]) {
@@ -649,6 +647,15 @@ void main() {
         ToolRegistry.decideCloudCall('send_sms', ToolPermission.allow),
         CloudToolDecision.run,
       );
+      // Build #116: a cloud generation runs when allowed, same as any
+      // other phone tool.
+      expect(
+        ToolRegistry.decideCloudCall(
+          'generate_on_site',
+          ToolPermission.allow,
+        ),
+        CloudToolDecision.run,
+      );
     });
 
     test('Block refuses without running', () {
@@ -664,6 +671,13 @@ void main() {
         ToolRegistry.decideCloudCall('delete_task', ToolPermission.block),
         CloudToolDecision.refuseBlocked,
       );
+      expect(
+        ToolRegistry.decideCloudCall(
+          'generate_on_site',
+          ToolPermission.block,
+        ),
+        CloudToolDecision.refuseBlocked,
+      );
     });
 
     test('Ask means ask first', () {
@@ -675,14 +689,14 @@ void main() {
         ToolRegistry.decideCloudCall('web_search', ToolPermission.ask),
         CloudToolDecision.ask,
       );
+      expect(
+        ToolRegistry.decideCloudCall('generate_on_site', ToolPermission.ask),
+        CloudToolDecision.ask,
+      );
     });
 
     test('tools outside the cloud set are never executed', () {
       for (final permission in ToolPermission.values) {
-        expect(
-          ToolRegistry.decideCloudCall('generate_on_site', permission),
-          CloudToolDecision.notAllowed,
-        );
         expect(
           ToolRegistry.decideCloudCall('analyze_image', permission),
           CloudToolDecision.notAllowed,
@@ -866,7 +880,10 @@ void main() {
       expect(ToolPermissionStore.isSilent('generate_on_site'), isFalse);
     });
 
-    test('never runs on a cloud turn', () {
+    test('is a cloud tool, not a file tool (build #116)', () {
+      // It runs on a cloud turn through the Ask gate — but it is not a
+      // file tool, so it never runs with no Ask dialog.
+      expect(ToolRegistry.isCloudTool('generate_on_site'), isTrue);
       expect(ToolRegistry.isCloudFileTool('generate_on_site'), isFalse);
     });
 

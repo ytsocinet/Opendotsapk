@@ -519,8 +519,8 @@ class ToolRegistry {
   /// refuses unconnected packages at execution time; this list only tells
   /// the model which packages are valid. The cloud path gets the same
   /// tools via [cloudToolsSection] — everything here except
-  /// `generate_on_site` and `analyze_image` — and parses one tool round
-  /// there.
+  /// `analyze_image` (build #116 opened `generate_on_site` to cloud
+  /// turns) — and parses one tool round there.
   ///
   /// Build #114: [blockedTools] hides tools the user set to Block in
   /// Settings → Tools from the model. The registry has no permission
@@ -595,13 +595,19 @@ class ToolRegistry {
   /// already do. Local turns are broken (90s hang, separate fix), so
   /// cloud is the only working path, and a cloud turn that could save
   /// code but not open YouTube was the gap Aaron hit. The set is every
-  /// implemented tool except the two that cannot work from a cloud turn:
+  /// implemented tool except the one that cannot work from a cloud turn:
   ///
-  /// - `generate_on_site` (#114) drives the in-app browser through the
-  ///   live controller and is local-only by design; it is not offered
-  ///   here and a cloud reply naming it is left as plain text.
   /// - `analyze_image` needs a loaded local vision model; on a cloud
   ///   turn none is loaded, so it could never succeed.
+  ///
+  /// Build #116: `generate_on_site` joined the set. It drives the
+  /// in-app browser through the live WebViewController, and that
+  /// controller is reachable from a cloud turn: BrowserScreen is created
+  /// once in main_screen.dart and stays mounted through every tab
+  /// switch, so it stays registered with BrowserDriver for the whole
+  /// app session. It is NOT a silent tool — its default is Ask, so a
+  /// cloud generation still asks first, exactly as on the local path
+  /// (#114).
   ///
   /// The per-tool permission store still gates every non-file tool here
   /// (see [decideCloudCall]): Block refuses, Ask shows the confirmation
@@ -631,6 +637,9 @@ class ToolRegistry {
     'update_goal',
     'complete_goal',
     'delete_goal',
+    // Browser generation (build #116): Artistly images on a cloud turn,
+    // Ask first — never silent, never a file tool.
+    'generate_on_site',
   };
 
   /// Whether [toolName] may run on a cloud turn.
@@ -1841,9 +1850,11 @@ class ToolRegistry {
   /// anything loads; only Artistly images are built in this build
   /// (VideoExpress video is refused as unimplemented, not attempted);
   /// the driver acts inside Aaron's already-signed-in session and never
-  /// sees, stores, types, or reads credentials. Local-only: the cloud
-  /// path offers only the file tools, so this tool never appears on a
-  /// cloud turn.
+  /// sees, stores, types, or reads credentials. Build #116: this tool
+  /// runs on cloud turns too, through the same Ask gate as the other
+  /// phone tools — the driver call is guarded so a mid-run failure
+  /// returns a failed result instead of throwing out of executeTool
+  /// and killing the turn.
   Future<ToolResult> _executeGenerateOnSite(
     Map<String, dynamic> params,
   ) async {
@@ -1888,8 +1899,17 @@ class ToolRegistry {
       );
     }
 
-    final result =
-        await BrowserDriver.instance.generateOnArtistly(prompt: prompt);
+    BrowserGenerationResult result;
+    try {
+      result = await BrowserDriver.instance.generateOnArtistly(
+        prompt: prompt,
+      );
+    } catch (e) {
+      // A mid-run failure (the controller unregistered under us, a JS
+      // evaluation throwing) must fail the tool honestly, not throw out
+      // of executeTool and kill the whole turn with a snackbar.
+      return ToolResult.failed('Artistly generation failed: $e');
+    }
     switch (result.status) {
       case BrowserGenerationStatus.ready:
         return ToolResult.success(

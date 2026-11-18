@@ -1370,11 +1370,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final cloud = ref.read(cloudServiceProvider);
 
       // Build #115: the cloud model gets the phone tools in
-      // [ToolRegistry.cloudTools] — everything except generate_on_site
-      // (local-only browser driving, #114) and analyze_image (needs a
-      // loaded local vision model). Before #115 the cloud path carried
-      // only the file tools, so a cloud turn could save code but never
-      // open an app — the "open YouTube" refusal Aaron hit.
+      // [ToolRegistry.cloudTools]. Build #116 added generate_on_site
+      // to that set — the browser controller stays registered while
+      // the app is alive, so a cloud turn can drive Artistly too, Ask
+      // first. Only analyze_image stays out (needs a loaded local
+      // vision model). Before #115 the cloud path carried only the
+      // file tools, so a cloud turn could save code but never open an
+      // app — the "open YouTube" refusal Aaron hit.
       final cloudTools = await ref
           .read(toolRegistryProvider)
           .cloudToolsSection(blockedTools: _blockedToolNames());
@@ -1396,11 +1398,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // reply was a tool call, run it and generate a brief answer from
       // the result. The raw JSON never reaches the transcript — the
       // follow-up answer replaces it. A call naming a tool outside the
-      // cloud set (generate_on_site, analyze_image) is left as a plain
-      // answer: it never runs. File tools run with no Ask dialog, as
-      // since #107; every other cloud tool goes through the stored
-      // permission — Block refuses without running, Ask shows the
-      // confirmation dialog, Allow runs.
+      // cloud set (analyze_image) is left as a plain answer: it never
+      // runs. File tools run with no Ask dialog, as since #107; every
+      // other cloud tool goes through the stored permission — Block
+      // refuses without running, Ask shows the confirmation dialog,
+      // Allow runs.
       final call = parseToolCall(_currentResponse);
       if (call != null && !_stopRequested) {
         final registry = ref.read(toolRegistryProvider);
@@ -2141,6 +2143,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         return 'This saves the contact on your phone.';
       case 'set_alarm':
         return 'This sets an alarm on your phone.';
+      case 'generate_on_site':
+        // Same line as the local path (#114): a generation spends his
+        // Artistly credits, so the dialog says so in plain words.
+        return 'This generates in your Artistly account and can spend credits.';
       case 'get_location':
         return 'This shares your current location with the answer.';
       case 'create_note':
