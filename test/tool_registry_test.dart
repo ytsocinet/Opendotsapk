@@ -10,6 +10,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:clawzilla/core/utils/json_extract.dart';
 import 'package:clawzilla/data/services/browser_driver.dart';
 import 'package:clawzilla/data/services/connected_apps_store.dart';
@@ -857,6 +858,147 @@ void main() {
         expect(result.status, ToolStatus.failed);
         expect(result.isSuccess, isFalse);
       }
+    });
+  });
+
+  group('send_sms contacts permission (build #117)', () {
+    const appsChannel = MethodChannel('clawzilla/apps');
+    const permissionsChannel =
+        MethodChannel('flutter.baseflow.com/permissions/methods');
+
+    // The permission_handler channel protocol, read from the package
+    // source (permission_handler_platform_interface 4.4.1):
+    // `checkPermissionStatus` takes a permission value and returns a
+    // status code; `requestPermissions` takes a list of values and
+    // returns a map of value to status code. Status codes are the
+    // PermissionStatus enum order: denied 0, granted 1, permanentlyDenied
+    // 4. Permission values come from the enum, not magic numbers.
+    final checkStatuses = <int, int>{};
+    final requestStatuses = <int, int>{};
+    final requested = <int>[];
+    final sentTo = <String>[];
+
+    setUp(() {
+      checkStatuses.clear();
+      requestStatuses.clear();
+      requested.clear();
+      sentTo.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(permissionsChannel, (call) async {
+        if (call.method == 'checkPermissionStatus') {
+          return checkStatuses[call.arguments as int] ?? 0;
+        }
+        if (call.method == 'requestPermissions') {
+          final values = (call.arguments as List).cast<int>();
+          requested.addAll(values);
+          return {
+            for (final value in values) value: requestStatuses[value] ?? 1,
+          };
+        }
+        return null;
+      });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(appsChannel, (call) async {
+        if (call.method == 'sendSms') {
+          final args = call.arguments as Map;
+          sentTo.add(args['recipient'] as String);
+          return 'ok';
+        }
+        return null;
+      });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(permissionsChannel, null);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(appsChannel, null);
+    });
+
+    test('a name recipient requests contacts permission, then sends',
+        () async {
+      // The #117 failure: texting "Shannon" never asked for contacts
+      // permission, so the native lookup failed with no_number before
+      // anything was sent — even though she was in his contacts.
+      final result = await registry.executeTool(
+        toolName: 'send_sms',
+        params: {
+          'recipient': 'Shannon',
+          'message': 'Good morning, testing my AI',
+        },
+      );
+      expect(result.isSuccess, isTrue);
+      expect(result.message, contains('Sent the SMS to Shannon.'));
+      expect(
+        requested,
+        [Permission.contacts.value, Permission.sms.value],
+        reason: 'contacts first (the lookup runs first natively), then SMS',
+      );
+      expect(sentTo, ['Shannon']);
+    });
+
+    test('a bare number never asks for contacts permission', () async {
+      final result = await registry.executeTool(
+        toolName: 'send_sms',
+        params: {'recipient': '5551234567', 'message': 'hi'},
+      );
+      expect(result.isSuccess, isTrue);
+      expect(requested, [Permission.sms.value]);
+      expect(sentTo, ['5551234567']);
+    });
+
+    test('phone punctuation still counts as a number', () async {
+      final result = await registry.executeTool(
+        toolName: 'send_sms',
+        params: {'recipient': '+1 (555) 123-4567', 'message': 'hi'},
+      );
+      expect(result.isSuccess, isTrue);
+      expect(requested, [Permission.sms.value]);
+      expect(sentTo, ['+1 (555) 123-4567']);
+    });
+
+    test('a denied contacts permission fails naming Contacts, unsent',
+        () async {
+      requestStatuses[Permission.contacts.value] = 0;
+      final result = await registry.executeTool(
+        toolName: 'send_sms',
+        params: {'recipient': 'Shannon', 'message': 'hi'},
+      );
+      expect(result.status, ToolStatus.requiresPermission);
+      expect(result.message, contains('Contacts'));
+      expect(result.isSuccess, isFalse);
+      expect(sentTo, isEmpty);
+      expect(
+        requested,
+        [Permission.contacts.value],
+        reason: 'the SMS permission is never consulted once contacts fails',
+      );
+    });
+
+    test('a permanently denied contacts permission names Settings',
+        () async {
+      requestStatuses[Permission.contacts.value] = 4;
+      final result = await registry.executeTool(
+        toolName: 'send_sms',
+        params: {'recipient': 'Shannon', 'message': 'hi'},
+      );
+      expect(result.status, ToolStatus.requiresPermission);
+      expect(
+        result.message,
+        contains('Settings → Apps → Clawzilla → Permissions'),
+      );
+      expect(sentTo, isEmpty);
+    });
+
+    test('a denied SMS permission fails naming SMS', () async {
+      requestStatuses[Permission.sms.value] = 0;
+      final result = await registry.executeTool(
+        toolName: 'send_sms',
+        params: {'recipient': '5551234567', 'message': 'hi'},
+      );
+      expect(result.status, ToolStatus.requiresPermission);
+      expect(result.message, contains('SMS'));
+      expect(sentTo, isEmpty);
     });
   });
 

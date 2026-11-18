@@ -1604,11 +1604,29 @@ class ToolRegistry {
     );
   }
 
+  /// Whether [recipient] is a bare phone number, mirroring the native
+  /// `resolveSmsNumber` check exactly: digits and phone punctuation only,
+  /// with at least 7 digits. Anything else is a contact name and needs
+  /// the contacts permission to resolve.
+  static bool _isSmsNumber(String recipient) {
+    final digits = recipient.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length < 7) return false;
+    return RegExp(r'^[0-9+\- ().]+$').hasMatch(recipient);
+  }
+
   /// Sends an SMS with SmsManager — no composer, no confirmation. The
   /// recipient may be a phone number or a contact name (the native side
   /// looks the name up). Returns success only when SmsManager accepted
   /// the message; a wrong-but-valid recipient goes out as-is, which is
   /// the silent behaviour Aaron asked for (build #110).
+  ///
+  /// Build #117: a name recipient is looked up in the contacts provider,
+  /// which needs READ_CONTACTS — so the contacts permission is requested
+  /// first when the recipient is not a bare number. Before #117 only
+  /// Permission.sms was requested here, so texting "Shannon" always
+  /// failed with no_number even though she was in his contacts: the
+  /// native lookup threw SecurityException and returned null before
+  /// anything was sent.
   Future<ToolResult> _executeSendSms(Map<String, dynamic> params) async {
     final recipient = (params['recipient'] as String?)?.trim();
     final message = (params['message'] as String?)?.trim();
@@ -1617,6 +1635,16 @@ class ToolRegistry {
     }
     if (message == null || message.isEmpty) {
       return ToolResult.failed('send_sms requires a "message".');
+    }
+    // The native side looks a name up to a number first, and that lookup
+    // needs READ_CONTACTS — ask for it before the SMS permission, in the
+    // same order the native call uses them. A bare number needs no
+    // contacts access, so it must not pop a contacts dialog.
+    if (!_isSmsNumber(recipient)) {
+      final contacts = await _ensurePermission(Permission.contacts);
+      if (!contacts.isGranted) {
+        return _permissionDenied('Contacts', contacts);
+      }
     }
     final permission = await _ensurePermission(Permission.sms);
     if (!permission.isGranted) {
