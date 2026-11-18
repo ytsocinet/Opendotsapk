@@ -28,6 +28,7 @@ import '../../data/services/assistant_launch.dart';
 import '../../data/services/document_service.dart';
 import '../../data/services/gpu_service.dart';
 import '../../data/services/cloud_service.dart';
+import '../../data/services/connected_apps_store.dart';
 import '../../data/services/model_manager.dart';
 import '../../data/services/model_preflight.dart';
 import '../../data/services/embedding_service.dart';
@@ -972,11 +973,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       });
 
       try {
-        // The full tool set is local-only: the cloud path carries only
-        // the file tools and runs its own one-round file-tool loop
-        // (build #107), so a full tools section on a cloud turn would
-        // only make the model print raw JSON for tools it cannot call.
-        //
         // Build #114: a tool set to Block in Settings → Tools must not
         // be offered to the model at all. The registry has no store of
         // its own, so the blocked names are collected here and passed
@@ -984,18 +980,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         // enforcement for other tools is still the orchestrator's job;
         // the chat path enforces it for generate_on_site below, because
         // that tool spends Aaron's Artistly credits.)
-        final blockedTools = <String>{};
-        final permissionNotifier =
-            ref.read(toolPermissionsProvider.notifier);
-        for (final name in ref.read(toolRegistryProvider).tools.keys) {
-          if (permissionNotifier.getPermission(name) ==
-              ToolPermission.block) {
-            blockedTools.add(name);
-          }
-        }
         final toolsSection = await ref
             .read(toolRegistryProvider)
-            .promptSection(blockedTools: blockedTools);
+            .promptSection(blockedTools: _blockedToolNames());
         final request = await _buildRequest(
           message: '$display$docCtx$ideCtx',
           priorHistory: priorHistory,
@@ -1037,8 +1024,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 'Switch it to Ask or Allow to let Cypher generate.',
               );
             } else if (permission == ToolPermission.ask) {
-              final approved =
-                  await _confirmToolCall(call.tool, call.params);
+              final approved = await _confirmToolCall(
+                call.tool,
+                call.params,
+                note: 'This generates in your Artistly account and can '
+                    'spend credits.',
+              );
               result = approved
                   ? await registry.executeTool(
                       toolName: call.tool,
@@ -1378,16 +1369,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
       final cloud = ref.read(cloudServiceProvider);
 
-      // File tools on the cloud path (build #107): the cloud model gets
-      // read/write_project_file plus the #100 save rule — and nothing
-      // else. The full tool set stays local-only, so a cloud turn can
-      // never open an app or read the location.
-      final fileTools =
-          await ref.read(toolRegistryProvider).fileToolsSection();
+      // Build #115: the cloud model gets the phone tools in
+      // [ToolRegistry.cloudTools] — everything except generate_on_site
+      // (local-only browser driving, #114) and analyze_image (needs a
+      // loaded local vision model). Before #115 the cloud path carried
+      // only the file tools, so a cloud turn could save code but never
+      // open an app — the "open YouTube" refusal Aaron hit.
+      final cloudTools = await ref
+          .read(toolRegistryProvider)
+          .cloudToolsSection(blockedTools: _blockedToolNames());
       final request = await _buildRequest(
         message: prompt,
         priorHistory: priorHistory,
-        toolsSection: fileTools,
+        toolsSection: cloudTools,
       );
       await _streamCloudReply(
         cloud: cloud,
@@ -1398,57 +1392,103 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       );
       _flushNow();
 
-      // One file-tool round per cloud turn, mirroring the local path: if
-      // the reply was a file-tool call, run it and generate a brief
-      // answer from the result. The raw JSON never reaches the
-      // transcript — the follow-up answer replaces it. A call naming any
-      // other tool is left as a plain answer: phone-side tools never run
-      // on a cloud turn.
+      // One tool round per cloud turn, mirroring the local path: if the
+      // reply was a tool call, run it and generate a brief answer from
+      // the result. The raw JSON never reaches the transcript — the
+      // follow-up answer replaces it. A call naming a tool outside the
+      // cloud set (generate_on_site, analyze_image) is left as a plain
+      // answer: it never runs. File tools run with no Ask dialog, as
+      // since #107; every other cloud tool goes through the stored
+      // permission — Block refuses without running, Ask shows the
+      // confirmation dialog, Allow runs.
       final call = parseToolCall(_currentResponse);
-      if (call != null &&
-          ToolRegistry.isCloudFileTool(call.tool) &&
-          !_stopRequested) {
+      if (call != null && !_stopRequested) {
         final registry = ref.read(toolRegistryProvider);
-        final result = await registry.executeTool(
-          toolName: call.tool,
-          params: call.params,
-        );
-        // Build #100, same as the local path: a file Cypher just wrote
-        // becomes the open file in the IDE, so the next turn reads it
-        // back and Cypher can pick the code up where it left off. The
-        // chip shows it as soon as the setting lands.
-        final written = IdeFile.activeFileAfterWrite(
-          toolName: call.tool,
-          success: result.isSuccess,
-          data: result.data,
-        );
-        if (written != null) {
-          await ref
-              .read(settingsProvider.notifier)
-              .updateSetting('last_ide_file', written);
+        final permission = ref
+            .read(toolPermissionsProvider.notifier)
+            .getPermission(call.tool);
+        final gate = ToolRegistry.decideCloudCall(call.tool, permission);
+        if (gate != CloudToolDecision.notAllowed) {
+          ToolResult result;
+          switch (gate) {
+            case CloudToolDecision.refuseBlocked:
+              result = ToolResult.failed(
+                '"${call.tool}" is blocked in Settings → Tools. Switch '
+                'it to Ask or Allow to let Cypher use it.',
+              );
+            case CloudToolDecision.ask:
+              final approved = await _confirmToolCall(
+                call.tool,
+                call.params,
+                note: await _cloudConfirmNote(call.tool, call.params),
+              );
+              result = approved
+                  ? await registry.executeTool(
+                      toolName: call.tool,
+                      params: call.params,
+                    )
+                  : ToolResult.failed(
+                      'You declined to run "${call.tool}".',
+                    );
+            case CloudToolDecision.run:
+              result = await registry.executeTool(
+                toolName: call.tool,
+                params: call.params,
+              );
+            case CloudToolDecision.notAllowed:
+              // Guarded by the `if` above; unreachable.
+              result = ToolResult.failed('Tool not allowed on cloud turns.');
+          }
+          // Build #115 audit trail, same as the live path (#114): every
+          // tool call this path runs — or refuses — is recorded, so an
+          // SMS sent or an app opened from a cloud turn leaves a trace.
+          // The write is fire-and-forget: logging must never break the
+          // turn.
+          unawaited(
+            ToolRegistry.logToolCall(
+              toolName: call.tool,
+              params: call.params,
+              result: result,
+              permissionLevel: permission.wire,
+            ),
+          );
+          // Build #100, same as the local path: a file Cypher just wrote
+          // becomes the open file in the IDE, so the next turn reads it
+          // back and Cypher can pick the code up where it left off. The
+          // chip shows it as soon as the setting lands.
+          final written = IdeFile.activeFileAfterWrite(
+            toolName: call.tool,
+            success: result.isSuccess,
+            data: result.data,
+          );
+          if (written != null) {
+            await ref
+                .read(settingsProvider.notifier)
+                .updateSetting('last_ide_file', written);
+          }
+          // Clear the tool JSON out of the bubble before the answer streams.
+          _pendingTokens = '';
+          _flushTimer?.cancel();
+          _flushTimer = null;
+          if (mounted) {
+            setState(() => _currentResponse = '');
+          }
+          final followUp = await _buildRequest(
+            message:
+                'The tool "${call.tool}" returned:\n${TextUtils.ellipsize(result.toJson(), 2000)}\n'
+                'Answer the user briefly based on this result. Do not call another tool — answer directly in plain text.',
+            priorHistory: [...priorHistory, userMessage],
+            // No tools section: this turn answers, it does not act.
+          );
+          await _streamCloudReply(
+            cloud: cloud,
+            provider: provider,
+            modelId: decision.modelId,
+            messages: _cloudMessages(followUp),
+            imagesB64: const [],
+          );
+          _flushNow();
         }
-        // Clear the tool JSON out of the bubble before the answer streams.
-        _pendingTokens = '';
-        _flushTimer?.cancel();
-        _flushTimer = null;
-        if (mounted) {
-          setState(() => _currentResponse = '');
-        }
-        final followUp = await _buildRequest(
-          message:
-              'The tool "${call.tool}" returned:\n${TextUtils.ellipsize(result.toJson(), 2000)}\n'
-              'Answer the user briefly based on this result. Do not call another tool — answer directly in plain text.',
-          priorHistory: [...priorHistory, userMessage],
-          // No tools section: this turn answers, it does not act.
-        );
-        await _streamCloudReply(
-          cloud: cloud,
-          provider: provider,
-          modelId: decision.modelId,
-          messages: _cloudMessages(followUp),
-          imagesB64: const [],
-        );
-        _flushNow();
       }
 
       await _finishAssistantMessage();
@@ -1997,6 +2037,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
+  /// The tools Aaron set to Block in Settings → Tools. The registry has
+  /// no permission store of its own, so the caller collects them and
+  /// passes them in. Shared by the local prompt and the cloud section,
+  /// so a Blocked tool is hidden from the model on both paths.
+  Set<String> _blockedToolNames() {
+    final permissionNotifier = ref.read(toolPermissionsProvider.notifier);
+    return {
+      for (final name in ref.read(toolRegistryProvider).tools.keys)
+        if (permissionNotifier.getPermission(name) ==
+            ToolPermission.block)
+          name,
+    };
+  }
+
   /// Asks Aaron to approve one tool call before it runs.
   ///
   /// Build #114: the `generate_on_site` tool spends his Artistly
@@ -2004,10 +2058,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// about to do, before anything is clicked in the browser. Returns
   /// false when he declines, or when the dialog is dismissed. A missing
   /// context (the screen is gone) also refuses: silence is not consent.
+  ///
+  /// Build #115: [note] is the plain-language line under the params —
+  /// the Artistly line lives at the #114 call site now, so a cloud tool
+  /// can explain itself instead. Null means no note line.
   Future<bool> _confirmToolCall(
     String toolName,
-    Map<String, dynamic> params,
-  ) async {
+    Map<String, dynamic> params, {
+    String? note,
+  }) async {
     final summary = params.entries
         .map((e) {
           final value = e.value.toString();
@@ -2023,9 +2082,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       builder: (dialogContext) => AlertDialog(
         title: Text('Run $toolName?'),
         content: Text(
-          'Cypher wants to run "$toolName" with:\n\n$summary\n\n'
-          'This generates in your Artistly account and can spend '
-          'credits.',
+          'Cypher wants to run "$toolName" with:\n\n$summary'
+          '${note == null ? '' : '\n\n$note'}',
         ),
         actions: [
           TextButton(
@@ -2040,6 +2098,66 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ),
     );
     return approved ?? false;
+  }
+
+  /// The plain-language note for the Ask dialog on a cloud turn, or null
+  /// when the params speak for themselves (read-only tools).
+  ///
+  /// Build #115: the dialog shows the raw params, and a package name
+  /// like com.google.android.youtube does not read as "YouTube" — so
+  /// app tools resolve the label from the connected list first. A lookup
+  /// that fails leaves the package name in the dialog; the gate still
+  /// refuses unconnected apps at execution time.
+  Future<String?> _cloudConfirmNote(
+    String tool,
+    Map<String, dynamic> params,
+  ) async {
+    switch (tool) {
+      case 'open_app':
+      case 'share_to_app':
+        final package = params['package_name'] as String?;
+        var label = package ?? tool;
+        if (package != null) {
+          try {
+            final entries = await ConnectedAppsStore.instance.entries();
+            for (final entry in entries) {
+              if (entry.packageName == package) {
+                label = entry.label;
+                break;
+              }
+            }
+          } catch (_) {
+            // Label lookup failed — the package name stays in the dialog.
+          }
+        }
+        return tool == 'open_app'
+            ? 'This opens $label on your phone.'
+            : 'This opens $label with the text ready — you confirm it there.';
+      case 'send_sms':
+        return 'This sends the text message as written, with no further confirmation.';
+      case 'create_calendar_event':
+        return 'This adds the event to your calendar.';
+      case 'add_contact':
+        return 'This saves the contact on your phone.';
+      case 'set_alarm':
+        return 'This sets an alarm on your phone.';
+      case 'get_location':
+        return 'This shares your current location with the answer.';
+      case 'create_note':
+        return 'This saves a note on your phone.';
+      case 'create_task':
+      case 'update_task':
+      case 'complete_task':
+      case 'delete_task':
+        return 'This changes your Tasks list.';
+      case 'create_goal':
+      case 'update_goal':
+      case 'complete_goal':
+      case 'delete_goal':
+        return 'This changes your Goals list.';
+      default:
+        return null;
+    }
   }
 
   void _startVoiceInput() async {

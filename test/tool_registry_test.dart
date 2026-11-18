@@ -8,14 +8,18 @@ library;
 
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:clawzilla/core/utils/json_extract.dart';
 import 'package:clawzilla/data/services/browser_driver.dart';
+import 'package:clawzilla/data/services/connected_apps_store.dart';
 import 'package:clawzilla/data/tools/tool_permission_store.dart';
 import 'package:clawzilla/data/tools/tool_registry.dart';
 import 'package:clawzilla/domain/models/tool_result.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   final registry = ToolRegistry()..registerTools();
 
   group('ToolDefinition.schema', () {
@@ -208,6 +212,80 @@ void main() {
         );
         expect(result.isSuccess, isFalse);
       }
+    });
+  });
+
+  group('open_app connected gate (build #115)', () {
+    const appsChannel = MethodChannel('clawzilla/apps');
+
+    setUp(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(appsChannel, (call) async {
+        if (call.method == 'launchApp') return true;
+        if (call.method == 'shareToApp') return true;
+        return null;
+      });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(appsChannel, null);
+      ConnectedAppsStore.entriesOverride = null;
+    });
+
+    test('a connected, enabled app opens', () async {
+      // The positive case the #115 cloud turn needs: YouTube connected
+      // and switched on must actually launch. The store override stands
+      // in for the database, which sqflite cannot open in a unit test.
+      ConnectedAppsStore.entriesOverride = [
+        const ConnectedAppEntry(
+          packageName: 'com.google.android.youtube',
+          label: 'YouTube',
+          enabled: true,
+        ),
+      ];
+      final result = await registry.executeTool(
+        toolName: 'open_app',
+        params: {'package_name': 'com.google.android.youtube'},
+      );
+      expect(result.status, ToolStatus.success);
+      expect(result.isSuccess, isTrue);
+    });
+
+    test('a connected but disabled app is refused', () async {
+      ConnectedAppsStore.entriesOverride = [
+        const ConnectedAppEntry(
+          packageName: 'com.google.android.youtube',
+          label: 'YouTube',
+          enabled: false,
+        ),
+      ];
+      final result = await registry.executeTool(
+        toolName: 'open_app',
+        params: {'package_name': 'com.google.android.youtube'},
+      );
+      expect(result.status, ToolStatus.unsupported);
+      expect(result.isSuccess, isFalse);
+    });
+
+    test('a connected, enabled app shares — user confirms in the app',
+        () async {
+      ConnectedAppsStore.entriesOverride = [
+        const ConnectedAppEntry(
+          packageName: 'com.google.android.youtube',
+          label: 'YouTube',
+          enabled: true,
+        ),
+      ];
+      final result = await registry.executeTool(
+        toolName: 'share_to_app',
+        params: {
+          'package_name': 'com.google.android.youtube',
+          'text': 'hello',
+        },
+      );
+      expect(result.status, ToolStatus.requiresUserAction);
+      expect(result.isSuccess, isFalse);
     });
 
     test('an unknown tool fails rather than silently succeeding', () async {
@@ -451,58 +529,167 @@ void main() {
     });
   });
 
-  group('ToolRegistry.fileToolsSection (build #107)', () {
-    test('offers only the file tools, with the save rule', () async {
-      final section = await registry.fileToolsSection();
-      expect(section, contains('read_project_file'));
-      expect(section, contains('write_project_file'));
-      expect(section, contains('save it with write_project_file'));
-      expect(section, contains('Only save code the turn actually produced'));
-    });
-
-    test('never offers a phone-side tool to a cloud turn', () async {
-      final section = await registry.fileToolsSection();
+  group('ToolRegistry.cloudToolsSection (build #115)', () {
+    test('offers the file tools and the phone tools, with the save rule',
+        () async {
+      final section = await registry.cloudToolsSection();
       for (final tool in [
+        'read_project_file',
+        'write_project_file',
         'open_app',
         'share_to_app',
+        'send_sms',
+        'create_calendar_event',
+        'add_contact',
+        'set_alarm',
         'web_search',
         'get_location',
         'create_note',
         'read_notes',
-        'analyze_image',
         'create_task',
         'list_tasks',
         'create_goal',
-        'send_sms',
+        'list_goals',
       ]) {
-        expect(
-          section,
-          isNot(contains(tool)),
-          reason: 'cloud turns must never see $tool',
-        );
+        // The '- name:' list line, not a bare substring: the JSON
+        // example at the top of the section names open_app too.
+        expect(section, contains('- $tool:'), reason: 'cloud turns see $tool');
       }
-      expect(section, isNot(contains('Connected apps')));
+      expect(section, contains('save it with write_project_file'));
+      expect(section, contains('Only save code the turn actually produced'));
+    });
+
+    test('never offers generate_on_site or analyze_image to a cloud turn',
+        () async {
+      // generate_on_site drives the in-app browser through the live
+      // controller (local-only, #114); analyze_image needs a loaded
+      // local vision model, which a cloud turn never has.
+      final section = await registry.cloudToolsSection();
+      expect(section, isNot(contains('generate_on_site')));
+      expect(section, isNot(contains('analyze_image')));
+    });
+
+    test('with no connected apps, no apps list is shown', () async {
+      final section = await registry.cloudToolsSection();
+      // The list header line specifically: tool descriptions mention
+      // "Connected apps" in prose, so a bare substring would false-trip.
+      expect(section, isNot(contains('Connected apps you may open')));
+    });
+
+    test('a Blocked tool is hidden from the cloud section', () async {
+      final section =
+          await registry.cloudToolsSection(blockedTools: {'open_app'});
+      expect(section, isNot(contains('- open_app:')));
+      expect(section, contains('- web_search:'));
     });
   });
 
-  group('ToolRegistry.isCloudFileTool (build #107)', () {
-    test('file tools run on cloud turns, nothing else does', () {
+  group('ToolRegistry.isCloudTool (build #115)', () {
+    test('every cloud tool runs on cloud turns', () {
+      for (final tool in ToolRegistry.cloudTools) {
+        expect(
+          ToolRegistry.isCloudTool(tool),
+          isTrue,
+          reason: '$tool must run on a cloud turn',
+        );
+      }
+      expect(ToolRegistry.cloudTools.length, 22);
+    });
+
+    test('generate_on_site, analyze_image, and unknown names do not', () {
+      for (final tool in [
+        'generate_on_site',
+        'analyze_image',
+        'does_not_exist',
+      ]) {
+        expect(
+          ToolRegistry.isCloudTool(tool),
+          isFalse,
+          reason: '$tool must never run on a cloud turn',
+        );
+      }
+    });
+  });
+
+  group('ToolRegistry.isCloudFileTool (build #107, kept by #115)', () {
+    test('only the file tools are file tools', () {
       expect(ToolRegistry.isCloudFileTool('read_project_file'), isTrue);
       expect(ToolRegistry.isCloudFileTool('write_project_file'), isTrue);
       for (final tool in [
         'open_app',
-        'share_to_app',
-        'web_search',
-        'get_location',
-        'create_note',
-        'create_task',
         'send_sms',
-        'does_not_exist',
+        'web_search',
+        'generate_on_site',
       ]) {
         expect(
           ToolRegistry.isCloudFileTool(tool),
           isFalse,
-          reason: '$tool must never run on a cloud turn',
+          reason: '$tool is a cloud tool, not a file tool',
+        );
+      }
+    });
+  });
+
+  group('ToolRegistry.decideCloudCall (build #115)', () {
+    test('file tools run with no permission question', () {
+      for (final permission in ToolPermission.values) {
+        expect(
+          ToolRegistry.decideCloudCall('write_project_file', permission),
+          CloudToolDecision.run,
+        );
+      }
+    });
+
+    test('Allow runs a phone tool', () {
+      expect(
+        ToolRegistry.decideCloudCall('open_app', ToolPermission.allow),
+        CloudToolDecision.run,
+      );
+      expect(
+        ToolRegistry.decideCloudCall('send_sms', ToolPermission.allow),
+        CloudToolDecision.run,
+      );
+    });
+
+    test('Block refuses without running', () {
+      expect(
+        ToolRegistry.decideCloudCall('open_app', ToolPermission.block),
+        CloudToolDecision.refuseBlocked,
+      );
+      expect(
+        ToolRegistry.decideCloudCall('send_sms', ToolPermission.block),
+        CloudToolDecision.refuseBlocked,
+      );
+      expect(
+        ToolRegistry.decideCloudCall('delete_task', ToolPermission.block),
+        CloudToolDecision.refuseBlocked,
+      );
+    });
+
+    test('Ask means ask first', () {
+      expect(
+        ToolRegistry.decideCloudCall('open_app', ToolPermission.ask),
+        CloudToolDecision.ask,
+      );
+      expect(
+        ToolRegistry.decideCloudCall('web_search', ToolPermission.ask),
+        CloudToolDecision.ask,
+      );
+    });
+
+    test('tools outside the cloud set are never executed', () {
+      for (final permission in ToolPermission.values) {
+        expect(
+          ToolRegistry.decideCloudCall('generate_on_site', permission),
+          CloudToolDecision.notAllowed,
+        );
+        expect(
+          ToolRegistry.decideCloudCall('analyze_image', permission),
+          CloudToolDecision.notAllowed,
+        );
+        expect(
+          ToolRegistry.decideCloudCall('does_not_exist', permission),
+          CloudToolDecision.notAllowed,
         );
       }
     });

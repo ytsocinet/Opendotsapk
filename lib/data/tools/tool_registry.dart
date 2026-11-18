@@ -47,6 +47,23 @@ import '../services/location_weather_service.dart';
 import 'tool_permission_store.dart';
 import '../database/database_helper.dart';
 
+/// What the cloud follow-up does with one tool call from a cloud reply.
+///
+/// See [ToolRegistry.decideCloudCall].
+enum CloudToolDecision {
+  /// Run the tool now.
+  run,
+
+  /// Show Aaron the confirmation dialog first; run only if he approves.
+  ask,
+
+  /// Refuse without running: the tool is Blocked in Settings → Tools.
+  refuseBlocked,
+
+  /// Not a cloud tool: never execute; the reply stays a plain answer.
+  notAllowed,
+}
+
 class ToolRegistry {
   static final ToolRegistry _instance = ToolRegistry._internal();
   factory ToolRegistry() => _instance;
@@ -500,9 +517,10 @@ class ToolRegistry {
   /// plus the enabled connected apps with their exact package names, so
   /// the model never has to guess one. The connected-apps gate still
   /// refuses unconnected packages at execution time; this list only tells
-  /// the model which packages are valid. The full section is local-only:
-  /// the cloud path gets only the file tools, via [fileToolsSection],
-  /// and parses one file-tool round there.
+  /// the model which packages are valid. The cloud path gets the same
+  /// tools via [cloudToolsSection] — everything here except
+  /// `generate_on_site` and `analyze_image` — and parses one tool round
+  /// there.
   ///
   /// Build #114: [blockedTools] hides tools the user set to Block in
   /// Settings → Tools from the model. The registry has no permission
@@ -522,22 +540,7 @@ class ToolRegistry {
       'Tools:',
       for (final t in tools) '- ${t.name}: ${t.description}',
     ];
-    try {
-      final enabled = (await ConnectedAppsStore.instance.entries())
-          .where((a) => a.enabled)
-          .toList();
-      if (enabled.isNotEmpty) {
-        lines.add(
-          'Connected apps you may open or share to — use the package name exactly:',
-        );
-        for (final a in enabled) {
-          lines.add('- ${a.label} (${a.packageName})');
-        }
-      }
-    } catch (_) {
-      // No app list is not a reason to hide the tools: the gate still
-      // refuses unconnected packages at execution time.
-    }
+    lines.addAll(await _connectedAppsLines());
     lines.add(_fileSaveRule);
     lines.add(
       'If no tool fits the request, answer directly in plain text — do not output a tool block.',
@@ -545,12 +548,34 @@ class ToolRegistry {
     return lines.join('\n');
   }
 
+  /// The enabled connected apps, as prompt lines with their exact package
+  /// names — shared by the local section and the cloud section so the
+  /// two cannot drift. Empty when nothing is connected: no app list is
+  /// not a reason to hide the tools, because the gate still refuses
+  /// unconnected packages at execution time.
+  Future<List<String>> _connectedAppsLines() async {
+    try {
+      final enabled = (await ConnectedAppsStore.instance.entries())
+          .where((a) => a.enabled)
+          .toList();
+      if (enabled.isEmpty) return const [];
+      return [
+        'Connected apps you may open or share to — use the package name exactly:',
+        for (final a in enabled) '- ${a.label} (${a.packageName})',
+      ];
+    } catch (_) {
+      // No app list is not a reason to hide the tools: the gate still
+      // refuses unconnected packages at execution time.
+      return const [];
+    }
+  }
+
   /// The file tools a cloud turn may run — and nothing else.
   ///
   /// Build #107: a cloud turn may read and write inside the Projects
-  /// folder, but it never touches a phone-side tool (open_app, location,
-  /// notes, tasks, goals). The chat screen enforces this with
-  /// [isCloudFileTool] before executing anything a cloud reply asked for.
+  /// folder. Build #115 keeps that pair separate from [cloudTools]
+  /// because the file tools carry no permission: they run on a cloud
+  /// turn with no Ask dialog, exactly as they have since #107.
   static const Set<String> cloudFileTools = {
     'read_project_file',
     'write_project_file',
@@ -560,29 +585,111 @@ class ToolRegistry {
   static bool isCloudFileTool(String toolName) =>
       cloudFileTools.contains(toolName);
 
+  /// Every tool a cloud turn may run.
+  ///
+  /// Build #115: the cloud model runs remotely (HP Ollama / Gemini), so
+  /// #107 kept phone-side tools local-only as a trust boundary. That
+  /// boundary turned out to be an allowlist, not a technical wall — the
+  /// tools execute on the phone in Dart/native either way, and the cloud
+  /// model only sends the JSON instruction, exactly as the file tools
+  /// already do. Local turns are broken (90s hang, separate fix), so
+  /// cloud is the only working path, and a cloud turn that could save
+  /// code but not open YouTube was the gap Aaron hit. The set is every
+  /// implemented tool except the two that cannot work from a cloud turn:
+  ///
+  /// - `generate_on_site` (#114) drives the in-app browser through the
+  ///   live controller and is local-only by design; it is not offered
+  ///   here and a cloud reply naming it is left as plain text.
+  /// - `analyze_image` needs a loaded local vision model; on a cloud
+  ///   turn none is loaded, so it could never succeed.
+  ///
+  /// The per-tool permission store still gates every non-file tool here
+  /// (see [decideCloudCall]): Block refuses, Ask shows the confirmation
+  /// dialog, Allow runs.
+  static const Set<String> cloudTools = {
+    // File tools (build #107).
+    'read_project_file',
+    'write_project_file',
+    // Phone tools (build #115).
+    'open_app',
+    'share_to_app',
+    'send_sms',
+    'create_calendar_event',
+    'add_contact',
+    'set_alarm',
+    'web_search',
+    'get_location',
+    'create_note',
+    'read_notes',
+    'create_task',
+    'list_tasks',
+    'update_task',
+    'complete_task',
+    'delete_task',
+    'create_goal',
+    'list_goals',
+    'update_goal',
+    'complete_goal',
+    'delete_goal',
+  };
+
+  /// Whether [toolName] may run on a cloud turn.
+  static bool isCloudTool(String toolName) => cloudTools.contains(toolName);
+
+  /// What the cloud follow-up does with one tool call from a cloud
+  /// reply, given the tool's stored permission.
+  ///
+  /// Build #115: the decision is a pure function so the table is
+  /// unit-testable — the screen itself has no widget test, and a gate
+  /// that can only be verified on the phone is a gate that will regress
+  /// silently. File tools have no permission: they run, as since #107.
+  /// A tool outside [cloudTools] is never executed; the reply is left
+  /// as a plain answer.
+  static CloudToolDecision decideCloudCall(
+    String toolName,
+    ToolPermission permission,
+  ) {
+    if (!isCloudTool(toolName)) return CloudToolDecision.notAllowed;
+    if (isCloudFileTool(toolName)) return CloudToolDecision.run;
+    if (permission == ToolPermission.block) {
+      return CloudToolDecision.refuseBlocked;
+    }
+    if (permission == ToolPermission.ask) return CloudToolDecision.ask;
+    return CloudToolDecision.run;
+  }
+
   /// The tools section for the cloud system prompt, or '' when there is
   /// nothing to offer.
   ///
-  /// File tools only — read/write_project_file — plus the #100 save rule
-  /// that tells the model to save code it writes. No connected-apps list:
-  /// a cloud turn cannot open apps, so naming them would only invite a
-  /// tool call the cloud round refuses.
-  Future<String> fileToolsSection() async {
+  /// Build #115: the cloud model gets the phone tools in [cloudTools]
+  /// plus the #100 save rule — and the enabled connected apps with
+  /// their exact package names, so it never has to guess one. The old
+  /// file-only section is gone: a cloud turn that could save code but
+  /// not open YouTube was the bug. [blockedTools] hides tools the user
+  /// set to Block, same as the local section.
+  Future<String> cloudToolsSection({
+    Set<String> blockedTools = const {},
+  }) async {
     final tools = toolsForModel
-        .where((t) => cloudFileTools.contains(t.name))
+        .where(
+          (t) => cloudTools.contains(t.name) && !blockedTools.contains(t.name),
+        )
         .toList();
     if (tools.isEmpty) return '';
     final lines = <String>[
       'You can use tools. When the user asks for something a tool can do, '
           'reply with ONLY a JSON block like this and nothing else:',
       '```json',
-      '{"tool": "write_project_file", "params": {"path": "hello.dart", "content": "..."}}',
+      '{"tool": "open_app", "params": {"package_name": "com.google.android.youtube"}}',
       '```',
       'Tools:',
       for (final t in tools) '- ${t.name}: ${t.description}',
-      _fileSaveRule,
-      'If no tool fits the request, answer directly in plain text — do not output a tool block.',
     ];
+    lines.addAll(await _connectedAppsLines());
+    lines.add(_fileSaveRule);
+    lines.add(
+      'If no tool fits the request, answer directly in plain text — do not output a tool block.',
+    );
     return lines.join('\n');
   }
 

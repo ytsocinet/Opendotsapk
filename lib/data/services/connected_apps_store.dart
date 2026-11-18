@@ -15,6 +15,7 @@ library;
 
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../database/database_helper.dart';
@@ -63,6 +64,15 @@ class ConnectedAppsStore {
 
   ConnectedAppsStore._();
 
+  /// Test-only override for the entries list: when set, [entries]
+  /// returns a copy of it instead of reading the database. The database
+  /// (sqflite) has no factory in a unit test, so without this the
+  /// connected-apps gate — the thing that decides whether open_app may
+  /// launch — could never be exercised with an app actually connected.
+  /// Production never sets it; tests must clear it when done.
+  @visibleForTesting
+  static List<ConnectedAppEntry>? entriesOverride;
+
   final DatabaseHelper _db = DatabaseHelper.instance;
 
   /// The full list of launchable apps, from the native side, sorted by
@@ -96,6 +106,8 @@ class ConnectedAppsStore {
 
   /// Every entry on the list, enabled or not, in the order added.
   Future<List<ConnectedAppEntry>> entries() async {
+    final override = entriesOverride;
+    if (override != null) return List.of(override);
     final raw = await _db.getPreference(_key);
     if (raw == null || raw.isEmpty) return <ConnectedAppEntry>[];
     try {

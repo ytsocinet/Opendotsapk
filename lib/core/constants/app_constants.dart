@@ -115,6 +115,17 @@ Be concise.''';
   static const String toolGetLocation = 'get_location';
   static const String toolCreateNote = 'create_note';
   static const String toolReadNotes = 'read_notes';
+  static const String toolShareToApp = 'share_to_app';
+  static const String toolCreateTask = 'create_task';
+  static const String toolListTasks = 'list_tasks';
+  static const String toolUpdateTask = 'update_task';
+  static const String toolCompleteTask = 'complete_task';
+  static const String toolDeleteTask = 'delete_task';
+  static const String toolCreateGoal = 'create_goal';
+  static const String toolListGoals = 'list_goals';
+  static const String toolUpdateGoal = 'update_goal';
+  static const String toolCompleteGoal = 'complete_goal';
+  static const String toolDeleteGoal = 'delete_goal';
   static const String toolGenerateOnSite = 'generate_on_site';
 
   // ----------------------------------------------------------- permission levels
@@ -136,6 +147,21 @@ Be concise.''';
     // Artistly credits, so it asks first until he explicitly chooses
     // silent. It must NOT be treated as a silent tool.
     toolGenerateOnSite: permissionAsk,
+    // Build #115: every tool the cloud path can run needs a visible
+    // switch, or its Ask default could never be changed to Allow — the
+    // dialog would nag on every cloud turn with no way to silence it.
+    // All Ask: none of these is a silent tool.
+    toolShareToApp: permissionAsk,
+    toolCreateTask: permissionAsk,
+    toolListTasks: permissionAsk,
+    toolUpdateTask: permissionAsk,
+    toolCompleteTask: permissionAsk,
+    toolDeleteTask: permissionAsk,
+    toolCreateGoal: permissionAsk,
+    toolListGoals: permissionAsk,
+    toolUpdateGoal: permissionAsk,
+    toolCompleteGoal: permissionAsk,
+    toolDeleteGoal: permissionAsk,
   };
 
   // -------------------------------------------------------------- personalities

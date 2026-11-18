@@ -1,14 +1,15 @@
-/// Tools screen — the ten built-in device tools plus MCP servers.
+/// Tools screen — the twenty-one built-in device tools plus MCP servers.
 ///
 /// The permission model is the important part here. A tool is Allow, Ask, or
 /// Block, and "Ask" means a confirmation sheet on every call. Blocking a tool
 /// is enforced in the agent loop, not just in this UI, so the model cannot
 /// route around it.
 ///
-/// The tools are laid out as a grid because they are scanned, not read: ten
-/// rows of equal content is a column of "more", and the grid lets the status
-/// of all ten be seen at once. Below the two-column breakpoint it collapses
-/// to a single column so nothing is truncated on a narrow phone.
+/// The tools are laid out as a grid because they are scanned, not read:
+/// twenty-one rows of equal content is a column of "more", and the grid
+/// lets the status of all twenty-one be seen at once. Below the
+/// two-column breakpoint it collapses to a single column so nothing is
+/// truncated on a narrow phone.
 library;
 
 import 'package:flutter/material.dart';
@@ -270,6 +271,28 @@ class _ToolCard extends ConsumerWidget {
         return Icons.library_books_outlined;
       case AppConstants.toolGenerateOnSite:
         return Icons.image_outlined;
+      case AppConstants.toolShareToApp:
+        return Icons.share_outlined;
+      case AppConstants.toolCreateTask:
+        return Icons.add_task_outlined;
+      case AppConstants.toolListTasks:
+        return Icons.list_alt_outlined;
+      case AppConstants.toolUpdateTask:
+        return Icons.edit_outlined;
+      case AppConstants.toolCompleteTask:
+        return Icons.check_circle_outlined;
+      case AppConstants.toolDeleteTask:
+        return Icons.delete_outlined;
+      case AppConstants.toolCreateGoal:
+        return Icons.flag_outlined;
+      case AppConstants.toolListGoals:
+        return Icons.format_list_bulleted_outlined;
+      case AppConstants.toolUpdateGoal:
+        return Icons.edit_note_outlined;
+      case AppConstants.toolCompleteGoal:
+        return Icons.emoji_events_outlined;
+      case AppConstants.toolDeleteGoal:
+        return Icons.delete_outline;
       default:
         return Icons.handyman_outlined;
     }
@@ -303,6 +326,28 @@ class _ToolCard extends ConsumerWidget {
       case AppConstants.toolGenerateOnSite:
         return 'Generates an image on Artistly in the browser. Spends '
             'your Artistly credits — Ask first is the honest default.';
+      case AppConstants.toolShareToApp:
+        return 'Sends text to a connected app — you confirm it in that app.';
+      case AppConstants.toolCreateTask:
+        return 'Adds a task to your Tasks list.';
+      case AppConstants.toolListTasks:
+        return 'Lists your tasks.';
+      case AppConstants.toolUpdateTask:
+        return 'Renames a task or flips its tick.';
+      case AppConstants.toolCompleteTask:
+        return 'Marks a task done.';
+      case AppConstants.toolDeleteTask:
+        return 'Deletes a task.';
+      case AppConstants.toolCreateGoal:
+        return 'Adds a goal to your Goals list.';
+      case AppConstants.toolListGoals:
+        return 'Lists your goals.';
+      case AppConstants.toolUpdateGoal:
+        return 'Renames a goal, edits its notes, or flips its tick.';
+      case AppConstants.toolCompleteGoal:
+        return 'Marks a goal done.';
+      case AppConstants.toolDeleteGoal:
+        return 'Deletes a goal.';
       default:
         return '';
     }
