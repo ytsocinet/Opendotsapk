@@ -43,8 +43,9 @@ import '../../core/security/crypto_box.dart';
 import '../../core/utils/log.dart';
 import '../../core/utils/text_utils.dart';
 import '../../core/constants/app_constants.dart';
+import '../../domain/models/persona.dart';
 
-class DatabaseHelper {
+class DatabaseHelper implements PersonaStore {
   DatabaseHelper._();
 
   static DatabaseHelper? _instance;
@@ -60,12 +61,15 @@ class DatabaseHelper {
   /// belongs to one conversation.
   /// Bumped to 4: Tasks and Goals — two plain tables for the in-app
   /// task and goal lists (build #86).
-  static const int _schemaVersion = 4;
+  /// Bumped to 5: Personas — one plain table for the assistant personas
+  /// (build #121). `_upgrade` only adds it; existing data is untouched.
+  static const int _schemaVersion = 5;
 
   static const String tableMessages = 'messages';
   static const String tableConversations = 'conversations';
   static const String tableTasks = 'tasks';
   static const String tableGoals = 'goals';
+  static const String tablePersonas = 'personas';
 
   /// The conversation pre-existing messages are assigned to on upgrade.
   /// A fixed id (not a generated one) so the migration is deterministic
@@ -194,6 +198,7 @@ class DatabaseHelper {
     await _createDocumentTables(db);
     await _createConversationTables(db);
     await _createTaskTables(db);
+    await _createPersonaTables(db);
 
     // Messages written before conversations existed have no conversation.
     // They belong to the default one, so no history is lost by the upgrade.
@@ -285,6 +290,7 @@ class DatabaseHelper {
     await _createVectorTables(db);
     await _createDocumentTables(db);
     await _createTaskTables(db);
+    await _createPersonaTables(db);
   }
 
   /// Tasks and Goals (build #86): two plain tables, no encryption — a
@@ -394,6 +400,25 @@ class DatabaseHelper {
       'CREATE INDEX IF NOT EXISTS idx_conversations_updated '
       'ON $tableConversations(updated_at)',
     );
+  }
+
+  /// Personas (build #121): one row per persona, plain text like task
+  /// titles and conversation titles — no encryption, unlike message
+  /// bodies. Created with IF NOT EXISTS so both a fresh install and the
+  /// v5 upgrade land on the same schema.
+  Future<void> _createPersonaTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tablePersonas (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        emoji TEXT,
+        system_prompt TEXT,
+        description TEXT,
+        is_built_in INTEGER,
+        created_at INTEGER,
+        updated_at INTEGER
+      )
+    ''');
   }
 
   // -------------------------------------------------------------- messages
@@ -658,6 +683,55 @@ class DatabaseHelper {
   Future<int> deleteGoal(String id) async {
     final db = await database;
     return db.delete(tableGoals, where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---------------------------------------------------------- personas
+
+  /// All personas, in insertion order: the four built-ins first (seeded
+  /// in order on first run), then customs in the order they were created.
+  /// `rowid` is the insertion order for a plain table — `created_at` ties
+  /// (the four seeds share one seed moment) would leave the order
+  /// unspecified.
+  @override
+  Future<List<Map<String, dynamic>>> getPersonas() async {
+    final db = await database;
+    return db.query(tablePersonas, orderBy: 'rowid');
+  }
+
+  /// Insert a persona, replacing any row with the same id — re-seeding the
+  /// built-ins is safe to repeat.
+  @override
+  Future<void> insertPersona(Persona persona) async {
+    final db = await database;
+    await db.insert(
+      tablePersonas,
+      persona.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Update a persona's fields and bump its `updated_at`. Only the row
+  /// with [persona]'s id changes.
+  @override
+  Future<void> updatePersona(Persona persona) async {
+    final db = await database;
+    final values = persona.toMap()
+      ..['updated_at'] = DateTime.now().millisecondsSinceEpoch;
+    await db.update(
+      tablePersonas,
+      values,
+      where: 'id = ?',
+      whereArgs: [persona.id],
+    );
+  }
+
+  /// Delete one persona. Returns the number of rows removed (0 or 1).
+  /// Whether a built-in may be deleted is the notifier's decision, not
+  /// the database's — this method deletes whatever id it is given.
+  @override
+  Future<int> deletePersona(String id) async {
+    final db = await database;
+    return db.delete(tablePersonas, where: 'id = ?', whereArgs: [id]);
   }
 
   // ------------------------------------------------------------- memories
@@ -1311,6 +1385,7 @@ class DatabaseHelper {
       tableNotes,
       tableTasks,
       tableGoals,
+      tablePersonas,
       tableActivityLog,
       tableUserPreferences,
     ]) {

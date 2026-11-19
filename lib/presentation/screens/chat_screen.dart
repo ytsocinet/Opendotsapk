@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../providers/providers.dart';
+import '../providers/personas_provider.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/chat_empty_state.dart';
 import '../widgets/chat_message_tile.dart';
@@ -1878,7 +1879,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     bool safePrompt = false,
   }) async {
     final settings = ref.read(settingsProvider);
-    final personality = settings['personality'] as String?;
+    // Build #121 (personas): the active persona's full instruction text
+    // goes in the personality slot — the model finally sees a sentence
+    // ("You are Cypher…") instead of the bare `personality` keyword.
+    // Resolved through the personas provider, which falls back to the
+    // Cypher built-in when the stored id is gone.
+    final personality = ref.read(activePersonaPromptProvider);
     final nCtx = ref.read(llmServiceProvider).contextSize;
 
     // System-prompt assembly lives in [buildSystemPrompt] so the

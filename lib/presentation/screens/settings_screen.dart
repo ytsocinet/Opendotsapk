@@ -190,7 +190,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
               child: ScreenSection(
                 title: 'Assistant & Behavior',
                 subtitle:
-                    'Fine-tune personality and how much it remembers.',
+                    'Fine-tune how much it remembers.',
                 padding: EdgeInsets.zero,
                 child: _AssistantGroup(
                   onChanged: (key) => _triggerFeedback(key),
@@ -426,50 +426,6 @@ class _AssistantGroup extends ConsumerWidget {
           child: Row(
             children: [
               ScreenRowIcon(
-                icon: Icons.face_retouching_natural,
-                color: scheme.primary,
-                size: 34,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Personality Style',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Tone and behavioral profile of responses',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          child: PersonalitySelector(
-            current: settings['personality'] as String?,
-            onChanged: () => onChanged('personality'),
-          ),
-        ),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16),
-          child: ScreenRowDivider(),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Row(
-            children: [
-              ScreenRowIcon(
                 icon: Icons.memory_rounded,
                 color: scheme.secondary,
                 size: 34,
@@ -657,82 +613,6 @@ class PermissionList extends ConsumerWidget {
         return 'Read Notes';
       default:
         return tool;
-    }
-  }
-}
-
-/// Personality selector widget with animated cards / choices
-class PersonalitySelector extends ConsumerWidget {
-  final String? current;
-  final VoidCallback onChanged;
-
-  const PersonalitySelector({super.key, this.current, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Column(
-      children: AppConstants.personalities.keys.map((personality) {
-        final isSelected = current == personality;
-        final theme = Theme.of(context);
-        final scheme = theme.colorScheme;
-
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeInOut,
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? scheme.primary.withValues(alpha: 0.1)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isSelected
-                  ? scheme.primary.withValues(alpha: 0.5)
-                  : Colors.transparent,
-              width: 1,
-            ),
-          ),
-          child: RadioListTile<String>(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            title: Text(
-              personality.capitalize(),
-              style: TextStyle(
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                color: isSelected ? scheme.primary : scheme.onSurface,
-              ),
-            ),
-            subtitle: Text(
-              _getPersonalityDescription(personality),
-              style: theme.textTheme.bodySmall,
-            ),
-            value: personality,
-            groupValue: current,
-            onChanged: (value) {
-              if (value != null) {
-                ref
-                    .read(settingsProvider.notifier)
-                    .updateSetting('personality', value);
-                onChanged();
-              }
-            },
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  String _getPersonalityDescription(String personality) {
-    switch (personality.toLowerCase()) {
-      case 'direct':
-        return 'Short, concise, and straight to the point.';
-      case 'friendly':
-        return 'Warm, conversational, and encouraging.';
-      case 'professional':
-        return 'Formal, precise, and highly structured.';
-      default:
-        return 'Balanced behavioral style.';
     }
   }
 }

@@ -768,6 +768,11 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
   static Map<String, dynamic> _defaults() => {
     'context_size': 2048,
     'personality': 'professional',
+    // Active persona (build #121): the id of the persona whose
+    // system-prompt text goes in the prompt. Cypher is the default —
+    // the old `personality` key above is no longer read, but it stays
+    // stored; removing stored keys is out of scope.
+    'active_persona_id': 'builtin-cypher',
     'tts_enabled': true,
     // Name of the TTS voice the user picked in Settings. Empty means the
     // engine's own default voice for the language.
@@ -987,6 +992,7 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'tts_voice',
       'time_format',
       'theme_mode',
+      'active_persona_id',
       'last_ide_file',
     ]) {
       final raw = await _db.getPreference(key);
