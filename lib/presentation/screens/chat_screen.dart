@@ -41,6 +41,7 @@ import '../../data/services/wake_service.dart';
 import '../../data/tools/tool_registry.dart';
 import '../../data/tools/tool_permission_store.dart';
 import '../widgets/biometric_gate.dart';
+import 'cloud_screen.dart';
 import '../../domain/models/cloud_provider.dart';
 import '../../domain/models/local_model.dart';
 import '../../domain/models/models.dart';
@@ -2536,15 +2537,12 @@ class _ChatHeaderState extends State<_ChatHeader>
                       ),
                       // Engine line (build #106): which engine answered the
                       // last turn. Hidden until the first routed turn.
+                      // Tappable (build #119): opens the Cloud Models
+                      // screen, so the providers are one tap away instead
+                      // of Settings → Cloud Integration.
                       if (widget.engineLabel != null)
-                        Text(
-                          'ENGINE: ${widget.engineLabel}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
+                        EngineLabel(
+                          label: 'ENGINE: ${widget.engineLabel}',
                         ),
                       const SizedBox(height: 4),
                       // Pills: wake state on the last row in a Wrap so it
@@ -2636,6 +2634,41 @@ class _HeaderPill extends StatelessWidget {
       child: Tooltip(
         message: 'Tap to turn always-listening on or off',
         child: pill,
+      ),
+    );
+  }
+}
+
+/// The ENGINE line in the chat header (build #119): which engine answered
+/// the last turn. It renders exactly like the old plain label — same text,
+/// same style — but it is tappable: one tap opens the Cloud Models screen,
+/// so the providers are one tap away instead of Settings → Cloud
+/// Integration. Public (not `_HeaderPill`-private) so a widget test can
+/// pump it directly; the header itself cannot be pumped — it lives inside
+/// ChatScreen, which pulls in the native llama runtime.
+class EngineLabel extends StatelessWidget {
+  const EngineLabel({required this.label});
+
+  /// The full label, e.g. "ENGINE: OpenRouter · openai/gpt-4o".
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(
+        AppPageRoute(builder: (_) => const CloudModelsScreen()),
+      ),
+      child: Tooltip(
+        message: 'Open cloud providers',
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
       ),
     );
   }
