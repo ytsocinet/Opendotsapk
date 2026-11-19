@@ -1010,6 +1010,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         final call = parseToolCall(_currentResponse);
         if (call != null && !_stopRequested) {
           final registry = ref.read(toolRegistryProvider);
+          // Build #124: the model sometimes drops the "prompt" argument
+          // of a generate_on_site call, and the guard then fails the
+          // turn before the driver ever runs. Fill it from Aaron's own
+          // words — triggering message first, then walking back through
+          // the history — before the Ask gate, so the dialog shows the
+          // filled prompt. Any other tool's params pass through
+          // untouched; a call nothing can fill keeps its original
+          // params and the guard still refuses it.
+          final resolved = ToolRegistry.resolveGenerateCallParams(
+            tool: call.tool,
+            params: call.params,
+            triggeringMessage: userMessage.content,
+            priorUserMessages: [
+              for (final m in priorHistory)
+                if (m.role == 'user') m.content,
+            ],
+          );
+          final resolvedParams = resolved.params;
+          final promptWasFilled = resolved.promptWasFilled;
           // Build #114: the live chat path never consulted the per-tool
           // permission store — the Tools-screen dropdown for
           // generate_on_site would have been decorative. This tool spends
@@ -1029,16 +1048,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 'Switch it to Ask or Allow to let Cypher generate.',
               );
             } else if (permission == ToolPermission.ask) {
+              // Build #124: when the prompt was auto-filled, the dialog
+              // says so — Aaron sees his own words as the prompt and
+              // knows the model dropped it.
+              final note =
+                  'This generates in your Artistly account and can spend credits.'
+                  '${promptWasFilled ? '\nPrompt filled from your earlier message.' : ''}';
               final approved = await _confirmToolCall(
                 call.tool,
-                call.params,
-                note: 'This generates in your Artistly account and can '
-                    'spend credits.',
+                resolvedParams,
+                note: note,
               );
               result = approved
                   ? await registry.executeTool(
                       toolName: call.tool,
-                      params: call.params,
+                      params: resolvedParams,
                     )
                   : ToolResult.failed(
                       'You declined to run "generate_on_site".',
@@ -1046,13 +1070,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             } else {
               result = await registry.executeTool(
                 toolName: call.tool,
-                params: call.params,
+                params: resolvedParams,
               );
             }
           } else {
             result = await registry.executeTool(
               toolName: call.tool,
-              params: call.params,
+              params: resolvedParams,
             );
           }
           // Build #114 audit trail: the live chat path never logged tool
@@ -1064,7 +1088,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           unawaited(
             ToolRegistry.logToolCall(
               toolName: call.tool,
-              params: call.params,
+              params: resolvedParams,
               result: result,
               permissionLevel: permission.wire,
             ),
@@ -1411,6 +1435,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final call = parseToolCall(_currentResponse);
       if (call != null && !_stopRequested) {
         final registry = ref.read(toolRegistryProvider);
+        // Build #124, same as the local path: fill a dropped
+        // generate_on_site "prompt" from Aaron's own words before the
+        // Ask gate, so the dialog shows the filled prompt. Any other
+        // tool's params pass through untouched.
+        final resolved = ToolRegistry.resolveGenerateCallParams(
+          tool: call.tool,
+          params: call.params,
+          triggeringMessage: userMessage.content,
+          priorUserMessages: [
+            for (final m in priorHistory)
+              if (m.role == 'user') m.content,
+          ],
+        );
+        final resolvedParams = resolved.params;
+        final promptWasFilled = resolved.promptWasFilled;
         final permission = ref
             .read(toolPermissionsProvider.notifier)
             .getPermission(call.tool);
@@ -1424,15 +1463,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 'it to Ask or Allow to let Cypher use it.',
               );
             case CloudToolDecision.ask:
+              // Build #124: when the prompt was auto-filled, the dialog
+              // says so — Aaron sees his own words as the prompt and
+              // knows the model dropped it.
+              var note = await _cloudConfirmNote(call.tool, resolvedParams);
+              if (promptWasFilled && note != null) {
+                note = '$note\nPrompt filled from your earlier message.';
+              }
               final approved = await _confirmToolCall(
                 call.tool,
-                call.params,
-                note: await _cloudConfirmNote(call.tool, call.params),
+                resolvedParams,
+                note: note,
               );
               result = approved
                   ? await registry.executeTool(
                       toolName: call.tool,
-                      params: call.params,
+                      params: resolvedParams,
                     )
                   : ToolResult.failed(
                       'You declined to run "${call.tool}".',
@@ -1440,7 +1486,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             case CloudToolDecision.run:
               result = await registry.executeTool(
                 toolName: call.tool,
-                params: call.params,
+                params: resolvedParams,
               );
             case CloudToolDecision.notAllowed:
               // Guarded by the `if` above; unreachable.
@@ -1454,7 +1500,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           unawaited(
             ToolRegistry.logToolCall(
               toolName: call.tool,
-              params: call.params,
+              params: resolvedParams,
               result: result,
               permissionLevel: permission.wire,
             ),

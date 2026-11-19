@@ -1100,5 +1100,165 @@ void main() {
       final open = await registry.promptSection();
       expect(open, contains('generate_on_site'));
     });
+
+    group('prompt fallback (build #124)', () {
+      const imageRequest = 'generate a snow-globe city at dusk';
+
+      test('a non-empty model prompt wins, unchanged', () {
+        expect(
+          ToolRegistry.resolveGeneratePrompt(
+            modelPrompt: 'a cat',
+            triggeringMessage: imageRequest,
+            priorUserMessages: const [],
+          ),
+          'a cat',
+        );
+        // And the call-site wrapper leaves it alone too.
+        final filled = ToolRegistry.resolveGenerateCallParams(
+          tool: 'generate_on_site',
+          params: {'site': 'artistly', 'kind': 'image', 'prompt': 'a cat'},
+          triggeringMessage: imageRequest,
+          priorUserMessages: const [],
+        );
+        expect(filled.promptWasFilled, isFalse);
+        expect(filled.params['prompt'], 'a cat');
+      });
+
+      test('an empty prompt falls back to the triggering message', () {
+        for (final modelPrompt in [null, '', '   ']) {
+          expect(
+            ToolRegistry.resolveGeneratePrompt(
+              modelPrompt: modelPrompt,
+              triggeringMessage: imageRequest,
+              priorUserMessages: const [],
+            ),
+            imageRequest,
+          );
+        }
+      });
+
+      test('"yes" walks back to the earlier request, newest first', () {
+        expect(
+          ToolRegistry.resolveGeneratePrompt(
+            modelPrompt: '',
+            triggeringMessage: 'yes',
+            priorUserMessages: const ['hello', imageRequest],
+          ),
+          imageRequest,
+        );
+        // Newest match wins, not the first one ever.
+        expect(
+          ToolRegistry.resolveGeneratePrompt(
+            modelPrompt: null,
+            triggeringMessage: 'yes',
+            priorUserMessages: const [
+              'generate a cat',
+              'draw a dog',
+            ],
+          ),
+          'draw a dog',
+        );
+      });
+
+      test('no image-like message anywhere returns null', () {
+        expect(
+          ToolRegistry.resolveGeneratePrompt(
+            modelPrompt: '',
+            triggeringMessage: 'yes',
+            priorUserMessages: const ['ok', 'hello'],
+          ),
+          isNull,
+        );
+        // And the wrapper then runs the original params, so the guard
+        // still refuses the call instead of inventing a prompt.
+        final filled = ToolRegistry.resolveGenerateCallParams(
+          tool: 'generate_on_site',
+          params: {'site': 'artistly', 'kind': 'image', 'prompt': ''},
+          triggeringMessage: 'yes',
+          priorUserMessages: const ['ok'],
+        );
+        expect(filled.promptWasFilled, isFalse);
+        expect(filled.params['prompt'], '');
+      });
+
+      test('the fallback is verbatim, trimmed only', () {
+        expect(
+          ToolRegistry.resolveGeneratePrompt(
+            modelPrompt: null,
+            triggeringMessage:
+                '  Generate an image of a snow-globe city  ',
+            priorUserMessages: const [],
+          ),
+          // The "Generate an image of" prefix is kept: trimming
+          // instruction words is cosmetic and risks mangling the
+          // description. Only surrounding whitespace goes.
+          'Generate an image of a snow-globe city',
+        );
+      });
+
+      test('cue matching is case-insensitive', () {
+        expect(
+          ToolRegistry.resolveGeneratePrompt(
+            modelPrompt: '',
+            triggeringMessage: 'GENERATE a sunset over the lake',
+            priorUserMessages: const [],
+          ),
+          'GENERATE a sunset over the lake',
+        );
+        expect(
+          ToolRegistry.resolveGeneratePrompt(
+            modelPrompt: '',
+            triggeringMessage: 'yes',
+            priorUserMessages: const ['Please DRAW a red barn'],
+          ),
+          'Please DRAW a red barn',
+        );
+      });
+
+      test('a non-generate tool is untouched', () {
+        // The fallback only ever runs for generate_on_site — another
+        // tool's params pass through byte-identical, even when they
+        // look like they could use a prompt.
+        final params = {
+          'to': 'Shannon',
+          'body': 'generate a picture for me',
+        };
+        final filled = ToolRegistry.resolveGenerateCallParams(
+          tool: 'send_sms',
+          params: params,
+          triggeringMessage: imageRequest,
+          priorUserMessages: const [],
+        );
+        expect(filled.promptWasFilled, isFalse);
+        expect(identical(filled.params, params), isTrue);
+      });
+
+      test('the wrapper fills the prompt and keeps the other params',
+          () {
+        final filled = ToolRegistry.resolveGenerateCallParams(
+          tool: 'generate_on_site',
+          params: {'site': 'artistly', 'kind': 'image', 'prompt': ''},
+          triggeringMessage: 'yes',
+          priorUserMessages: const [imageRequest],
+        );
+        expect(filled.promptWasFilled, isTrue);
+        expect(filled.params['prompt'], imageRequest);
+        expect(filled.params['site'], 'artistly');
+        expect(filled.params['kind'], 'image');
+      });
+
+      test('the description tells the model the prompt is required', () {
+        final description =
+            registry.tools['generate_on_site']!.description;
+        expect(
+          description,
+          contains('The "prompt" argument is required'),
+        );
+        expect(
+          description,
+          contains('their message IS the prompt'),
+        );
+      });
+    });
   });
 }

@@ -164,7 +164,11 @@ class ToolRegistry {
             '"image"); VideoExpress video is not built yet, and any other '
             'site is refused. The user must already be signed in to '
             'Artistly in the browser — never ask for, type, or read a '
-            'password.',
+            'password. The "prompt" argument is required: it must be '
+            'the user\'s full image description, copied word for word '
+            'from their message. Never call this tool with an empty or '
+            'missing prompt — if the user asked for an image, their '
+            'message IS the prompt.',
         parameters: {
           'site': {
             'type': 'string',
@@ -665,6 +669,107 @@ class ToolRegistry {
     }
     if (permission == ToolPermission.ask) return CloudToolDecision.ask;
     return CloudToolDecision.run;
+  }
+
+  /// Cue words that mark a user message as an image request.
+  ///
+  /// Build #124: the list is generous on purpose — the resolver only
+  /// runs inside a `generate_on_site` call, so the model has already
+  /// decided this turn is an image turn. The cue check exists only to
+  /// reject non-requests like "yes".
+  static const List<String> generatePromptCues = [
+    'image',
+    'picture',
+    'photo',
+    'art',
+    'artistly',
+    'generate',
+    'create',
+    'draw',
+    'paint',
+    'design',
+    'make',
+  ];
+
+  /// Fill a dropped `generate_on_site` "prompt" from the user's own
+  /// words — or null when there is genuinely nothing to fall back to.
+  ///
+  /// Build #124: a small model (3B) can emit the tool call and still
+  /// drop the argument, and on Nov 19 that left Aaron staring at the
+  /// guard error instead of a generation. The fix is engine-agnostic:
+  /// never trust the model to pass the prompt through. Rules, in order:
+  ///
+  /// 1. Model prompt non-empty → use it unchanged. The common case is
+  ///    untouched; the fallback only fires when the model dropped it.
+  /// 2. Else the triggering user message, if it looks like an image
+  ///    request (contains any cue word, case-insensitive).
+  /// 3. Else walk back through prior user messages, newest first, for
+  ///    the most recent image-request-like one — the exact case that
+  ///    broke on Nov 19, when the triggering message was "yes" and the
+  ///    real request was one turn back. The walk stops at the first
+  ///    match; it does not combine messages.
+  /// 4. Else null → fail honestly. The guard message stands; nothing
+  ///    is ever invented.
+  ///
+  /// Verbatim (trimmed only): no stripping of "generate an image of",
+  /// no rephrasing, no invention — the Ask dialog shows Aaron's own
+  /// words, so there is zero surprise about what will be generated.
+  /// Pure, so it is unit-testable without a widget test.
+  static String? resolveGeneratePrompt({
+    required String? modelPrompt,
+    required String triggeringMessage,
+    required List<String> priorUserMessages,
+  }) {
+    if (modelPrompt != null && modelPrompt.trim().isNotEmpty) {
+      return modelPrompt;
+    }
+    if (_looksLikeImageRequest(triggeringMessage)) {
+      return triggeringMessage.trim();
+    }
+    for (final message in priorUserMessages.reversed) {
+      if (_looksLikeImageRequest(message)) return message.trim();
+    }
+    return null;
+  }
+
+  static bool _looksLikeImageRequest(String message) {
+    final lower = message.toLowerCase();
+    return generatePromptCues.any(lower.contains);
+  }
+
+  /// The params a tool call actually runs with, and whether the
+  /// `generate_on_site` prompt was auto-filled from the user's words.
+  ///
+  /// Build #124: the gate lives here, next to the resolver, so both chat
+  /// paths share one decision and it is unit-testable. Only
+  /// `generate_on_site` is ever touched — any other tool's params are
+  /// returned unchanged, and a call the resolver could not fill also
+  /// runs with its original (empty) params, so the guard stays the last
+  /// line of defence. [priorUserMessages] is chronological (oldest
+  /// first); the resolver walks it newest first.
+  static ({Map<String, dynamic> params, bool promptWasFilled})
+      resolveGenerateCallParams({
+    required String tool,
+    required Map<String, dynamic> params,
+    required String triggeringMessage,
+    required List<String> priorUserMessages,
+  }) {
+    if (tool != 'generate_on_site') {
+      return (params: params, promptWasFilled: false);
+    }
+    final modelPrompt = params['prompt'];
+    if (modelPrompt is String && modelPrompt.trim().isNotEmpty) {
+      return (params: params, promptWasFilled: false);
+    }
+    final resolved = resolveGeneratePrompt(
+      modelPrompt: modelPrompt is String ? modelPrompt : null,
+      triggeringMessage: triggeringMessage,
+      priorUserMessages: priorUserMessages,
+    );
+    if (resolved == null) {
+      return (params: params, promptWasFilled: false);
+    }
+    return (params: {...params, 'prompt': resolved}, promptWasFilled: true);
   }
 
   /// The tools section for the cloud system prompt, or '' when there is
