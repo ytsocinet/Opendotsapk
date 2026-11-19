@@ -152,10 +152,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
               delay: const Duration(milliseconds: 33),
               child: ScreenSection(
                 title: 'Appearance',
-                subtitle: 'The colour that seeds buttons, highlights and the logo.',
+                subtitle:
+                    'Light or dark, and the colour that seeds buttons, highlights and the logo.',
                 padding: EdgeInsets.zero,
-                child: _ThemeColorSection(
-                  onChanged: () => _triggerFeedback('theme_color'),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _ThemeModeSection(
+                      onChanged: () => _triggerFeedback('theme_mode'),
+                    ),
+                    const SizedBox(height: 16),
+                    _ThemeColorSection(
+                      onChanged: () => _triggerFeedback('theme_color'),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -294,7 +305,7 @@ class _ProminentModelsSection extends ConsumerWidget {
         // Upstream look (build #118): thin grey border, no glow. The
         // accent-tint gradient fill stays — it is what marks this card as
         // the prominent one, the same way a selected state keeps its tint.
-        border: Border.all(color: AppColors.border, width: 1.5),
+        border: Border.all(color: scheme.outline, width: 1.5),
       ),
       child: Material(
         color: Colors.transparent,
@@ -2178,6 +2189,53 @@ class _ConnectedAppsSectionState
 
 /// Theme-colour picker: six accent colours, one tap to re-seed the app.
 ///
+/// Theme mode: Light / Dark / System (build #120).
+///
+/// Stored as 'light' / 'dark' / 'system' under the `theme_mode` setting;
+/// Dark is the default and System follows the phone. The app root reads it
+/// on every rebuild, so the change applies at once with no restart, and
+/// the colour picker below keeps seeding both modes from the same brand
+/// colour. Same ChoiceChip shape as the Time format section above it.
+class _ThemeModeSection extends ConsumerWidget {
+  const _ThemeModeSection({required this.onChanged});
+
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider);
+    final current =
+        settings['theme_mode'] as String? ??
+        AppTheme.defaultThemeModeSetting;
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final (value, label, tip) in <(String, String, String)>[
+          ('light', 'Light', 'White page, black text'),
+          ('dark', 'Dark', 'Charcoal page, near-white text'),
+          ('system', 'System', 'Follows the phone'),
+        ])
+          Tooltip(
+            message: tip,
+            child: ChoiceChip(
+              label: Text(label),
+              selected: current == value,
+              onSelected: (selected) {
+                if (!selected) return;
+                ref
+                    .read(settingsProvider.notifier)
+                    .updateSetting('theme_mode', value);
+                onChanged();
+              },
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 /// The pick is stored as the colour's ARGB int under the `theme_color`
 /// setting; the app root reads it on every rebuild and writes it to
 /// [AppColors.brand], so the change applies immediately with no restart.

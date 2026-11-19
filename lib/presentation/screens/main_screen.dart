@@ -17,7 +17,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme/app_theme.dart';
 import '../../core/theme/motion.dart';
 import '../providers/providers.dart';
 import 'browser_screen.dart';
@@ -141,7 +140,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       // Upstream look (build #118): thin grey border.
-                      border: Border.all(color: AppColors.border),
+                      border: Border.all(color: scheme.outline),
                     ),
                     child: ClipOval(
                       child: Image.asset(

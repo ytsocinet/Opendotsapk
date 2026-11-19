@@ -118,7 +118,7 @@ class _ChatComposerState extends State<ChatComposer>
         return Container(
           padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
           decoration: BoxDecoration(
-            color: AppColors.surfaceHigh,
+            color: scheme.surfaceContainerHighest,
             // Upstream look (build #118): the top border stays grey when
             // focused — it only thickens — and the green focus glow is gone.
             border: Border(
@@ -161,7 +161,7 @@ class _ChatComposerState extends State<ChatComposer>
                       // prompt, not a bare row.
                       child: Container(
                         decoration: BoxDecoration(
-                          color: AppColors.surface,
+                          color: scheme.surface,
                           borderRadius: BorderRadius.circular(
                             AppTheme.radiusMedium,
                           ),

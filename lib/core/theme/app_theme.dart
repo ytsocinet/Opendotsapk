@@ -8,6 +8,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../constants/app_constants.dart';
 
@@ -55,6 +56,53 @@ class AppColors {
   /// Muted text — upstream's grey.
   static const Color muted = Color(0xFFB4B4B4);
 
+  // ------------------------------------------------------------ light mode
+  // Upstream LocalMind's light tokens (build #120): a near-white page,
+  // pure-white cards, black text, pale grey borders. The accent is NOT
+  // redefined here: the seed stays [brand], so the picked colour seeds
+  // both modes and the colour picker keeps working in light mode.
+  static const Color lightBackground = Color(0xFFFAFAFA);
+  static const Color lightSurface = Color(0xFFFFFFFF);
+
+  /// Raised surface in light mode (dialogs, expanded cards, the input
+  /// bar) — upstream's light input fill, a whisper darker than the page
+  /// so a raised surface still reads as raised on white.
+  static const Color lightSurfaceHigh = Color(0xFFF4F4F5);
+
+  /// The step below the page background in light mode. Dark mode's
+  /// equivalent (0xFF1E1E1E) sits just below its background; light mode's
+  /// sits just below #FAFAFA, so it is the same fill as [lightSurfaceHigh].
+  static const Color lightSurfaceLow = Color(0xFFF4F4F5);
+
+  static const Color lightBorder = Color(0xFFE5E5E5);
+  static const Color lightText = Color(0xFF0A0A0A);
+  static const Color lightMuted = Color(0xFF71717A);
+
+  /// The model's bubble in light mode — a near-white grey, not a brand
+  /// tint: the dark tint (lightness 0.10) would be a black slab on a white
+  /// page, and a pale brand tint would make the two roles hard to tell
+  /// apart once the user's bubble is pale too. Fixed grey, so it never
+  /// depends on the pick.
+  static const Color lightAiBubble = Color(0xFFF5F5F4);
+
+  /// The user's bubble in light mode — a pale tint of the picked brand
+  /// colour: same hue as the brand, so it follows the theme-colour
+  /// setting, but light enough (0.88) that dark text stays readable on
+  /// it. With the default brand this resolves to a pale green.
+  static Color get lightUserBubble =>
+      _brandTint(saturation: 0.45, lightness: 0.88);
+
+  /// The bubble fill for [brightness]: the dark tints below in dark mode,
+  /// the pale variants above in light mode. Screens that render bubbles
+  /// must read through here (with the theme's brightness), not through
+  /// [aiBubble] / [userBubble] directly, or light mode gets dark bubbles.
+  static Color aiBubbleFor(Brightness brightness) =>
+      brightness == Brightness.light ? lightAiBubble : aiBubble;
+
+  /// See [aiBubbleFor].
+  static Color userBubbleFor(Brightness brightness) =>
+      brightness == Brightness.light ? lightUserBubble : userBubble;
+
   /// The model's own bubble — a dark tint of the picked brand colour, so
   /// it follows the theme-colour setting instead of staying Matrix green.
   /// Same hue as the brand, low saturation and lightness, so the
@@ -81,8 +129,53 @@ class AppColors {
   }
 }
 
+/// The per-mode values a theme is built from: one palette per mode, one
+/// [AppTheme] construction shared by both, so a token can never drift
+/// between the two themes by being edited in one getter and not the other.
+class _Palette {
+  const _Palette({
+    required this.background,
+    required this.surface,
+    required this.surfaceLow,
+    required this.surfaceHigh,
+    required this.border,
+    required this.text,
+    required this.muted,
+  });
+
+  final Color background;
+  final Color surface;
+  final Color surfaceLow;
+  final Color surfaceHigh;
+  final Color border;
+  final Color text;
+  final Color muted;
+}
+
 class AppTheme {
   AppTheme._();
+
+  /// The dark palette — upstream's stepped charcoals.
+  static const _darkPalette = _Palette(
+    background: AppColors.background,
+    surface: AppColors.surface,
+    surfaceLow: Color(0xFF1E1E1E),
+    surfaceHigh: AppColors.surfaceHigh,
+    border: AppColors.border,
+    text: AppColors.text,
+    muted: AppColors.muted,
+  );
+
+  /// The light palette — upstream's near-white tokens (build #120).
+  static const _lightPalette = _Palette(
+    background: AppColors.lightBackground,
+    surface: AppColors.lightSurface,
+    surfaceLow: AppColors.lightSurfaceLow,
+    surfaceHigh: AppColors.lightSurfaceHigh,
+    border: AppColors.lightBorder,
+    text: AppColors.lightText,
+    muted: AppColors.lightMuted,
+  );
 
   /// Corner radii, upstream LocalMind's values: 12 for cards and inputs,
   /// 8 for buttons. [radiusMedium] stays 12 — it is what cards, bubbles and
@@ -90,6 +183,24 @@ class AppTheme {
   static const double radiusLarge = 12;
   static const double radiusMedium = 12;
   static const double radiusSmall = 8;
+
+  /// The stored `theme_mode` value for the default mode: Dark. The setting
+  /// defaults to this (see the settings defaults) and
+  /// [themeModeFromSetting] falls back to it for a missing or hand-edited
+  /// value, so a user who set a colour before this setting existed stays
+  /// on the dark theme they have always had.
+  static const String defaultThemeModeSetting = 'dark';
+
+  /// Parse the stored `theme_mode` setting ('light' / 'dark' / 'system')
+  /// into the [ThemeMode] the app root hands to [MaterialApp]. Anything
+  /// unrecognised — including null — is Dark, the default.
+  static ThemeMode themeModeFromSetting(String? value) {
+    return switch (value) {
+      'light' => ThemeMode.light,
+      'system' => ThemeMode.system,
+      _ => ThemeMode.dark,
+    };
+  }
 
   /// The dark theme.
   ///
@@ -105,27 +216,39 @@ class AppTheme {
   /// `background`, `surfaceHigh` lighter than both) instead of relying on
   /// elevation shadows, because shadows on charcoal carry little
   /// information and elevation then reads as a border instead.
-  static ThemeData get dark {
+  static ThemeData get dark => _build(Brightness.dark, _darkPalette);
+
+  /// The light theme (build #120): upstream LocalMind's light tokens —
+  /// near-white page, pure-white cards, black text, pale grey borders.
+  /// The accent is still the picked brand colour: the seed is the same
+  /// [AppColors.brand] in both modes, so the colour picker keeps working
+  /// in light mode exactly as it does in dark.
+  static ThemeData get light => _build(Brightness.light, _lightPalette);
+
+  /// One construction for both modes: the only differences are the
+  /// palette and the brightness, so a component theme added here lands
+  /// in both modes at once and can never be dark-only by accident.
+  static ThemeData _build(Brightness brightness, _Palette p) {
     final seed = AppColors.brand;
     final scheme = ColorScheme.fromSeed(
       seedColor: seed,
-      brightness: Brightness.dark,
+      brightness: brightness,
     ).copyWith(
       primary: seed,
       secondary: AppColors.accent,
-      surface: AppColors.surface,
-      surfaceContainerLowest: AppColors.background,
-      surfaceContainerLow: const Color(0xFF1E1E1E),
-      surfaceContainer: AppColors.surface,
-      surfaceContainerHigh: AppColors.surfaceHigh,
-      surfaceContainerHighest: AppColors.surfaceHigh,
+      surface: p.surface,
+      surfaceContainerLowest: p.background,
+      surfaceContainerLow: p.surfaceLow,
+      surfaceContainer: p.surface,
+      surfaceContainerHigh: p.surfaceHigh,
+      surfaceContainerHighest: p.surfaceHigh,
       error: AppColors.danger,
-      outline: AppColors.border,
-      onSurface: AppColors.text,
-      onSurfaceVariant: AppColors.muted,
+      outline: p.border,
+      onSurface: p.text,
+      onSurfaceVariant: p.muted,
     );
 
-    final text = _textTheme(scheme);
+    final text = _textTheme(scheme, p);
 
     return ThemeData(
       useMaterial3: true,
@@ -147,7 +270,7 @@ class AppTheme {
       // chrome: code blocks (flutter_markdown pins those itself) and the
       // CLAWZILLA wordmark.
       colorScheme: scheme,
-      scaffoldBackgroundColor: AppColors.background,
+      scaffoldBackgroundColor: p.background,
       textTheme: text,
 
       // ------------------------------------------------------------- chrome
@@ -155,13 +278,19 @@ class AppTheme {
         centerTitle: false,
         elevation: 0,
         scrolledUnderElevation: 0,
-        backgroundColor: AppColors.background,
+        backgroundColor: p.background,
         foregroundColor: scheme.onSurface,
+        // The status-bar icons follow the theme, not the launch default:
+        // light icons on the charcoal theme, dark icons on the white one.
+        // The splash (no AppBar) is covered the same way by the app root.
+        systemOverlayStyle: brightness == Brightness.light
+            ? SystemUiOverlayStyle.dark
+            : SystemUiOverlayStyle.light,
         titleTextStyle: text.titleLarge,
         iconTheme: IconThemeData(color: scheme.onSurfaceVariant),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: AppColors.surface,
+        backgroundColor: p.surface,
         indicatorColor: scheme.primary.withValues(alpha: 0.22),
         height: 68,
         elevation: 0,
@@ -183,34 +312,34 @@ class AppTheme {
         ),
       ),
       navigationRailTheme: NavigationRailThemeData(
-        backgroundColor: AppColors.surface,
+        backgroundColor: p.surface,
         indicatorColor: scheme.primary.withValues(alpha: 0.22),
       ),
 
       // --------------------------------------------------------- containers
       cardTheme: CardThemeData(
         elevation: 0,
-        color: AppColors.surface,
+        color: p.surface,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusLarge),
           // Upstream look: a thin grey border, no green, no glow.
-          side: const BorderSide(color: AppColors.border),
+          side: BorderSide(color: p.border),
         ),
       ),
       dialogTheme: DialogThemeData(
         elevation: 0,
-        backgroundColor: AppColors.surfaceHigh,
+        backgroundColor: p.surfaceHigh,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusLarge + 4),
-          side: const BorderSide(color: AppColors.border),
+          side: BorderSide(color: p.border),
         ),
         titleTextStyle: text.titleLarge,
         contentTextStyle: text.bodyMedium,
       ),
-      bottomSheetTheme: const BottomSheetThemeData(
+      bottomSheetTheme: BottomSheetThemeData(
         elevation: 0,
-        backgroundColor: AppColors.surfaceHigh,
+        backgroundColor: p.surfaceHigh,
         showDragHandle: true,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -219,7 +348,7 @@ class AppTheme {
       snackBarTheme: SnackBarThemeData(
         elevation: 0,
         behavior: SnackBarBehavior.floating,
-        backgroundColor: AppColors.surfaceHigh,
+        backgroundColor: p.surfaceHigh,
         contentTextStyle: text.bodyMedium,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusMedium),
@@ -295,7 +424,7 @@ class AppTheme {
       // ------------------------------------------------------------ inputs
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.surfaceHigh,
+        fillColor: p.surfaceHigh,
         hintStyle: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
@@ -347,8 +476,8 @@ class AppTheme {
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(
         color: scheme.primary,
-        linearTrackColor: AppColors.surfaceHigh,
-        circularTrackColor: AppColors.surfaceHigh,
+        linearTrackColor: p.surfaceHigh,
+        circularTrackColor: p.surfaceHigh,
       ),
       dividerTheme: DividerThemeData(
         color: scheme.outlineVariant.withValues(alpha: 0.4),
@@ -356,7 +485,7 @@ class AppTheme {
         space: 1,
       ),
       chipTheme: ChipThemeData(
-        backgroundColor: AppColors.surfaceHigh,
+        backgroundColor: p.surfaceHigh,
         selectedColor: scheme.primary.withValues(alpha: 0.22),
         side: BorderSide.none,
         shape: RoundedRectangleBorder(
@@ -399,19 +528,19 @@ class AppTheme {
   /// No fontFamily is pinned here: body/UI text renders in the platform
   /// default sans (see the note on the ThemeData above for why Inter is
   /// not wired in).
-  static TextTheme _textTheme(ColorScheme scheme) {
-    const color = AppColors.text;
-    const muted = AppColors.muted;
+  static TextTheme _textTheme(ColorScheme scheme, _Palette p) {
+    final color = p.text;
+    final muted = p.muted;
 
     return TextTheme(
-      displaySmall: const TextStyle(
+      displaySmall: TextStyle(
         fontSize: 34,
         height: 1.15,
         fontWeight: FontWeight.w700,
         letterSpacing: -0.5,
         color: color,
       ),
-      headlineSmall: const TextStyle(
+      headlineSmall: TextStyle(
         fontSize: 24,
         height: 1.25,
         fontWeight: FontWeight.w700,
@@ -425,28 +554,28 @@ class AppTheme {
         letterSpacing: -0.2,
         color: scheme.onSurface,
       ),
-      titleMedium: const TextStyle(
+      titleMedium: TextStyle(
         fontSize: 16,
         height: 1.35,
         fontWeight: FontWeight.w600,
         color: color,
       ),
-      bodyLarge: const TextStyle(fontSize: 16, height: 1.45, color: color),
-      bodyMedium: const TextStyle(fontSize: 14.5, height: 1.45, color: color),
-      bodySmall: const TextStyle(fontSize: 12.5, height: 1.4, color: muted),
-      labelLarge: const TextStyle(
+      bodyLarge: TextStyle(fontSize: 16, height: 1.45, color: color),
+      bodyMedium: TextStyle(fontSize: 14.5, height: 1.45, color: color),
+      bodySmall: TextStyle(fontSize: 12.5, height: 1.4, color: muted),
+      labelLarge: TextStyle(
         fontSize: 14,
         height: 1.2,
         fontWeight: FontWeight.w600,
         color: color,
       ),
-      labelMedium: const TextStyle(
+      labelMedium: TextStyle(
         fontSize: 12.5,
         height: 1.2,
         fontWeight: FontWeight.w500,
         color: muted,
       ),
-      labelSmall: const TextStyle(
+      labelSmall: TextStyle(
         fontSize: 11,
         height: 1.2,
         fontWeight: FontWeight.w500,

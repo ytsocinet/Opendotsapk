@@ -165,7 +165,9 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       constraints: BoxConstraints(maxWidth: maxWidth),
       decoration: BoxDecoration(
-        color: isUser ? AppColors.userBubble : AppColors.aiBubble,
+        color: isUser
+            ? AppColors.userBubbleFor(scheme.brightness)
+            : AppColors.aiBubbleFor(scheme.brightness),
         // Upstream look (build #118): 12 px rounding and a thin grey
         // border on both roles — no green border, no green glow. Both
         // bubbles share one soft drop shadow for depth.
@@ -310,7 +312,14 @@ class _ChatMessageTileState extends ConsumerState<ChatMessageTile>
                   widget.message.timestamp,
                   twelveHour: twelveHour,
                 ),
-                style: text.labelSmall?.copyWith(color: Colors.white70),
+                // The user bubble is a strong green in dark mode (white
+                // timestamp reads on it) and a pale tint in light mode
+                // (white would vanish — the muted text colour reads).
+                style: text.labelSmall?.copyWith(
+                  color: theme.brightness == Brightness.light
+                      ? scheme.onSurfaceVariant
+                      : Colors.white70,
+                ),
               ),
             ),
           ],
@@ -433,7 +442,9 @@ class _AssistantAvatarState extends State<_AssistantAvatar>
             shape: BoxShape.circle,
             // Upstream look (build #118): thin grey border, no green glow.
             // The faint accent fill stays, so the mark still reads as Cypher.
-            border: Border.all(color: AppColors.border),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outline,
+            ),
           ),
           child: ClipOval(
             child: Image.asset(

@@ -73,6 +73,116 @@ void main() {
     });
   });
 
+  group('AppTheme.light', () {
+    test('is a light Material 3 theme on the upstream light tokens', () {
+      final theme = AppTheme.light;
+
+      expect(theme.useMaterial3, isTrue);
+      expect(theme.colorScheme.brightness, Brightness.light);
+      expect(theme.brightness, Brightness.light);
+      expect(theme.scaffoldBackgroundColor, AppColors.lightBackground);
+      expect(AppColors.lightBackground, const Color(0xFFFAFAFA));
+      expect(AppColors.lightSurface, const Color(0xFFFFFFFF));
+      expect(AppColors.lightBorder, const Color(0xFFE5E5E5));
+      expect(AppColors.lightText, const Color(0xFF0A0A0A));
+      expect(AppColors.lightMuted, const Color(0xFF71717A));
+      expect(theme.colorScheme.surface, isNot(AppColors.lightBackground));
+    });
+
+    test('the picker seeds light mode too: same brand, both themes', () {
+      // The colour picker writes AppColors.brand once; both themes seed
+      // from it, so a pick made in dark mode is still the accent after
+      // switching to light (and vice versa).
+      final previous = AppColors.brand;
+      try {
+        AppColors.brand = const Color(0xFF3B82F6);
+        expect(AppTheme.dark.colorScheme.primary, const Color(0xFF3B82F6));
+        expect(AppTheme.light.colorScheme.primary, const Color(0xFF3B82F6));
+      } finally {
+        AppColors.brand = previous;
+      }
+    });
+
+    test('surfaces are stepped for white, the reverse of dark', () {
+      // Dark steps down from the page (surface darker than background);
+      // light steps up (pure-white cards on a near-white page) while the
+      // raised fill stays a whisper darker than the page, so a dialog
+      // still reads as raised on white.
+      double luma(Color c) => c.computeLuminance();
+
+      expect(luma(AppColors.lightSurface), greaterThan(luma(AppColors.lightBackground)));
+      expect(
+        luma(AppColors.lightSurfaceHigh),
+        lessThan(luma(AppColors.lightBackground)),
+      );
+    });
+
+    test('keeps the shared corner radii and the platform sans', () {
+      final theme = AppTheme.light;
+      expect(theme.textTheme.bodyMedium?.fontFamily, 'Roboto');
+      expect(theme.textTheme.titleLarge?.fontFamily, 'Roboto');
+    });
+  });
+
+  group('AppColors light bubble fills', () {
+    test('are pale in light mode and opaque in both modes', () {
+      final previous = AppColors.brand;
+      try {
+        AppColors.brand = const Color(0xFF00FF66);
+        final user = AppColors.userBubbleFor(Brightness.light);
+        final ai = AppColors.aiBubbleFor(Brightness.light);
+
+        expect(user.a, 1.0);
+        expect(ai.a, 1.0);
+        // Pale brand tint, not the dark slab: lightness 0.88, so dark
+        // text stays readable on it.
+        expect(HSLColor.fromColor(user).lightness, closeTo(0.88, 0.02));
+        // Near-white grey, not a tint at all.
+        expect(ai, const Color(0xFFF5F5F4));
+        // Roles stay distinct — in light mode by hue, not by lightness
+        // order as in dark mode: the pale green tint is a touch darker
+        // in luminance than the near-white grey, but the green-vs-grey
+        // difference is what the eye reads. Both are far lighter than
+        // the dark fills they replace.
+        expect(
+          (user.computeLuminance() - ai.computeLuminance()).abs(),
+          greaterThan(0.05),
+        );
+        expect(
+          user.computeLuminance(),
+          greaterThan(AppColors.userBubble.computeLuminance()),
+        );
+        expect(
+          ai.computeLuminance(),
+          greaterThan(AppColors.aiBubble.computeLuminance()),
+        );
+      } finally {
+        AppColors.brand = previous;
+      }
+    });
+
+    test('the light user bubble follows the brand hue', () {
+      final previous = AppColors.brand;
+      try {
+        AppColors.brand = const Color(0xFF3B82F6);
+        final user = HSLColor.fromColor(
+          AppColors.userBubbleFor(Brightness.light),
+        );
+        expect(user.hue, closeTo(217.2, 3.0));
+        expect(user.lightness, closeTo(0.88, 0.02));
+      } finally {
+        AppColors.brand = previous;
+      }
+    });
+
+    test('the dark getters are unchanged by the light variants', () {
+      // aiBubbleFor/userBubbleFor dispatch; the old getters keep the
+      // dark values the earlier group pins.
+      expect(AppColors.aiBubbleFor(Brightness.dark), AppColors.aiBubble);
+      expect(AppColors.userBubbleFor(Brightness.dark), AppColors.userBubble);
+    });
+  });
+
   group('AppColors', () {
     /// Every colour the app names by hand, not through the scheme. A change to
     /// this list is a reminder that the new colour also needs an opaque alpha.

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'presentation/providers/providers.dart';
@@ -11,9 +12,17 @@ import 'core/theme/motion.dart';
 
 /// Root application widget.
 ///
-/// A [ConsumerWidget] so the theme follows the theme-colour setting: the
-/// picked colour is written to [AppColors.brand] here, before the theme is
-/// built, and the whole [MaterialApp] rebuilds when the setting changes.
+/// A [ConsumerWidget] so the theme follows the theme settings: the picked
+/// colour is written to [AppColors.brand] here, before the theme is built,
+/// and the whole [MaterialApp] rebuilds when either setting changes.
+///
+/// Build #120: the app now has a light theme as well as the dark one. The
+/// `theme_mode` setting (Light / Dark / System — Dark by default) picks
+/// which one [MaterialApp] shows; System follows the phone. The status-bar
+/// icons follow the resolved brightness too, through the [AnnotatedRegion]
+/// below (the splash has no AppBar, so the AppBarTheme's overlay style
+/// alone would leave it with the wrong icons) and the matching call in
+/// `main.dart` that covers the first frame before this builds.
 class ClawzillaApp extends ConsumerWidget {
   const ClawzillaApp({super.key});
 
@@ -27,12 +36,36 @@ class ClawzillaApp extends ConsumerWidget {
     final seedValue = settings['theme_color'] as int? ?? 0xFF00FF66;
     AppColors.brand = Color(seedValue);
 
+    // Light / Dark / System, from the `theme_mode` setting (Dark by
+    // default). System resolves against the phone's brightness here, so
+    // the status-bar icons below match what the user actually sees.
+    final themeMode = AppTheme.themeModeFromSetting(
+      settings['theme_mode'] as String?,
+    );
+    final brightness = switch (themeMode) {
+      ThemeMode.light => Brightness.light,
+      ThemeMode.dark => Brightness.dark,
+      ThemeMode.system =>
+        WidgetsBinding.instance.platformDispatcher.platformBrightness,
+    };
+
     return MaterialApp(
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
-      // One theme for the whole app — colours, type, shape, and component
+      // One theme per mode — colours, type, shape, and component
       // defaults all live in AppTheme so no screen invents its own.
-      theme: AppTheme.dark,
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: themeMode,
+      builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: brightness == Brightness.light
+              ? Brightness.dark
+              : Brightness.light,
+        ),
+        child: child!,
+      ),
       home: const SplashScreen(),
     );
   }
@@ -124,15 +157,24 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    // The glow behind the logo follows the theme (build #120): the
+    // green-black radial (0xFF0A2410) would be a dark blotch on the white
+    // light-mode page, so light mode gets a pale brand tint fading into
+    // the light background instead — same glow, same place.
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final glow = isLight
+        ? AppColors.brand.withValues(alpha: 0.12)
+        : const Color(0xFF0A2410);
+    final page = isLight ? AppColors.lightBackground : AppColors.background;
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(0, -0.35),
+            center: const Alignment(0, -0.35),
             radius: 0.9,
             // Clawziod look: the old indigo glow (0xFF1B1F44) goes green.
-            colors: [Color(0xFF0A2410), AppColors.background],
-            stops: [0, 0.75],
+            colors: [glow, page],
+            stops: const [0, 0.75],
           ),
         ),
         child: Center(

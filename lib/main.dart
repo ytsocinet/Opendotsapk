@@ -47,13 +47,37 @@ Future<void> main() async {
     DeviceOrientation.portraitDown,
   ]);
 
-  // Transparent status bar, light icons.
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-    ),
-  );
+  // Transparent status bar; the icon brightness follows the stored
+  // `theme_mode` (build #120) so the first frame already matches the
+  // theme the app is about to show: dark icons on the white light-mode
+  // splash, light icons on the charcoal dark one. System follows the
+  // phone; anything unreadable falls back to light icons (Dark is the
+  // default mode). The app root re-asserts the same style on every
+  // rebuild once it is running.
+  try {
+    final themeMode = await DatabaseHelper.instance.getPreference(
+      'theme_mode',
+    );
+    final systemDark =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+        Brightness.dark;
+    final lightMode =
+        themeMode == 'light' || (themeMode == 'system' && !systemDark);
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: lightMode ? Brightness.dark : Brightness.light,
+      ),
+    );
+  } catch (e) {
+    Log.w('startup status-bar style failed, keeping light icons: $e');
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+      ),
+    );
+  }
 
   // ---------------------------------------------------------------------------
   // Encryption key.

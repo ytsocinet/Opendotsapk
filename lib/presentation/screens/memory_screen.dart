@@ -326,7 +326,7 @@ class MemoryCard extends StatelessWidget {
       child: ClipRRect(
         borderRadius: radius,
         child: Material(
-          color: AppColors.surface,
+          color: theme.colorScheme.surface,
           child: IntrinsicHeight(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,

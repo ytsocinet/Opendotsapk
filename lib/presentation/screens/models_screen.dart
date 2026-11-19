@@ -763,7 +763,7 @@ class _ModelRow extends StatelessWidget {
     return Card(
       color: selected || multiSelected
           ? scheme.primary.withValues(alpha: 0.10)
-          : AppColors.surface,
+          : scheme.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
         side: BorderSide(

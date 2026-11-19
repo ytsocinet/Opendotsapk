@@ -388,9 +388,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    AppColors.background,
-                    AppColors.background.withValues(alpha: 0.95),
-                    AppColors.background,
+                    Theme.of(context).scaffoldBackgroundColor,
+                    Theme.of(
+                      context,
+                    ).scaffoldBackgroundColor.withValues(alpha: 0.95),
+                    Theme.of(context).scaffoldBackgroundColor,
                   ],
                   stops: const [0.0, 0.3, 1.0],
                 )
@@ -532,7 +534,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final scheme = Theme.of(context).colorScheme;
 
     return Material(
-      color: AppColors.surface,
+      color: scheme.surface,
       child: InkWell(
         onTap: () => ref.read(ideOpenRequestProvider.notifier).state++,
         child: Padding(
@@ -570,7 +572,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     return Container(
       height: 76,
-      color: AppColors.surface,
+      color: scheme.surface,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: ListView(
         scrollDirection: Axis.horizontal,
@@ -2370,7 +2372,7 @@ class _ChatHeaderState extends State<_ChatHeader>
                   ),
                 ),
             child: Container(
-              color: AppColors.background,
+              color: scheme.surfaceContainerLowest,
               child: SafeArea(
                 bottom: false,
                 child: Padding(
@@ -2418,7 +2420,7 @@ class _ChatHeaderState extends State<_ChatHeader>
                             shape: BoxShape.circle,
                             // Upstream look (build #118): thin grey border,
                             // no green glow.
-                            border: Border.all(color: AppColors.border),
+                            border: Border.all(color: scheme.outline),
                           ),
                           child: ClipOval(
                             child: Image.asset(
@@ -3811,7 +3813,7 @@ class _ModelRowCard extends StatelessWidget {
         elevation: selected ? 2 : 0,
         color: selected
             ? scheme.primary.withValues(alpha: 0.10)
-            : AppColors.surface,
+            : scheme.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
           side: BorderSide(
@@ -4171,7 +4173,7 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                   // Upstream look (build #118): thin grey border, no glow.
                   // The faint accent fill stays, so the mark still reads as
                   // Cypher.
-                  border: Border.all(color: AppColors.border),
+                  border: Border.all(color: scheme.outline),
                 ),
                 child: ClipOval(
                   child: Image.asset(
@@ -4189,7 +4191,7 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                   vertical: 14,
                 ),
                 decoration: BoxDecoration(
-                  color: AppColors.aiBubble,
+                  color: AppColors.aiBubbleFor(scheme.brightness),
                   borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
                   border: Border.all(
                     color: scheme.outlineVariant.withValues(alpha: 0.45),
@@ -4324,7 +4326,7 @@ class _ModeBar extends StatelessWidget {
       // Clawziod look: a thin green top border frames the mode strip as a
       // terminal panel, matching the composer's own top border above it.
       decoration: BoxDecoration(
-        color: AppColors.surfaceHigh,
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
         border: Border(
           top: BorderSide(
             color: Theme.of(

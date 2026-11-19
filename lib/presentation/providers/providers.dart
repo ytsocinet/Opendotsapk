@@ -866,6 +866,11 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // the colour's ARGB int. Matrix green by default.
     'theme_color': 0xFF00FF66,
 
+    // Theme mode (build #120): 'light' | 'dark' | 'system'. Dark by
+    // default — the app has only ever been dark, and a long-session chat
+    // client is mostly used at night. 'system' follows the phone.
+    'theme_mode': 'dark',
+
     // Message timestamps: '12h' (2:17 PM) or '24h' (14:17). 12-hour by
     // default.
     'time_format': '12h',
@@ -981,6 +986,7 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'connected_apps',
       'tts_voice',
       'time_format',
+      'theme_mode',
       'last_ide_file',
     ]) {
       final raw = await _db.getPreference(key);
