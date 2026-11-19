@@ -1,12 +1,13 @@
 /// Main screen with a left slide-out drawer.
 ///
-/// Nine tab destinations, plus the IDE as a drawer action (it opens the
+/// Ten tab destinations, plus the IDE as a drawer action (it opens the
 /// editor; it is not a tab). Chat and the model list are separate because picking a
 /// model is a settings-shaped task, while Memory and Activity are read-mostly.
-/// Browser is last on purpose: the original five keep their indices, so
+/// Browser is last of the original nine on purpose: the original five keep their indices, so
 /// nothing that addressed a tab by number moves. Tasks, Goals and Projects
 /// sit after Settings for the same reason — they were added later (build
-/// #86) without shifting the original five. The drawer opens from the
+/// #86) without shifting the original five. Personas sits after Browser
+/// (build #122) for the same reason. The drawer opens from the
 /// menu button in the chat header, from the menu button on the other tabs'
 /// app bars, or by swiping in from the left edge.
 library;
@@ -25,6 +26,7 @@ import 'code_editor_screen.dart';
 import 'goals_screen.dart';
 import 'memory_screen.dart';
 import 'activity_screen.dart';
+import 'personas_screen.dart';
 import 'projects_screen.dart';
 import 'settings_screen.dart';
 import 'tasks_screen.dart';
@@ -58,6 +60,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     GoalsScreen(),
     ProjectsScreen(),
     BrowserScreen(),
+    PersonasScreen(),
   ];
 
   @override
@@ -322,6 +325,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               icon: Icons.public_outlined,
               selectedIcon: Icons.public,
               label: 'Browser',
+            ),
+            _drawerTile(
+              index: 9,
+              icon: Icons.person_outline,
+              selectedIcon: Icons.person,
+              label: 'Personas',
             ),
             _ideTile(scheme),
           ],

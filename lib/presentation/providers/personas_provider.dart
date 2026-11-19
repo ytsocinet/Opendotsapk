@@ -152,6 +152,20 @@ class PersonasNotifier extends StateNotifier<List<Persona>> {
     return cypherSystemPrompt;
   }
 
+  /// The active persona itself, for UI that shows it (the header chip,
+  /// build #122). Same fallback as [resolveActivePrompt]: the Cypher
+  /// built-in when [activeId] matches no persona — a deleted custom, or
+  /// a list still loading — so the chip always has something to show.
+  static Persona resolveActive({
+    required List<Persona> personas,
+    required String? activeId,
+  }) {
+    for (final p in personas) {
+      if (p.id == activeId) return p;
+    }
+    return builtInPersonas.first;
+  }
+
   /// Load all personas, seeding the built-ins first when the table is
   /// empty (upstream's `seedIfNeeded` pattern). Re-running it is safe:
   /// the seed only fires on an empty table, and the insert replaces by

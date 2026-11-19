@@ -18,6 +18,7 @@ import '../providers/personas_provider.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/chat_empty_state.dart';
 import '../widgets/chat_message_tile.dart';
+import '../widgets/persona_picker_sheet.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/motion.dart';
 import '../../core/utils/ide_file.dart';
@@ -2383,9 +2384,10 @@ class _ChatHeaderState extends State<_ChatHeader>
                 bottom: false,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-                  // Clawziod look: the header is four rows — the title row,
+                  // Clawziod look: the header is five rows — the title row,
                   // then the weights line, then the engine line (build
-                  // #106), then the WAKE pill.
+                  // #106), then the WAKE pill, then the persona chip
+                  // (build #122).
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -2569,6 +2571,13 @@ class _ChatHeaderState extends State<_ChatHeader>
                           ),
                         ],
                       ),
+                      const SizedBox(height: 6),
+                      // Persona chip (build #122): the active persona,
+                      // emoji + name, tap to switch without leaving
+                      // chat. Same rule as the ENGINE line — a small,
+                      // self-contained public widget, so the revamp
+                      // Piece 3 header restyle can keep it as-is.
+                      const PersonaChip(),
                     ],
                   ),
                 ),
@@ -2675,6 +2684,68 @@ class EngineLabel extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.labelSmall?.copyWith(
             color: scheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The persona chip in the chat header (build #122): the active
+/// persona's emoji + name, tap to switch without leaving chat.
+///
+/// Public (not `_HeaderPill`-private) for the same reason as
+/// [EngineLabel]: the header itself cannot be pumped — it lives inside
+/// ChatScreen, which pulls in the native llama runtime — so a widget
+/// test pumps this directly. The active persona resolves through
+/// `PersonasNotifier.resolveActive`, so a deleted custom or a list
+/// still loading falls back to the Cypher built-in, never a blank chip.
+class PersonaChip extends ConsumerWidget {
+  const PersonaChip({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final personas = ref.watch(personasProvider);
+    final activeId =
+        ref.watch(settingsProvider)['active_persona_id'] as String?;
+    final active = PersonasNotifier.resolveActive(
+      personas: personas,
+      activeId: activeId,
+    );
+    return GestureDetector(
+      onTap: () => showPersonaPickerSheet(context),
+      child: Tooltip(
+        message: 'Switch persona',
+        child: Container(
+          height: 26,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: AppColors.brand.withValues(alpha: 0.45),
+            ),
+            color: AppColors.brand.withValues(alpha: 0.12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(active.emoji, style: const TextStyle(fontSize: 13)),
+              const SizedBox(width: 6),
+              Text(
+                active.name,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.brand,
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.keyboard_arrow_down,
+                size: 14,
+                color: AppColors.brand,
+              ),
+            ],
           ),
         ),
       ),
