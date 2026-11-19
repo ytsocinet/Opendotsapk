@@ -21,6 +21,7 @@ import '../../data/services/secure_store.dart';
 import '../../domain/models/cloud_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/screen_section_card.dart';
+import 'auto_reply_screen.dart';
 import 'cloud_screen.dart';
 import 'diagnostics_screen.dart';
 import 'models_screen.dart';
@@ -230,6 +231,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                 padding: EdgeInsets.zero,
                 child: _ConnectedAppsSection(
                   onChanged: () => _triggerFeedback('connected_apps'),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            FadeSlideIn(
+              delay: const Duration(milliseconds: 169),
+              child: ScreenSection(
+                title: 'Auto-reply',
+                subtitle:
+                    'Template replies to chosen contacts when a text arrives. Off by default.',
+                padding: EdgeInsets.zero,
+                child: ListTile(
+                  leading: const ScreenRowIcon(
+                    icon: Icons.reply_outlined,
+                  ),
+                  title: const Text('Auto-reply'),
+                  subtitle: Text(
+                    (ref.watch(settingsProvider)['auto_reply_enabled']
+                                as bool? ??
+                            false)
+                        ? 'On — replying to your chosen contacts.'
+                        : 'Off — no text ever gets an automatic reply.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    AppPageRoute(
+                      builder: (_) => const AutoReplyScreen(),
+                    ),
+                  ),
                 ),
               ),
             ),

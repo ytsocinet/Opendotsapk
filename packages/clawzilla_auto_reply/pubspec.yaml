@@ -1,0 +1,25 @@
+name: clawzilla_auto_reply
+description: >-
+  Native SMS send, in-call check, and contact listing for Clawzilla
+  auto-reply (build #123). The Dart side is a thin MethodChannel wrapper;
+  the Kotlin side is a plain FlutterPlugin so it is registered in every
+  FlutterEngine — including the WorkManager background engine, where the
+  auto-reply task runs. That is the whole reason this is a plugin instead
+  of a MainActivity channel: MainActivity's channels only exist in the
+  main engine, so a background task calling them would throw
+  MissingPluginException and no reply would ever go out.
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    androidPackage: com.clawzilla.auto_reply
+    pluginClass: AutoReplySmsPlugin

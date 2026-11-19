@@ -1,0 +1,36 @@
+group 'com.clawzilla.auto_reply'
+version '1.0-SNAPSHOT'
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    if (project.android.hasProperty("namespace")) {
+        namespace 'com.clawzilla.auto_reply'
+    }
+
+    compileSdk 36
+
+    defaultConfig {
+        minSdk 28
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+}
+
+dependencies {
+    // No extra dependencies: SmsManager, AudioManager and the contacts
+    // provider are Android framework APIs, and the Flutter embedding
+    // classes come from the app build.
+}

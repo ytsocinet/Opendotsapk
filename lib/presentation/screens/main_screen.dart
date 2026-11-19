@@ -1,13 +1,14 @@
 /// Main screen with a left slide-out drawer.
 ///
-/// Ten tab destinations, plus the IDE as a drawer action (it opens the
+/// Eleven tab destinations, plus the IDE as a drawer action (it opens the
 /// editor; it is not a tab). Chat and the model list are separate because picking a
 /// model is a settings-shaped task, while Memory and Activity are read-mostly.
 /// Browser is last of the original nine on purpose: the original five keep their indices, so
 /// nothing that addressed a tab by number moves. Tasks, Goals and Projects
 /// sit after Settings for the same reason — they were added later (build
 /// #86) without shifting the original five. Personas sits after Browser
-/// (build #122) for the same reason. The drawer opens from the
+/// (build #122) for the same reason, and Auto-reply after Personas
+/// (build #123). The drawer opens from the
 /// menu button in the chat header, from the menu button on the other tabs'
 /// app bars, or by swiping in from the left edge.
 library;
@@ -20,6 +21,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/motion.dart';
 import '../providers/providers.dart';
+import 'auto_reply_screen.dart';
 import 'browser_screen.dart';
 import 'chat_screen.dart';
 import 'code_editor_screen.dart';
@@ -61,6 +63,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     ProjectsScreen(),
     BrowserScreen(),
     PersonasScreen(),
+    AutoReplyScreen(),
   ];
 
   @override
@@ -331,6 +334,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               icon: Icons.person_outline,
               selectedIcon: Icons.person,
               label: 'Personas',
+            ),
+            _drawerTile(
+              index: 10,
+              icon: Icons.reply_outlined,
+              selectedIcon: Icons.reply,
+              label: 'Auto-reply',
             ),
             _ideTile(scheme),
           ],

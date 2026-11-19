@@ -91,6 +91,16 @@ dependencies:
   flutter_foreground_task: ^11.0.3
   workmanager: ^0.10.10
 
+  # Auto-reply (build #123): local plugin, not a pub package. Its Kotlin
+  # side is a plain FlutterPlugin so the SMS send and in-call check are
+  # registered in every FlutterEngine — including the WorkManager
+  # background engine, where MainActivity's channels do not exist. A
+  # path dependency is the only way to get a class into the generated
+  # registrant; without it the background send throws
+  # MissingPluginException and no reply ever goes out.
+  clawzilla_auto_reply:
+    path: packages/clawzilla_auto_reply
+
   # Completion notice for background mode (build #90): the foreground
   # notification vanishes when its service stops, so "Cypher is done" is
   # posted as a plain local notification that stays in the tray. 19.x is

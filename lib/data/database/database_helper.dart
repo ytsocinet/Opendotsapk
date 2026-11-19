@@ -43,9 +43,10 @@ import '../../core/security/crypto_box.dart';
 import '../../core/utils/log.dart';
 import '../../core/utils/text_utils.dart';
 import '../../core/constants/app_constants.dart';
+import '../../domain/models/auto_reply_rule.dart';
 import '../../domain/models/persona.dart';
 
-class DatabaseHelper implements PersonaStore {
+class DatabaseHelper implements PersonaStore, AutoReplyStore {
   DatabaseHelper._();
 
   static DatabaseHelper? _instance;
@@ -63,13 +64,17 @@ class DatabaseHelper implements PersonaStore {
   /// task and goal lists (build #86).
   /// Bumped to 5: Personas — one plain table for the assistant personas
   /// (build #121). `_upgrade` only adds it; existing data is untouched.
-  static const int _schemaVersion = 5;
+  /// Bumped to 6: Auto-reply — one plain table for the per-contact
+  /// auto-reply rules (build #123). `_upgrade` only adds it; existing
+  /// data is untouched.
+  static const int _schemaVersion = 6;
 
   static const String tableMessages = 'messages';
   static const String tableConversations = 'conversations';
   static const String tableTasks = 'tasks';
   static const String tableGoals = 'goals';
   static const String tablePersonas = 'personas';
+  static const String tableAutoReplyRules = 'auto_reply_rules';
 
   /// The conversation pre-existing messages are assigned to on upgrade.
   /// A fixed id (not a generated one) so the migration is deterministic
@@ -199,6 +204,7 @@ class DatabaseHelper implements PersonaStore {
     await _createConversationTables(db);
     await _createTaskTables(db);
     await _createPersonaTables(db);
+    await _createAutoReplyTables(db);
 
     // Messages written before conversations existed have no conversation.
     // They belong to the default one, so no history is lost by the upgrade.
@@ -291,6 +297,7 @@ class DatabaseHelper implements PersonaStore {
     await _createDocumentTables(db);
     await _createTaskTables(db);
     await _createPersonaTables(db);
+    await _createAutoReplyTables(db);
   }
 
   /// Tasks and Goals (build #86): two plain tables, no encryption — a
@@ -415,6 +422,28 @@ class DatabaseHelper implements PersonaStore {
         system_prompt TEXT,
         description TEXT,
         is_built_in INTEGER,
+        created_at INTEGER,
+        updated_at INTEGER
+      )
+    ''');
+  }
+
+  /// Auto-reply rules (build #123): one row per opted-in contact, plain
+  /// text like task titles and conversation titles — no encryption,
+  /// unlike message bodies. The incoming message body is never stored:
+  /// only the rule, the template Aaron wrote, and when it last replied.
+  /// Created with IF NOT EXISTS so both a fresh install and the v6
+  /// upgrade land on the same schema.
+  Future<void> _createAutoReplyTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableAutoReplyRules (
+        id TEXT PRIMARY KEY,
+        contact_name TEXT,
+        phone_number TEXT,
+        enabled INTEGER,
+        mode TEXT,
+        template_text TEXT,
+        last_replied_at INTEGER,
         created_at INTEGER,
         updated_at INTEGER
       )
@@ -732,6 +761,48 @@ class DatabaseHelper implements PersonaStore {
   Future<int> deletePersona(String id) async {
     final db = await database;
     return db.delete(tablePersonas, where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ------------------------------------------------------- auto-reply rules
+
+  /// All auto-reply rules, oldest first — the order Aaron added them in.
+  @override
+  Future<List<Map<String, dynamic>>> getAutoReplyRules() async {
+    final db = await database;
+    return db.query(tableAutoReplyRules, orderBy: 'created_at ASC');
+  }
+
+  /// Insert a rule, replacing any row with the same id.
+  @override
+  Future<void> insertAutoReplyRule(AutoReplyRule rule) async {
+    final db = await database;
+    await db.insert(
+      tableAutoReplyRules,
+      rule.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Update a rule's fields and bump its `updated_at`. Only the row
+  /// with [rule]'s id changes.
+  @override
+  Future<void> updateAutoReplyRule(AutoReplyRule rule) async {
+    final db = await database;
+    final values = rule.toMap()
+      ..['updated_at'] = DateTime.now().millisecondsSinceEpoch;
+    await db.update(
+      tableAutoReplyRules,
+      values,
+      where: 'id = ?',
+      whereArgs: [rule.id],
+    );
+  }
+
+  /// Delete one rule. Returns the number of rows removed (0 or 1).
+  @override
+  Future<int> deleteAutoReplyRule(String id) async {
+    final db = await database;
+    return db.delete(tableAutoReplyRules, where: 'id = ?', whereArgs: [id]);
   }
 
   // ------------------------------------------------------------- memories
@@ -1306,6 +1377,7 @@ class DatabaseHelper implements PersonaStore {
   /// settings, so the difference between "one query for the whole table" and
   /// "one query per key" is the difference between a first frame that arrives
   /// promptly and one that waits on a dozen sequential SQLite round trips.
+  @override
   Future<String?> getPreference(String key) async {
     final prefs = await _preferenceSnapshot();
     return prefs[key];
@@ -1386,6 +1458,7 @@ class DatabaseHelper implements PersonaStore {
       tableTasks,
       tableGoals,
       tablePersonas,
+      tableAutoReplyRules,
       tableActivityLog,
       tableUserPreferences,
     ]) {

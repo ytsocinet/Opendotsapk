@@ -12,6 +12,7 @@ import 'app.dart';
 import 'core/security/crypto_box.dart';
 import 'core/utils/log.dart';
 import 'data/database/database_helper.dart';
+import 'data/services/auto_reply_service.dart';
 import 'data/services/router_service.dart';
 import 'data/services/secure_store.dart';
 
@@ -24,6 +25,36 @@ void callbackDispatcher() {
       case 'calendar_check':
         Log.d('calendar check task running');
         return true;
+      case 'auto_reply':
+        // Auto-reply (build #123): enqueued by SmsReceiver with
+        // {sender, body, timestamp}. The service loads the rule, applies
+        // the guards, sends the template, and logs — all in Dart, with no
+        // Riverpod providers (this isolate has no widget tree) and no UI.
+        // A skip is a successful task, not a retry: only a failed send
+        // returns false, so WorkManager retries that one.
+        try {
+          final sender = inputData?['sender'] as String?;
+          if (sender == null || sender.isEmpty) {
+            Log.w('auto_reply task without a sender, dropping');
+            return true;
+          }
+          final body = inputData?['body'] as String? ?? '';
+          final timestampRaw = inputData?['timestamp'];
+          final timestamp = timestampRaw is int
+              ? timestampRaw
+              : int.tryParse('$timestampRaw') ??
+                  DateTime.now().millisecondsSinceEpoch;
+          final service = AutoReplyService(store: DatabaseHelper.instance);
+          final result = await service.handleIncoming(
+            sender: sender,
+            body: body,
+            timestamp: timestamp,
+          );
+          return result.handled;
+        } catch (e) {
+          Log.w('auto_reply task failed: $e');
+          return false;
+        }
       default:
         Log.d('unknown task $task');
         return false;

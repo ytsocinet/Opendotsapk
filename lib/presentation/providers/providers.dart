@@ -887,6 +887,17 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
     // Connected apps (opt-in, off by default): a JSON list of Android
     // package names Cypher may open or share to. Empty means none.
     'connected_apps': '[]',
+
+    // Auto-reply (build #123, Piece A): template replies to opted-in
+    // contacts when a text arrives. Master toggle, off by default — no
+    // rule and no master means no reply, ever. The cooldown is one reply
+    // per sender per N minutes (30 by default). `my_phone_number` is
+    // Aaron's own number, entered by hand (TelephonyManager's line
+    // number is unreliable) — the own-number guard only applies when
+    // it is non-empty.
+    'auto_reply_enabled': false,
+    'auto_reply_cooldown_minutes': 30,
+    'my_phone_number': '',
   };
 
   final DatabaseHelper _db = DatabaseHelper.instance;
@@ -969,6 +980,7 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'skill_dashboard',
       'diagnostic_safe_prompt',
       'onboarding_done',
+      'auto_reply_enabled',
     ]) {
       final raw = await _db.getPreference(key);
       if (raw != null) {
@@ -994,11 +1006,23 @@ class SettingsNotifier extends StateNotifier<Map<String, dynamic>> {
       'theme_mode',
       'active_persona_id',
       'last_ide_file',
+      'my_phone_number',
     ]) {
       final raw = await _db.getPreference(key);
       if (raw != null && raw.isNotEmpty) {
         state = Map.from(state)..[key] = raw;
       }
+    }
+
+    // Auto-reply cooldown (build #123): an int, stored as its decimal
+    // string form. Parsed back like `context_size` above; a stale or
+    // hand-edited value falls back to 30 minutes.
+    final autoReplyCooldown =
+        await _db.getPreference('auto_reply_cooldown_minutes');
+    if (autoReplyCooldown != null) {
+      state = Map.from(state)
+        ..['auto_reply_cooldown_minutes'] =
+            int.tryParse(autoReplyCooldown) ?? 30;
     }
 
     // Theme colour is an int (ARGB), stored as its decimal string form.

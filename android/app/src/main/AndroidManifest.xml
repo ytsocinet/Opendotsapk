@@ -45,6 +45,12 @@
            stays awake until it is dismissed. Sideloaded debug APK, so
            no Play Store review concern. -->
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- Auto-reply (build #123): the SMS_RECEIVED broadcast carries the
+         message PDUs in its extras, so the receiver reconstructs the
+         sender and body from the intent itself — no READ_SMS, no inbox
+         query. Requested at runtime when the master toggle is turned on,
+         not at first install (plan §5). -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
@@ -182,6 +188,21 @@
         <receiver
             android:name=".AlarmReceiver"
             android:exported="false" />
+
+        <!-- SMS receiver (build #123, Auto-reply Piece A): the system
+             SMS_RECEIVED broadcast, delivered to any app holding
+             RECEIVE_SMS. Exported must be true for a system broadcast —
+             the opposite of the alarm receiver above. It only parses the
+             PDUs and enqueues a one-off WorkManager task; all matching,
+             guards, and sending run in Dart. No MMS intent-filter, so
+             group texts never trigger it. -->
+        <receiver
+            android:name=".SmsReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
 
         <meta-data
             android:name="flutterEmbedding"

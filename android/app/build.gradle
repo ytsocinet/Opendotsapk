@@ -191,6 +191,13 @@ android {
 dependencies {
     // Pairs with coreLibraryDesugaringEnabled above (build #90 fix).
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+    // Auto-reply (build #123): SmsReceiver enqueues the workmanager
+    // plugin's BackgroundWorker directly, so the app module needs the
+    // WorkManager classes on its own compile classpath. The plugin
+    // declares work-runtime as `implementation`, which is not exposed
+    // transitively — same version as the plugin's (2.11.2), so the two
+    // never disagree about the WorkManager on the classpath.
+    implementation 'androidx.work:work-runtime:2.11.2'
 }
 
 flutter {
