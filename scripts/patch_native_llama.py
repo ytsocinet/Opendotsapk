@@ -984,17 +984,44 @@ GUARD_CPP_REPLACEMENTS = [
         # as a substring on re-runs of this script on an already-patched
         # tree (the CI pub cache persists), and inserting a line inside
         # its block would break that match and fail the build loudly.
-        r'''#include <thread>
-#include <cstdarg>
-#include <cstdio>
-#include <ctime>
-#include "llama.h"''',
-        r'''#include <thread>
+        # Build #128: the latest_generation_id declaration lives here,
+        # right after the <atomic> include — NOT next to
+        # stop_generation, where it was first tried. Two reasons. (1)
+        # C++ needs the declaration before its first use, and
+        # startNativeGeneration (which uses it) is defined BEFORE
+        # setTracePath, so a declaration before setTracePath sat ~330
+        # lines below the use and run #141 failed with "use of
+        # undeclared identifier" (native-lib.cpp:333-334). (2) The
+        # declaration cannot sit between `static bool stop_generation`
+        # and the trace helper: the trace helper's `new` text starts
+        # with that line, and any line inserted after it breaks the
+        # helper's idempotency check, so a re-run would duplicate the
+        # whole trace helper. The includes block is the only stable
+        # anchor: this `new` ends with the declaration, so what follows
+        # it cannot break the match.
+        [
+            r'''#include <thread>
 #include <cstdarg>
 #include <cstdio>
 #include <ctime>
 #include "llama.h"
 #include <atomic>''',
+            r'''#include <thread>
+#include <cstdarg>
+#include <cstdio>
+#include <ctime>
+#include "llama.h"''',
+        ],
+        r'''#include <thread>
+#include <cstdarg>
+#include <cstdio>
+#include <ctime>
+#include "llama.h"
+#include <atomic>
+// The latest generation id requested from Kotlin (see
+// setLatestGenerationId). Declared here, before every use: C++ needs a
+// file-scope declaration before its first use in startNativeGeneration.
+static std::atomic<int> latest_generation_id{0};''',
         "guard includes",
     ),
     (
@@ -1004,7 +1031,25 @@ GUARD_CPP_REPLACEMENTS = [
         # line, and appending between them would break that match on
         # re-runs (the CI pub cache persists) and duplicate the
         # setTracePath function. Prepending keeps it intact.
-        r'''JNIEXPORT void JNICALL
+        # Build #128: the declaration line is GONE from this block — it
+        # now lives right after the <atomic> include at the top of the
+        # file (see the "guard includes" replacement). The first
+        # candidate is #127's form, so a #127-patched tree migrates
+        # (old declaration removed); the pristine anchor is last.
+        [
+            r'''// --- Clawzilla generation guards (build #127) ---
+// The latest generation id requested from Kotlin (see
+// setLatestGenerationId). A generation whose id is no longer the latest
+// was superseded while queued behind a slow prefill and aborts at entry
+// instead of running into the void.
+static std::atomic<int> latest_generation_id{0};
+
+JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_setLatestGenerationId(JNIEnv *env, jobject thiz, jint generation_id) {
+    latest_generation_id.store((int)generation_id);
+}
+
+JNIEXPORT void JNICALL
 Java_com_timebox_native_1llama_NativeLlamaPlugin_setTracePath(JNIEnv *env, jobject thiz, jstring trace_path_j) {
     if (trace_path_j == nullptr) return;
     const char* p = env->GetStringUTFChars(trace_path_j, nullptr);
@@ -1013,13 +1058,24 @@ Java_com_timebox_native_1llama_NativeLlamaPlugin_setTracePath(JNIEnv *env, jobje
         env->ReleaseStringUTFChars(trace_path_j, p);
     }
 }''',
+            r'''JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_setTracePath(JNIEnv *env, jobject thiz, jstring trace_path_j) {
+    if (trace_path_j == nullptr) return;
+    const char* p = env->GetStringUTFChars(trace_path_j, nullptr);
+    if (p != nullptr) {
+        trace_path = std::string(p);
+        env->ReleaseStringUTFChars(trace_path_j, p);
+    }
+}''',
+        ],
         r'''// --- Clawzilla generation guards (build #127) ---
 // The latest generation id requested from Kotlin (see
 // setLatestGenerationId). A generation whose id is no longer the latest
 // was superseded while queued behind a slow prefill and aborts at entry
-// instead of running into the void.
-static std::atomic<int> latest_generation_id{0};
-
+// instead of running into the void. The latest_generation_id variable
+// itself is declared right after the <atomic> include at the top of
+// the file (build #128): it must precede its first use in
+// startNativeGeneration.
 JNIEXPORT void JNICALL
 Java_com_timebox_native_1llama_NativeLlamaPlugin_setLatestGenerationId(JNIEnv *env, jobject thiz, jint generation_id) {
     latest_generation_id.store((int)generation_id);
