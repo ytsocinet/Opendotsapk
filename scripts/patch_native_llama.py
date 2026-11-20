@@ -729,10 +729,15 @@ Java_com_timebox_native_1llama_NativeLlamaPlugin_abortGeneration(JNIEnv *env, jo
         "token counter",
     ),
     (
-        r'''Java_com_timebox_native_1llama_NativeLlamaPlugin_startNativeGeneration(JNIEnv *env, jobject thiz, jobjectArray roles, jobjectArray contents, jobjectArray media_paths, jfloat temperature, jint top_k, jfloat top_p) {
-if (ctx == nullptr || model == nullptr) return;''',
-        r'''Java_com_timebox_native_1llama_NativeLlamaPlugin_startNativeGeneration(JNIEnv *env, jobject thiz, jobjectArray roles, jobjectArray contents, jobjectArray media_paths, jfloat temperature, jint top_k, jfloat top_p) {
-if (ctx == nullptr || model == nullptr) { trace_log("generate: no model/context loaded"); return; }
+        # Build #127: this anchor deliberately excludes the JNI signature
+        # line. The signature gains (generation_id, max_tokens) in the
+        # guards below, and anchoring on it would make this replacement
+        # unrecognisable on re-runs against a #127-patched tree (the CI
+        # pub cache persists), failing the build loudly for no reason.
+        # The null-check line itself is unique in the file (the only
+        # other null-context return is `return nullptr;` in getEmbedding).
+        r'''if (ctx == nullptr || model == nullptr) return;''',
+        r'''if (ctx == nullptr || model == nullptr) { trace_log("generate: no model/context loaded"); return; }
 trace_tokens_sent = 0;''',
         "generation entry",
     ),
@@ -803,29 +808,11 @@ TRACE_KOTLIN_REPLACEMENTS = [
     ),
     (
         [
-            # Build #126 migrates the #99 form (listed first): the pristine
-            # anchor is a prefix substring of it, so it must be tried
-            # after the previous `new` text, or the setTracePath block
-            # would be duplicated instead of replaced.
+            # Build #127 migrates the #126 form (listed first): the
+            # pristine anchor is a prefix substring of it, so it must be
+            # tried after the previous `new` text, or the setTracePath
+            # block would be duplicated instead of replaced.
             r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
-        eventChannel.setStreamHandler(this)
-
-        // Clawzilla build #99: tell the native glue where to write the
-        // generation trace (native_trace.log in the app docs dir), so a
-        // silent native failure is visible in the Diagnostics screen.
-        // path_provider's docs dir on Android is <filesDir>/app_flutter.
-        setTracePath(
-            java.io.File(
-                flutterPluginBinding.applicationContext.filesDir,
-                "app_flutter/native_trace.log",
-            ).absolutePath,
-        )
-    }''',
-            r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
-        eventChannel.setStreamHandler(this)
-    }''',
-        ],
-        r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
         eventChannel.setStreamHandler(this)
 
         // Clawzilla build #99: tell the native glue where to write the
@@ -842,6 +829,37 @@ TRACE_KOTLIN_REPLACEMENTS = [
             "app_flutter/native_trace.log",
         )
         traceFile.parentFile?.mkdirs()
+        setTracePath(traceFile.absolutePath)
+    }''',
+            r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
+        eventChannel.setStreamHandler(this)
+    }''',
+        ],
+        r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
+        eventChannel.setStreamHandler(this)
+
+        // Clawzilla build #99: tell the native glue where to write the
+        // generation trace (native_trace.log in the app docs dir), so a
+        // silent native failure is visible in the Diagnostics screen.
+        // Build #127: the path MUST be the directory path_provider
+        // returns for getApplicationDocumentsDirectory() — that is
+        // Context.getDir("flutter", MODE_PRIVATE), i.e.
+        // <dataDir>/app_flutter, NOT <filesDir>/app_flutter. Builds
+        // #99-#126 used filesDir, so the glue wrote the trace to
+        // files/app_flutter/native_trace.log while Dart and the
+        // Diagnostics screen read app_flutter/native_trace.log — the
+        // trace was being written all along, to a file nobody reads
+        // (proven on the phone: #126's health line printed the Dart
+        // path with no /files/ segment, and the trace stayed empty
+        // after a working turn). getDir creates the directory, so no
+        // mkdirs() is needed.
+        val traceFile = java.io.File(
+            flutterPluginBinding.applicationContext.getDir(
+                "flutter",
+                android.content.Context.MODE_PRIVATE,
+            ),
+            "native_trace.log",
+        )
         setTracePath(traceFile.absolutePath)
     }''',
         "trace path at attach",
@@ -939,6 +957,353 @@ def patch_native_trace(package_root: Path) -> int:
             % kchanged
         )
     return changed + kchanged
+
+
+# Build #127 (local hang, Piece B — stop the bleeding) + trace-path root
+# cause. Three small native-side guards, independently testable, that
+# convert "every turn hangs forever" into "at most one slow turn":
+#  (1) the prefill loop checks the stop flag once per chunk, so a turn
+#      that timed out mid-prefill ends after the current chunk instead of
+#      running to completion while the next turn queues behind it;
+#  (2) generation ids — Kotlin mints one per startGeneration request and
+#      publishes it to native immediately; a generation whose id is no
+#      longer the latest aborts at entry instead of clearing an abort
+#      meant for a newer turn and generating into the void;
+#  (3) a native max-token bound — a listener-less generation ends after
+#      max_tokens instead of running until EOG or context fill.
+# The ids are minted in Kotlin (it is the side that enqueues onto the
+# executor), so the plugin's Dart file only gains the maxTokens
+# pass-through. All anchors below are the post-trace-patch forms:
+# patch_native_trace runs first in main(), so a pristine tree is already
+# in its #99/#126 form by the time this runs — an anchor in any other
+# state fails loudly, which is the contract.
+GUARD_CPP_REPLACEMENTS = [
+    (
+        # Build #127: <atomic> goes AFTER "llama.h", not between <ctime>
+        # and it — the trace-includes replacement above must still match
+        # as a substring on re-runs of this script on an already-patched
+        # tree (the CI pub cache persists), and inserting a line inside
+        # its block would break that match and fail the build loudly.
+        r'''#include <thread>
+#include <cstdarg>
+#include <cstdio>
+#include <ctime>
+#include "llama.h"''',
+        r'''#include <thread>
+#include <cstdarg>
+#include <cstdio>
+#include <ctime>
+#include "llama.h"
+#include <atomic>''',
+        "guard includes",
+    ),
+    (
+        # Build #127: the guard code goes BEFORE the setTracePath block,
+        # not after it — the trace replacement's new text is the
+        # setTracePath block immediately followed by the abortGeneration
+        # line, and appending between them would break that match on
+        # re-runs (the CI pub cache persists) and duplicate the
+        # setTracePath function. Prepending keeps it intact.
+        r'''JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_setTracePath(JNIEnv *env, jobject thiz, jstring trace_path_j) {
+    if (trace_path_j == nullptr) return;
+    const char* p = env->GetStringUTFChars(trace_path_j, nullptr);
+    if (p != nullptr) {
+        trace_path = std::string(p);
+        env->ReleaseStringUTFChars(trace_path_j, p);
+    }
+}''',
+        r'''// --- Clawzilla generation guards (build #127) ---
+// The latest generation id requested from Kotlin (see
+// setLatestGenerationId). A generation whose id is no longer the latest
+// was superseded while queued behind a slow prefill and aborts at entry
+// instead of running into the void.
+static std::atomic<int> latest_generation_id{0};
+
+JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_setLatestGenerationId(JNIEnv *env, jobject thiz, jint generation_id) {
+    latest_generation_id.store((int)generation_id);
+}
+
+JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_setTracePath(JNIEnv *env, jobject thiz, jstring trace_path_j) {
+    if (trace_path_j == nullptr) return;
+    const char* p = env->GetStringUTFChars(trace_path_j, nullptr);
+    if (p != nullptr) {
+        trace_path = std::string(p);
+        env->ReleaseStringUTFChars(trace_path_j, p);
+    }
+}''',
+        "latest generation id",
+    ),
+    (
+        r'''Java_com_timebox_native_1llama_NativeLlamaPlugin_startNativeGeneration(JNIEnv *env, jobject thiz, jobjectArray roles, jobjectArray contents, jobjectArray media_paths, jfloat temperature, jint top_k, jfloat top_p) {
+if (ctx == nullptr || model == nullptr) { trace_log("generate: no model/context loaded"); return; }
+trace_tokens_sent = 0;''',
+        r'''Java_com_timebox_native_1llama_NativeLlamaPlugin_startNativeGeneration(JNIEnv *env, jobject thiz, jobjectArray roles, jobjectArray contents, jobjectArray media_paths, jfloat temperature, jint top_k, jfloat top_p, jint generation_id, jint max_tokens) {
+if (ctx == nullptr || model == nullptr) { trace_log("generate: no model/context loaded"); return; }
+trace_tokens_sent = 0;
+// Build #127 (H3): a generation superseded while queued behind a slow
+// prefill aborts here, before it can clear an abort meant for a newer
+// turn or generate into the void. The check must come before the
+// stop_generation reset below: a stale generation must never touch the
+// flag. generation_id <= 0 means "no id supplied" — treat as current.
+if (generation_id > 0 && generation_id != latest_generation_id.load()) {
+trace_log("generate: stale id %d (latest %d), aborting at entry", (int)generation_id, latest_generation_id.load());
+return;
+}
+if (max_tokens <= 0) max_tokens = 512;''',
+        "generation entry guards",
+    ),
+    (
+        r'''int decode_rc = llama_decode(ctx, batch);
+trace_log("prefill: chunk at %d/%d tokens rc=%d", n_eval, (int)prompt_tokens.size(), decode_rc);
+if (decode_rc != 0) {
+llama_batch_free(batch);
+llama_sampler_free(smpl);
+trace_log("prefill: FAILED rc=%d, returning with no token and no error", decode_rc);
+return;
+}''',
+        r'''int decode_rc = llama_decode(ctx, batch);
+trace_log("prefill: chunk at %d/%d tokens rc=%d", n_eval, (int)prompt_tokens.size(), decode_rc);
+if (decode_rc != 0) {
+llama_batch_free(batch);
+llama_sampler_free(smpl);
+trace_log("prefill: FAILED rc=%d, returning with no token and no error", decode_rc);
+return;
+}
+// Build #127 (H3): check the stop flag once per prefill chunk. Before
+// this, a turn that timed out mid-prefill kept decoding until prefill
+// finished — minutes — holding the single-thread executor while the
+// next turn queued behind it. Now it ends after the current chunk.
+if (stop_generation) {
+llama_batch_free(batch);
+llama_sampler_free(smpl);
+trace_log("prefill: aborted by stop flag at %d/%d tokens", n_eval, (int)prompt_tokens.size());
+return;
+}''',
+        "prefill stop check",
+    ),
+    (
+        r'''while (true) {
+if (stop_generation || is_eog_reached) break;''',
+        r'''while (true) {
+if (stop_generation || is_eog_reached) break;
+// Build #127 (H3): bound the native loop. A generation nobody is
+// listening to — Dart timed out, the stream is gone — used to run until
+// EOG or context fill; now it ends once max_tokens have been sent (the
+// EOS below still closes the stream cleanly). trace_tokens_sent counts
+// tokens sent this generation (reset at entry, incremented in sendToken
+// whether or not the trace path is set), so the bound holds even with
+// tracing unset. A draft round can send a few tokens past the bound in
+// one iteration; that overshoot is harmless — the bound is a safety
+// net, and Dart still enforces its own exact cap.
+if (trace_tokens_sent >= max_tokens) {
+trace_log("generate: max_tokens %d reached, ending generation", (int)max_tokens);
+break;
+}''',
+        "decode max tokens",
+    ),
+]
+
+GUARD_KOTLIN_REPLACEMENTS = [
+    (
+        r'''    private external fun abortGeneration()
+    private external fun setTracePath(path: String)''',
+        r'''    private external fun abortGeneration()
+    private external fun setTracePath(path: String)
+    private external fun setLatestGenerationId(id: Int)''',
+        "setLatestGenerationId declaration",
+    ),
+    (
+        r'''    private external fun startNativeGeneration(roles: Array<String>, contents: Array<String>, mediaPaths: Array<String>, temperature: Float, topK: Int, topP: Float)''',
+        r'''    private external fun startNativeGeneration(roles: Array<String>, contents: Array<String>, mediaPaths: Array<String>, temperature: Float, topK: Int, topP: Float, generationId: Int, maxTokens: Int)''',
+        "startNativeGeneration signature",
+    ),
+    (
+        r'''    private val executor = Executors.newSingleThreadExecutor()''',
+        r'''    private val executor = Executors.newSingleThreadExecutor()
+
+    // Build #127: monotonically increasing generation id (see
+    // "startGeneration" below). Minted on the method-call thread only.
+    private var latestGenerationId = 0''',
+        "latest generation id field",
+    ),
+    (
+        r'''            "startGeneration" -> {
+                val roles = call.argument<List<String>>("roles")?.toTypedArray()
+                val contents = call.argument<List<String>>("contents")?.toTypedArray()
+
+                // --- MODIFIED: Extract mediaPaths (defaults to empty array if none) ---
+                val mediaPaths = call.argument<List<String>>("mediaPaths")?.toTypedArray() ?: emptyArray()
+
+                // Cast Double from Dart to Float for Kotlin/C++ boundary
+                val temperature = call.argument<Double>("temperature")?.toFloat() ?: 0.7f
+                val topK = call.argument<Int>("topK") ?: 40
+                val topP = call.argument<Double>("topP")?.toFloat() ?: 0.9f
+
+                if (roles != null && contents != null) {
+                    executor.execute {
+                        startNativeGeneration(roles, contents, mediaPaths, temperature, topK, topP)
+                    }
+                    result.success(null)
+                } else {
+                    result.error("INVALID_ARGUMENT", "Roles or contents are null", null)
+                }
+            }''',
+        r'''            "startGeneration" -> {
+                val roles = call.argument<List<String>>("roles")?.toTypedArray()
+                val contents = call.argument<List<String>>("contents")?.toTypedArray()
+
+                // --- MODIFIED: Extract mediaPaths (defaults to empty array if none) ---
+                val mediaPaths = call.argument<List<String>>("mediaPaths")?.toTypedArray() ?: emptyArray()
+
+                // Cast Double from Dart to Float for Kotlin/C++ boundary
+                val temperature = call.argument<Double>("temperature")?.toFloat() ?: 0.7f
+                val topK = call.argument<Int>("topK") ?: 40
+                val topP = call.argument<Double>("topP")?.toFloat() ?: 0.9f
+                val maxTokens = call.argument<Int>("maxTokens") ?: 512
+
+                if (roles != null && contents != null) {
+                    // Build #127: tag this generation and publish the id
+                    // to native NOW, on the method-call thread — not when
+                    // the queued call eventually runs. A turn that timed
+                    // out may still be queued behind a slow prefill when
+                    // the next turn arrives; native aborts a generation
+                    // whose id is no longer the latest at entry, instead
+                    // of clearing an abort meant for a newer turn and
+                    // generating into the void.
+                    latestGenerationId += 1
+                    val generationId = latestGenerationId
+                    setLatestGenerationId(generationId)
+                    executor.execute {
+                        startNativeGeneration(roles, contents, mediaPaths, temperature, topK, topP, generationId, maxTokens)
+                    }
+                    result.success(null)
+                } else {
+                    result.error("INVALID_ARGUMENT", "Roles or contents are null", null)
+                }
+            }''',
+        "startGeneration handler",
+    ),
+]
+
+GUARD_DART_REPLACEMENTS = [
+    (
+        r'''  /// Generates response and streams tokens back to the UI
+  Stream<String> generateResponse(
+      List<Map<String, String>> messages, {
+        List<String>? mediaPaths, // --- MODIFIED: Accepts images & audio files ---
+        double temperature = 0.7,
+        int topK = 40,
+        double topP = 0.9,
+      }) {''',
+        r'''  /// Generates response and streams tokens back to the UI.
+  ///
+  /// [maxTokens] bounds the native loop (build #127): a generation with
+  /// no listener ends after this many tokens instead of running until
+  /// EOG or context fill.
+  Stream<String> generateResponse(
+      List<Map<String, String>> messages, {
+        List<String>? mediaPaths, // --- MODIFIED: Accepts images & audio files ---
+        double temperature = 0.7,
+        int topK = 40,
+        double topP = 0.9,
+        int maxTokens = 512,
+      }) {''',
+        "generateResponse maxTokens param",
+    ),
+    (
+        r'''        'temperature': temperature,
+        'topK': topK,
+        'topP': topP,
+      })''',
+        r'''        'temperature': temperature,
+        'topK': topK,
+        'topP': topP,
+        'maxTokens': maxTokens,
+      })''',
+        "startGeneration maxTokens arg",
+    ),
+]
+
+
+def patch_generation_guards(package_root: Path) -> int:
+    """Apply the build #127 generation guards (Piece B of the local hang
+    fix).
+
+    Patches the JNI glue (native-lib.cpp), the Kotlin plugin and the
+    plugin's Dart file with: a stop-flag check in the prefill loop,
+    generation ids (stale generations abort at entry), and a native
+    max-token bound. Must run after patch_native_trace in main() — the
+    C++ anchors are the post-trace-patch forms. Returns the number of
+    replacements made. Raises SystemExit if a site is in an unrecognised
+    state, so CI fails loudly.
+    """
+    native_lib = (
+        package_root / "android" / "src" / "main" / "cpp" / "native-lib.cpp"
+    )
+    if not native_lib.is_file():
+        raise SystemExit(
+            "::error::native-lib.cpp not found under %s" % package_root
+        )
+    kotlin = (
+        package_root
+        / "android"
+        / "src"
+        / "main"
+        / "kotlin"
+        / "com"
+        / "timebox"
+        / "native_llama"
+        / "NativeLlamaPlugin.kt"
+    )
+    if not kotlin.is_file():
+        raise SystemExit(
+            "::error::NativeLlamaPlugin.kt not found under %s" % package_root
+        )
+    dart = package_root / "lib" / "native_llama.dart"
+    if not dart.is_file():
+        raise SystemExit(
+            "::error::native_llama.dart not found under %s" % package_root
+        )
+
+    text = native_lib.read_text()
+    changed = 0
+    for old, new, label in GUARD_CPP_REPLACEMENTS:
+        text, n = _replace_once(text, old, new, label, native_lib)
+        changed += n
+    if changed:
+        native_lib.write_text(text)
+        print(
+            "patched native-lib.cpp (generation guards, %d site(s))"
+            % changed
+        )
+
+    ktext = kotlin.read_text()
+    kchanged = 0
+    for old, new, label in GUARD_KOTLIN_REPLACEMENTS:
+        ktext, n = _replace_once(ktext, old, new, label, kotlin)
+        kchanged += n
+    if kchanged:
+        kotlin.write_text(ktext)
+        print(
+            "patched NativeLlamaPlugin.kt (generation guards, %d site(s))"
+            % kchanged
+        )
+
+    dtext = dart.read_text()
+    dchanged = 0
+    for old, new, label in GUARD_DART_REPLACEMENTS:
+        dtext, n = _replace_once(dtext, old, new, label, dart)
+        dchanged += n
+    if dchanged:
+        dart.write_text(dtext)
+        print(
+            "patched native_llama.dart (generation guards, %d site(s))"
+            % dchanged
+        )
+    return changed + kchanged + dchanged
 
 
 def drop_stale_onnxruntime_so(roots: list[Path]) -> int:
@@ -1072,6 +1437,12 @@ def main() -> int:
         # failure is visible in the Diagnostics screen. Applies to both
         # trees — the glue is untouched by the engine swap.
         patched += patch_native_trace(base.parent)
+
+        # Generation guards (build #127, Piece B of the local hang fix):
+        # stop-flag check in the prefill loop, generation ids, and a
+        # native max-token bound. Runs after the trace patch — its C++
+        # anchors are the post-trace-patch forms.
+        patched += patch_generation_guards(base.parent)
 
         # MiniCPM5 tokenizer support (independent of the Vulkan mode).
         # No-op on the updated engine, which already knows "minicpm5"; kept

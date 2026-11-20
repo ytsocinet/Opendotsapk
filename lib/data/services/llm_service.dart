@@ -22,14 +22,16 @@
 /// the key is `text`, and nothing here is allowed to await a stream that has no
 /// bound on how long it may stay silent. See [_generationTimeout].
 ///
-/// ## There is no token cap in the plugin
+/// ## The token cap is enforced on both sides
 ///
-/// `generateResponse` accepts no `nPredict`/`maxTokens`, and the native loop in
-/// `native-lib.cpp` runs `while (true)` until it hits an end-of-generation token
-/// or fills the context window — at which point it discards the older half and
-/// keeps going. A model that fails to emit EOG therefore generates until the
-/// user interrupts. [maxTokens] is enforced here, on the Dart side, by aborting
-/// the native generation once the count is reached.
+/// Build #127: [maxTokens] is passed through the method channel to the
+/// native loop (`scripts/patch_native_llama.py` adds the parameter to the
+/// plugin at build time), so a generation with no listener ends after
+/// `maxTokens` tokens instead of running until it hits an end-of-generation
+/// token or fills the context window. Dart still enforces its own exact
+/// cap as well, by aborting the native generation once the count is
+/// reached — the native bound is a safety net for listener-less
+/// generations, not the product cap.
 library;
 
 import 'dart:async';
@@ -399,8 +401,9 @@ class LlmService {
   /// the plugin drops unsupported media silently and the model will then answer
   /// a question it never actually received.
   ///
-  /// Stops early once [maxTokens] tokens have been emitted, because the native
-  /// loop has no upper bound of its own.
+  /// Stops early once [maxTokens] tokens have been emitted. The native
+  /// loop is bounded by the same number (build #127), so a listener-less
+  /// generation ends by itself; Dart's cap is still the exact one.
   Stream<String> generateStream({
     required String prompt,
     int maxTokens = 512,
@@ -525,6 +528,9 @@ class LlmService {
         temperature: temperature,
         topP: topP,
         topK: topK,
+        // Build #127: thread the cap through to the native loop, so a
+        // listener-less generation ends by itself after maxTokens.
+        maxTokens: maxTokens,
       );
 
       sub = out.listen(
@@ -585,13 +591,13 @@ class LlmService {
       // because the *consumer* walked away — the user pressed Stop, or the
       // widget that was streaming was disposed.
       //
-      // Cancelling the Dart subscription in that case does nothing to llama.cpp:
-      // per the library docstring the native loop runs until it hits an
-      // end-of-generation token or fills the context window, discarding the
-      // older half as it goes. Nothing was listening, so nobody would ever stop
-      // it — the model would keep generating (and keep the context window
+      // Cancelling the Dart subscription in that case does nothing to llama.cpp
+      // by itself: the native loop is bounded by maxTokens (build #127), so
+      // it ends on its own — but only after generating up to that many tokens
+      // into the void. Nothing was listening, so nobody would ever stop it
+      // sooner — the model would keep generating (and keep the context window
       // locked) after the screen that asked for it was gone. Aborting here is
-      // the only thing that ends that.
+      // the prompt way to end that; the native bound is the backstop.
       //
       // Deliberately not awaited, matching every other `stop()` in this file: a
       // teardown that can block on a platform call is the exact failure mode
