@@ -33,11 +33,14 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:native_llama/native_llama.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/utils/log.dart';
+import '../../core/utils/turn_builder.dart';
 import '../../domain/models/local_model.dart';
 import 'model_preflight.dart';
 
@@ -347,6 +350,48 @@ class LlmService {
     ];
   }
 
+  /// Estimated prompt size of a [wire] message list, in tokens.
+  ///
+  /// Build #126 (local hang, Piece A — measure): the number that decides
+  /// whether a slow prefill or a dead engine is behind the 90s timeout.
+  /// Uses the same ~4 chars/token rule as [estimateTokens], so the Dart
+  /// log and the turn builder agree; the native trace carries the exact
+  /// count (`tokenize: N prompt tokens`).
+  @visibleForTesting
+  static int estimateWireTokens(List<Map<String, String>> wire) {
+    final text = wire.map((m) => m['text'] ?? '').join();
+    return estimateTokens(text);
+  }
+
+  /// Report whether the native trace file exists and how big it is.
+  ///
+  /// Build #126: the native trace was empty after a working turn on the
+  /// phone, which means either the path was never set or the native glue
+  /// never wrote. This line, in the Activity log after every local turn,
+  /// says which — without opening the Diagnostics screen. The file name
+  /// must match DiagnosticsScreen.traceFileName and the path the Kotlin
+  /// side sets ("app_flutter/native_trace.log"); if any side disagrees,
+  /// this reports MISSING and the trace section shows "No native trace
+  /// yet". Fire-and-forget: a failed check is itself logged, never thrown.
+  static Future<void> _logTraceHealth() async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final file = File('${docs.path}/native_trace.log');
+      if (await file.exists()) {
+        Log.i(
+          '[LlmService] native trace: exists, ${await file.length()} bytes',
+        );
+      } else {
+        Log.w(
+          '[LlmService] native trace: MISSING — the native glue is not '
+          'writing to ${file.path}',
+        );
+      }
+    } catch (e) {
+      Log.w('[LlmService] native trace health check failed: $e');
+    }
+  }
+
   /// Stream generated tokens one at a time.
   ///
   /// Pass [imagePath] to feed a picture to a vision model. This **requires**
@@ -397,6 +442,20 @@ class LlmService {
       throw StateError('Nothing to send: the message list is empty.');
     }
 
+    // Build #126 (local hang, Piece A — measure): the prompt size and the
+    // time to the first token are the two numbers that decide whether a
+    // slow prefill or a dead engine is behind the 90s timeout. The native
+    // trace carries the exact token count; Dart logs the estimate so the
+    // number is visible in the Activity log even when the native trace
+    // is empty.
+    final startedAt = DateTime.now();
+    final promptTokensEst = estimateWireTokens(wire);
+    Log.i(
+      '[LlmService] local turn started: prompt ~$promptTokensEst tokens '
+      '(est, ${wire.length} msgs), model=$_modelPath, ctx=$_nCtx, '
+      'threads=$_threads',
+    );
+
     _isGenerating = true;
 
     // Bridge the plugin's stream so we can impose our own bounds on it.
@@ -413,6 +472,9 @@ class LlmService {
       finished = true;
       silenceTimer?.cancel();
       totalTimer?.cancel();
+      // Build #126: say whether the native trace exists after a finished
+      // turn — the trace is the evidence for what the native side did.
+      unawaited(_logTraceHealth());
       if (!bridge.isClosed) bridge.close();
     }
 
@@ -427,7 +489,14 @@ class LlmService {
       // swallows its own failures), and on a mid-generation plugin error it is
       // the only thing that prevents llama.cpp from generating into a void.
       unawaited(stop());
-      Log.w('[LlmService] generation failed: $error');
+      Log.w(
+        '[LlmService] generation failed: $error '
+        '(after ${DateTime.now().difference(startedAt).inSeconds}s; '
+        'prompt ~$promptTokensEst tokens (est))',
+      );
+      // Build #126: say whether the native trace exists after a failed
+      // turn — a missing file after a timeout is itself the diagnosis.
+      unawaited(_logTraceHealth());
       if (!bridge.isClosed) bridge.addError(error);
       if (!bridge.isClosed) bridge.close();
     }
@@ -464,6 +533,17 @@ class LlmService {
           resetSilenceTimer();
 
           emitted++;
+          if (emitted == 1) {
+            // Build #126: time-to-first-token, from the caller's side —
+            // this is the number the 90s silence timer is really
+            // measuring, and the one Piece A exists to capture.
+            final firstMs =
+                DateTime.now().difference(startedAt).inMilliseconds;
+            Log.i(
+              '[LlmService] first token after ${firstMs}ms; '
+              'prompt ~$promptTokensEst tokens (est)',
+            );
+          }
           _notifyToken(token);
           if (!bridge.isClosed) bridge.add(token);
 

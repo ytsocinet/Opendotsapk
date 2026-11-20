@@ -593,17 +593,32 @@ def patch_native_lib(package_root: Path) -> int:
 
 TRACE_CPP_REPLACEMENTS = [
     (
-        r'''#include <thread>
+        [
+            # Build #126 migrates the #99 form (listed first) to the
+            # pristine anchor. <chrono> is already in the stock file, so
+            # only <ctime> is added — localtime_r/strftime for the
+            # per-line timestamp.
+            r'''#include <thread>
+#include <cstdarg>
+#include <cstdio>
 #include "llama.h"''',
+            r'''#include <thread>
+#include "llama.h"''',
+        ],
         r'''#include <thread>
 #include <cstdarg>
 #include <cstdio>
+#include <ctime>
 #include "llama.h"''',
         "trace includes",
     ),
     (
-        r'''static bool stop_generation = false;''',
-        r'''static bool stop_generation = false;
+        [
+            # Build #126 migrates the #99 form (listed first): the pristine
+            # anchor is a prefix substring of it, so it must be tried
+            # after the previous `new` text, or the helper would be
+            # duplicated instead of replaced.
+            r'''static bool stop_generation = false;
 
 // --- Clawzilla native trace (build #99) ---
 // One line per generation stage, appended to native_trace.log in the app's
@@ -631,6 +646,54 @@ static void trace_log(const char* fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
     fprintf(f, "%s\n", buf);
+    fclose(f);
+}''',
+            r'''static bool stop_generation = false;''',
+        ],
+        r'''static bool stop_generation = false;
+
+// --- Clawzilla native trace (build #99) ---
+// One line per generation stage, appended to native_trace.log in the app's
+// docs dir (path set from Kotlin at engine attach). A silent native failure
+// — no token, no error, no crash — is otherwise invisible to Dart, so the
+// 90-second timeout is the only symptom. Every failure here is swallowed
+// and the file is truncated past ~200 KB: tracing must never break
+// generation or fill storage.
+//
+// Build #126: every line carries a wall-clock timestamp ([HH:MM:SS.mmm]).
+// The trace had no durations, so "prefill was slow" and "the turn never
+// reached native" looked identical. The timestamp also lets a trace line
+// be correlated with the Dart log's own timestamps in the Activity screen.
+static std::string trace_path;
+static int trace_tokens_sent = 0;
+
+static void trace_log(const char* fmt, ...) {
+    if (trace_path.empty()) return;
+    FILE* f = fopen(trace_path.c_str(), "a");
+    if (f == nullptr) return;
+    struct stat st;
+    if (stat(trace_path.c_str(), &st) == 0 && st.st_size > 200 * 1024) {
+        fclose(f);
+        f = fopen(trace_path.c_str(), "w");
+        if (f == nullptr) return;
+    }
+    char buf[512];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+    char tbuf[16];
+    strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &tmv);
+    const long long ms =
+        (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch())
+            .count() %
+        1000;
+    fprintf(f, "[%s.%03lld] %s\n", tbuf, ms, buf);
     fclose(f);
 }''',
         "trace helper",
@@ -739,10 +802,12 @@ TRACE_KOTLIN_REPLACEMENTS = [
         "setTracePath declaration",
     ),
     (
-        r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
-        eventChannel.setStreamHandler(this)
-    }''',
-        r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
+        [
+            # Build #126 migrates the #99 form (listed first): the pristine
+            # anchor is a prefix substring of it, so it must be tried
+            # after the previous `new` text, or the setTracePath block
+            # would be duplicated instead of replaced.
+            r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
         eventChannel.setStreamHandler(this)
 
         // Clawzilla build #99: tell the native glue where to write the
@@ -756,6 +821,29 @@ TRACE_KOTLIN_REPLACEMENTS = [
             ).absolutePath,
         )
     }''',
+            r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
+        eventChannel.setStreamHandler(this)
+    }''',
+        ],
+        r'''        eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "native_llama/events")
+        eventChannel.setStreamHandler(this)
+
+        // Clawzilla build #99: tell the native glue where to write the
+        // generation trace (native_trace.log in the app docs dir), so a
+        // silent native failure is visible in the Diagnostics screen.
+        // path_provider's docs dir on Android is <filesDir>/app_flutter.
+        // Build #126: create the directory first. fopen() in the native
+        // glue fails silently when the parent dir does not exist, which
+        // makes every trace_log call a no-op and the trace permanently
+        // empty — exactly the symptom seen on the phone (empty trace
+        // after a working turn). mkdirs() is a no-op when it exists.
+        val traceFile = java.io.File(
+            flutterPluginBinding.applicationContext.filesDir,
+            "app_flutter/native_trace.log",
+        )
+        traceFile.parentFile?.mkdirs()
+        setTracePath(traceFile.absolutePath)
+    }''',
         "trace path at attach",
     ),
 ]
@@ -768,15 +856,28 @@ def _replace_once(text, old, new, label, path):
     (the script runs on every build; the pub cache may already be patched).
     If neither old nor new is found, fails loudly so CI never ships a
     silently uninstrumented build.
+
+    `old` may be a list of candidate anchors, tried in order. That is how
+    a replacement whose `new` text changed across builds migrates an
+    already-patched tree: the previous build's `new` text is listed first,
+    and the pristine anchor last. The order matters whenever the pristine
+    anchor is a substring of the previous `new` — replacing on it would
+    duplicate the instrumented code instead of replacing it. The CI pub
+    cache persists between runs (flutter-action `cache: true`), so the run
+    after a `new` change meets the previous build's text, not the pristine
+    one; without the list form that run would fail loudly (or worse,
+    double-patch).
     """
     if new in text:
         print("%s already present in %s; skipping" % (label, path))
         return text, 0
-    if old not in text:
-        raise SystemExit(
-            "::error::unrecognised %s in %s" % (label, path)
-        )
-    return text.replace(old, new, 1), 1
+    candidates = old if isinstance(old, (list, tuple)) else [old]
+    for candidate in candidates:
+        if candidate in text:
+            return text.replace(candidate, new, 1), 1
+    raise SystemExit(
+        "::error::unrecognised %s in %s" % (label, path)
+    )
 
 
 def patch_native_trace(package_root: Path) -> int:
