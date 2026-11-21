@@ -76,6 +76,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _isThinking = false;
   String _currentResponse = '';
 
+  /// What the thinking bubble says while a local turn is still prefilling
+  /// (build #129, Piece C): null once the first token arrives, when the
+  /// bubble gives way to the live answer. Set by [_streamReply] from the
+  /// prefill-progress callback and cleared on the first token or when the
+  /// turn ends — a stale label must never outlive its turn.
+  String? _prefillLabel;
+
   /// Which engine answered the last routed turn (build #106), e.g.
   /// "Custom · qwen2.5-coder:3b" or "On-device · gemma-3-1b". Shown in
   /// the header so a cloud turn that silently ran locally is visible.
@@ -447,7 +454,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           final liveAnswer =
                               splitThinking(_currentResponse).answer;
                           if (liveAnswer.trim().isEmpty) {
-                            return const ThinkingBubble();
+                            return ThinkingBubble(label: _prefillLabel);
                           }
                           return ChatMessageTile(
                             key: const ValueKey('live-response'),
@@ -780,14 +787,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     String? imagePath,
   }) async {
     final llmService = ref.read(llmServiceProvider);
+    // Build #129 (Piece C): a local turn spends its first minute or two
+    // prefilling before the first token — show that instead of a bare
+    // spinner, so a slow turn reads as slow, not broken. The label is
+    // refined to "N/M tokens" as prefill-chunk lines land in the trace,
+    // and cleared on the first token below.
+    if (mounted) {
+      setState(() => _prefillLabel = 'Processing prompt…');
+    }
+    var firstToken = true;
     await for (final token in llmService.generateStream(
       prompt: prompt,
       systemPrompt: systemPrompt,
       history: history,
       maxTokens: _responseTokens(),
       imagePath: imagePath,
+      onPrefillProgress: (done, total) {
+        if (mounted) {
+          setState(
+            () => _prefillLabel = 'Processing prompt… $done/$total tokens',
+          );
+        }
+      },
     )) {
       if (_stopRequested) break;
+      if (firstToken) {
+        firstToken = false;
+        if (mounted && _prefillLabel != null) {
+          setState(() => _prefillLabel = null);
+        }
+      }
       _bufferToken(token);
     }
     _flushNow();
@@ -1148,6 +1177,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           setState(() {
             _isThinking = false;
             _currentResponse = '';
+            // Build #129: never let a prefill label outlive its turn.
+            _prefillLabel = null;
           });
           // The answer has landed: return to the bottom even if the user was
           // reading earlier messages while it generated.
@@ -1562,6 +1593,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         setState(() {
           _isThinking = false;
           _currentResponse = '';
+          // Build #129: never let a prefill label outlive its turn.
+          _prefillLabel = null;
         });
         // The answer has landed: return to the bottom even if the user was
         // reading earlier messages while it generated.
@@ -4235,7 +4268,13 @@ class _SectionHeader extends StatelessWidget {
 /// the assistant's presentation — same bubble colour, same avatar — so the
 /// reply does not appear to jump when it materialises.
 class ThinkingBubble extends StatefulWidget {
-  const ThinkingBubble({super.key});
+  /// Text shown next to the pulsing dots. Defaults to 'Thinking...';
+  /// build #129 passes the prefill label ("Processing prompt… N/M
+  /// tokens") while a local turn is still prefilling, so a slow turn
+  /// reads as slow, not broken.
+  const ThinkingBubble({super.key, this.label});
+
+  final String? label;
 
   @override
   State<ThinkingBubble> createState() => _ThinkingBubbleState();
@@ -4333,7 +4372,7 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                     _PulsingDots(animation: _controller),
                     const SizedBox(width: 14),
                     Text(
-                      'Thinking...',
+                      widget.label ?? 'Thinking...',
                       style: text.bodyMedium?.copyWith(
                         color: scheme.onSurfaceVariant,
                         fontWeight: FontWeight.w500,

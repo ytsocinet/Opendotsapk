@@ -20,7 +20,8 @@
 ///
 /// That is a genuinely nasty failure mode, so two things are true of this file:
 /// the key is `text`, and nothing here is allowed to await a stream that has no
-/// bound on how long it may stay silent. See [_generationTimeout].
+/// bound on how long it may stay silent. See [_prefillTimeout] and
+/// [_decodeSilenceTimeout].
 ///
 /// ## The token cap is enforced on both sides
 ///
@@ -35,6 +36,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -46,23 +48,47 @@ import '../../core/utils/turn_builder.dart';
 import '../../domain/models/local_model.dart';
 import 'model_preflight.dart';
 
-/// How long a generation may go without producing a single token before it is
-/// treated as wedged.
+/// Bound on time-to-first-token: how long prefill may run before the turn
+/// is treated as wedged.
 ///
-/// This is the safety net for the class of bug described in the library
-/// docstring: anything that stops the native side from ever emitting
-/// `__END_OF_STREAM__` would otherwise hang the UI permanently. Prompt
-/// processing on a large model can legitimately take a while before the first
-/// token, so this is deliberately generous.
-const Duration _generationTimeout = Duration(seconds: 90);
+/// Build #129 (local hang, Piece C — make the timer honest): measured on
+/// the phone Nov 20, prefill runs ~512 tokens per ~44s (~11.6 tok/s), so
+/// a 1,432-token normal prompt needs ~120–130s before the first token.
+/// The old single 90s silence bound fired mid-prefill on every
+/// normal-mode turn. 300s covers ~3,500 tokens at the measured rate,
+/// with headroom over today's ~1,400-token prompts. This bound applies
+/// ONLY before the first token; once decoding starts, the 90s
+/// decode-silence bound below takes over, so the 90s number survives
+/// nowhere as a prefill bound.
+const Duration _prefillTimeout = Duration(seconds: 300);
+
+/// Bound on silence AFTER the first token: how long decoding may go
+/// without emitting a token before the turn is treated as wedged.
+/// 90s of decode silence is the real "wedged" signal — prefill is done
+/// by then, so a stall here means the engine stopped, not that it is slow.
+const Duration _decodeSilenceTimeout = Duration(seconds: 90);
 
 /// Hard ceiling on wall-clock time for one generation, regardless of progress.
-const Duration _totalGenerationTimeout = Duration(minutes: 5);
+///
+/// 10 minutes = the 300s prefill bound plus room for a full 512-token
+/// decode at phone speed. The old 5-minute ceiling would have fired on a
+/// legitimate slow turn the moment prefill alone approached 300s.
+const Duration _totalGenerationTimeout = Duration(minutes: 10);
 
 class LlmService {
   static LlmService? _instance;
 
   final NativeLlama _llm = NativeLlama();
+
+  /// The bounds above, exposed for tests. The split is the fix: if the
+  /// prefill bound ever collapses back to 90s, normal-mode turns time out
+  /// mid-prefill again the moment the prompt grows.
+  @visibleForTesting
+  static Duration get prefillTimeout => _prefillTimeout;
+  @visibleForTesting
+  static Duration get decodeSilenceTimeout => _decodeSilenceTimeout;
+  @visibleForTesting
+  static Duration get totalGenerationTimeout => _totalGenerationTimeout;
 
   // Default context window (build #99: raised from 2048). The full local
   // prompt (saved memories, core skills, tools section) plus history was
@@ -375,10 +401,68 @@ class LlmService {
   /// side sets ("app_flutter/native_trace.log"); if any side disagrees,
   /// this reports MISSING and the trace section shows "No native trace
   /// yet". Fire-and-forget: a failed check is itself logged, never thrown.
-  static Future<void> _logTraceHealth() async {
+  /// The native trace file, or null when the docs dir cannot be resolved.
+  static Future<File?> _traceFile() async {
     try {
       final docs = await getApplicationDocumentsDirectory();
-      final file = File('${docs.path}/native_trace.log');
+      return File('${docs.path}/native_trace.log');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// One native prefill-chunk line in the trace, e.g.
+  /// `[23:30:56.704] prefill: chunk at 512/1432 tokens rc=0`.
+  static final _prefillChunkPattern = RegExp(
+    r'prefill: chunk at (\d+)/(\d+) tokens',
+  );
+
+  /// The latest prefill progress in [traceText], or null when it holds no
+  /// prefill-chunk line. Takes the LAST match: the trace is append-mode,
+  /// so the tail of the file is the newest chunk. Pure, so the timer
+  /// tests can pin it without a file or a plugin.
+  @visibleForTesting
+  static ({int done, int total})? parsePrefillProgress(String traceText) {
+    final matches = _prefillChunkPattern.allMatches(traceText);
+    if (matches.isEmpty) return null;
+    final last = matches.last;
+    return (
+      done: int.parse(last.group(1)!),
+      total: int.parse(last.group(2)!),
+    );
+  }
+
+  /// Bytes appended to [file] after [offset], as text. The trace is
+  /// append-mode (truncated only past 200 KB), so a turn that remembers
+  /// its starting offset reads only its own lines — chunk lines from
+  /// earlier turns are ignored by construction. A file that shrank below
+  /// the offset (a truncate mid-turn) is read from the start instead.
+  /// Never throws: a failed read is empty progress, not a failed turn.
+  static Future<String> _readTraceTail(File file, int offset) async {
+    try {
+      final length = await file.length();
+      final start = length < offset ? 0 : offset;
+      if (length <= start) return '';
+      final raf = await file.open(mode: FileMode.read);
+      try {
+        await raf.setPosition(start);
+        final bytes = await raf.read(length - start);
+        return utf8.decode(bytes);
+      } finally {
+        await raf.close();
+      }
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static Future<void> _logTraceHealth() async {
+    final file = await _traceFile();
+    if (file == null) {
+      Log.w('[LlmService] native trace health check failed: no docs dir');
+      return;
+    }
+    try {
       if (await file.exists()) {
         Log.i(
           '[LlmService] native trace: exists, ${await file.length()} bytes',
@@ -404,6 +488,11 @@ class LlmService {
   /// Stops early once [maxTokens] tokens have been emitted. The native
   /// loop is bounded by the same number (build #127), so a listener-less
   /// generation ends by itself; Dart's cap is still the exact one.
+  ///
+  /// [onPrefillProgress] is called with (done, total) prompt tokens as
+  /// prefill progresses, read from the native trace (build #129, Piece C).
+  /// It fires only before the first token — decoding progress is the
+  /// tokens themselves. Null when the caller does not show progress.
   Stream<String> generateStream({
     required String prompt,
     int maxTokens = 512,
@@ -413,6 +502,7 @@ class LlmService {
     double topP = 0.9,
     int topK = 40,
     String? imagePath,
+    void Function(int done, int total)? onPrefillProgress,
   }) async* {
     if (!_isLoaded) {
       throw StateError('Model not loaded. Call loadModel() first.');
@@ -461,20 +551,58 @@ class LlmService {
 
     _isGenerating = true;
 
+    // Build #129 (Piece C): the trace offset this turn started at. The
+    // trace is append-mode, so the prefill poller below reads only bytes
+    // appended after this point — chunk lines from earlier turns never
+    // leak into this turn's progress.
+    final traceFile = await _traceFile();
+    var traceOffset = 0;
+    if (traceFile != null) {
+      try {
+        traceOffset = await traceFile.length();
+      } catch (_) {
+        traceOffset = 0;
+      }
+    }
+
     // Bridge the plugin's stream so we can impose our own bounds on it.
     final bridge = StreamController<String>();
     _activeBridge = bridge;
     StreamSubscription<String>? sub;
     Timer? silenceTimer;
     Timer? totalTimer;
+    Timer? prefillPollTimer;
     var emitted = 0;
     var finished = false;
+    var lastPrefillDone = -1;
+
+    void cancelPrefillPoll() {
+      prefillPollTimer?.cancel();
+      prefillPollTimer = null;
+    }
+
+    Future<void> pollPrefillProgress() async {
+      // Decoding has started (or the turn ended): prefill is over, and
+      // the tokens themselves are the progress now.
+      if (finished || emitted > 0 || traceFile == null) return;
+      final progress = parsePrefillProgress(
+        await _readTraceTail(traceFile, traceOffset),
+      );
+      if (progress == null || progress.done <= lastPrefillDone) return;
+      lastPrefillDone = progress.done;
+      Log.i(
+        '[LlmService] prefill progress: ${progress.done}/${progress.total} '
+        'tokens',
+      );
+      onPrefillProgress?.call(progress.done, progress.total);
+    }
 
     void finish() {
       if (finished) return;
       finished = true;
       silenceTimer?.cancel();
       totalTimer?.cancel();
+      cancelPrefillPoll();
       // Build #126: say whether the native trace exists after a finished
       // turn — the trace is the evidence for what the native side did.
       unawaited(_logTraceHealth());
@@ -486,6 +614,7 @@ class LlmService {
       finished = true;
       silenceTimer?.cancel();
       totalTimer?.cancel();
+      cancelPrefillPoll();
       // The bridge is about to end, so nothing further will be read from the
       // plugin stream. Whatever the native side was doing has to be told to
       // stop: on the timeout paths this is a second abort (harmless — `stop`
@@ -506,14 +635,27 @@ class LlmService {
 
     void resetSilenceTimer() {
       silenceTimer?.cancel();
-      silenceTimer = Timer(_generationTimeout, () {
+      // Build #129 (Piece C): the two bounds are different jobs. Before
+      // the first token the turn is still prefilling — a slow prefill is
+      // expected on this phone, so the bound is the generous prefill one.
+      // After the first token, 90s of silence means the engine stalled.
+      // The old single 90s bound conflated the two and fired mid-prefill
+      // on every normal-mode turn.
+      final prefilling = emitted == 0;
+      final bound = prefilling ? _prefillTimeout : _decodeSilenceTimeout;
+      silenceTimer = Timer(bound, () {
         // Nothing has arrived for a long time. Stop the native loop rather than
         // leaving the UI waiting on a stream that may never complete.
         unawaited(stop());
         fail(
           TimeoutException(
-            'The model stopped responding. Generation was cancelled after '
-            '${_generationTimeout.inSeconds}s without a token.',
+            prefilling
+                ? 'The model is still processing the prompt after '
+                    '${bound.inSeconds}s without a token. The prompt may '
+                    'be too long for this phone — try safe mode or a '
+                    'shorter chat.'
+                : 'The model stopped responding. Generation was cancelled '
+                    'after ${bound.inSeconds}s without a token.',
           ),
         );
       });
@@ -536,10 +678,15 @@ class LlmService {
       sub = out.listen(
         (token) {
           if (finished || token.isEmpty) return;
+          // Count first, then arm the timer: the bound depends on
+          // whether a token has arrived yet (build #129 — prefill 300s
+          // before the first token, decode silence 90s after it).
+          emitted++;
           resetSilenceTimer();
 
-          emitted++;
           if (emitted == 1) {
+            // Prefill is over — the poller has nothing left to report.
+            cancelPrefillPoll();
             // Build #126: time-to-first-token, from the caller's side —
             // this is the number the 90s silence timer is really
             // measuring, and the one Piece A exists to capture.
@@ -576,6 +723,17 @@ class LlmService {
 
       resetSilenceTimer();
 
+      // Build #129 (Piece C): while the first token is still outstanding,
+      // read the native trace every 2s for prefill-chunk lines. The
+      // chunk rate on this phone is ~one line per 44s, so 2s polling
+      // reports each chunk promptly without hammering the file. Stops
+      // on the first token (cancelled in the listener), on finish/fail,
+      // and in the finally below — it never outlives the turn.
+      prefillPollTimer = Timer.periodic(
+        const Duration(seconds: 2),
+        (_) => unawaited(pollPrefillProgress()),
+      );
+
       await for (final token in bridge.stream) {
         yield token;
       }
@@ -606,6 +764,7 @@ class LlmService {
       finished = true;
       silenceTimer?.cancel();
       totalTimer?.cancel();
+      cancelPrefillPoll();
       if (consumerLeft) unawaited(stop());
       await sub?.cancel();
       if (!bridge.isClosed) await bridge.close();
