@@ -56,6 +56,176 @@ class _CypherWakeTaskHandler extends TaskHandler {
   void onNotificationDismissed() {}
 }
 
+/// One closed wake-word utterance's peak readings, for the Activity log.
+/// Returned by [WakeCalibrationTracker.onScore] when a score run above
+/// [WakeCalibrationTracker.peakLogThreshold] ends.
+class WakePeakEvent {
+  const WakePeakEvent({required this.peakScore, required this.micPeak});
+
+  /// Highest classifier score in the utterance (0–1).
+  final double peakScore;
+
+  /// Highest raw mic level in the utterance (0–1, before gain).
+  final double micPeak;
+}
+
+/// Pure calibration logic for wake mode (build #131): tracks the live
+/// classifier score, the raw mic level, per-utterance peaks and stream
+/// liveness, with no dependency on the plugin — so it is unit-testable
+/// without a microphone. The service feeds it from the detector's
+/// `rawScores` / `audioLevel` streams; the Diagnostics screen renders it.
+class WakeCalibrationTracker {
+  /// A score at or above this opens an "utterance" whose peak gets
+  /// logged when the score falls back below it. Well under the 0.30
+  /// detection threshold, so near-misses are caught too.
+  static const double peakLogThreshold = 0.10;
+
+  /// No audio chunk for this long while wake claims to be running means
+  /// the record stream died silently — that alone is a diagnosis.
+  static const Duration streamDeadAfter = Duration(seconds: 5);
+
+  /// Scores are kept for this long for the history strip.
+  static const Duration historyWindow = Duration(seconds: 10);
+
+  int classifierCalls = 0;
+  double lastScore = 0;
+  double lastLevel = 0;
+  DateTime? lastChunkAt;
+  double lastUtterancePeakScore = 0;
+  double lastUtterancePeakMic = 0;
+
+  bool _inUtterance = false;
+  double _utterancePeakScore = 0;
+  double _utterancePeakMic = 0;
+  final List<_ScoredPoint> _recent = [];
+
+  /// Scores from the last [historyWindow], oldest first, for the
+  /// history strip. A fresh list each read, so the UI can hold it.
+  List<double> get recentScores =>
+      List<double>.unmodifiable(_recent.map((p) => p.score));
+
+  /// True once at least one utterance has closed (peaks are >=
+  /// [peakLogThreshold], so a zero peak means "none yet").
+  bool get hasLastUtterance => lastUtterancePeakScore > 0;
+
+  /// Whether audio chunks are still arriving. False before the first
+  /// chunk and once [streamDeadAfter] has passed without one.
+  bool isStreamAlive(DateTime now) {
+    final last = lastChunkAt;
+    return last != null && now.difference(last) < streamDeadAfter;
+  }
+
+  /// Time since the last audio chunk, or null if none ever arrived.
+  Duration? secondsSinceLastChunk(DateTime now) {
+    final last = lastChunkAt;
+    return last == null ? null : now.difference(last);
+  }
+
+  /// Feed one classifier score. Returns a [WakePeakEvent] when a score
+  /// run above [peakLogThreshold] just ended, otherwise null.
+  WakePeakEvent? onScore(double score, DateTime now) {
+    classifierCalls++;
+    lastScore = score;
+    lastChunkAt = now;
+    _recent.add(_ScoredPoint(now, score));
+    _recent.removeWhere((p) => now.difference(p.time) > historyWindow);
+    if (score >= peakLogThreshold) {
+      _inUtterance = true;
+      if (score > _utterancePeakScore) _utterancePeakScore = score;
+      if (lastLevel > _utterancePeakMic) _utterancePeakMic = lastLevel;
+      return null;
+    }
+    if (!_inUtterance) return null;
+    _inUtterance = false;
+    final event = WakePeakEvent(
+      peakScore: _utterancePeakScore,
+      micPeak: _utterancePeakMic,
+    );
+    lastUtterancePeakScore = _utterancePeakScore;
+    lastUtterancePeakMic = _utterancePeakMic;
+    _utterancePeakScore = 0;
+    _utterancePeakMic = 0;
+    return event;
+  }
+
+  /// Feed one raw mic level (0–1, before gain).
+  void onLevel(double level, DateTime now) {
+    lastLevel = level;
+    lastChunkAt = now;
+    if (_inUtterance && level > _utterancePeakMic) {
+      _utterancePeakMic = level;
+    }
+  }
+
+  /// Fresh listening session: counters, peaks and history restart.
+  void reset() {
+    classifierCalls = 0;
+    lastScore = 0;
+    lastLevel = 0;
+    lastChunkAt = null;
+    lastUtterancePeakScore = 0;
+    lastUtterancePeakMic = 0;
+    _inUtterance = false;
+    _utterancePeakScore = 0;
+    _utterancePeakMic = 0;
+    _recent.clear();
+  }
+}
+
+class _ScoredPoint {
+  const _ScoredPoint(this.time, this.score);
+  final DateTime time;
+  final double score;
+}
+
+/// One live reading of the wake calibration state, for the Diagnostics
+/// screen. Built by [WakeService] from its [WakeCalibrationTracker];
+/// immutable so the screen can hold the latest one and rebuild from it.
+class WakeCalibrationSnapshot {
+  const WakeCalibrationSnapshot({
+    required this.running,
+    required this.score,
+    required this.micLevel,
+    required this.classifierCalls,
+    required this.detections,
+    required this.lastChunkAt,
+    required this.recentScores,
+    required this.hasLastUtterance,
+    required this.lastUtterancePeakScore,
+    required this.lastUtterancePeakMic,
+  });
+
+  /// Whether the detector is running right now.
+  final bool running;
+
+  /// Latest classifier score (0–1).
+  final double score;
+
+  /// Latest raw mic level (0–1, before gain).
+  final double micLevel;
+
+  /// Classifier calls so far this session.
+  final int classifierCalls;
+
+  /// Detections so far this session.
+  final int detections;
+
+  /// When the last audio chunk arrived, or null if none yet.
+  final DateTime? lastChunkAt;
+
+  /// Scores from the last ~10 s, oldest first.
+  final List<double> recentScores;
+
+  /// Whether any utterance has closed yet this session.
+  final bool hasLastUtterance;
+
+  /// Peak score of the last closed utterance (0 if none yet).
+  final double lastUtterancePeakScore;
+
+  /// Peak mic level of the last closed utterance (0 if none yet).
+  final double lastUtterancePeakMic;
+}
+
 class WakeService {
   WakeService._();
 
@@ -84,6 +254,26 @@ class WakeService {
   StreamSubscription<WakeWordDetection>? _detectionSub;
   bool _running = false;
   bool _serviceRunning = false;
+
+  /// Calibration state (build #131): the pure tracker plus the
+  /// subscriptions that feed it from the detector's `rawScores` and
+  /// `audioLevel` streams. Subscribing changes nothing about detection
+  /// — threshold, gain, model and service are untouched.
+  final WakeCalibrationTracker calibration = WakeCalibrationTracker();
+  StreamSubscription<double>? _rawScoreSub;
+  StreamSubscription<double>? _levelSub;
+  final _calibrationController =
+      StreamController<WakeCalibrationSnapshot>.broadcast();
+  WakeCalibrationSnapshot? _latestCalibration;
+
+  /// Live calibration readings, one per score/level event while wake is
+  /// running. The Diagnostics screen subscribes to this.
+  Stream<WakeCalibrationSnapshot> get calibrationStream =>
+      _calibrationController.stream;
+
+  /// The most recent calibration reading, or null if wake has never
+  /// run in this process.
+  WakeCalibrationSnapshot? get latestCalibration => _latestCalibration;
 
   /// True when a wake word was heard while no UI callback was registered
   /// (app backgrounded with the chat screen gone). The chat screen
@@ -115,6 +305,26 @@ class WakeService {
       _detectionSub = _detector!.detections.listen(
         (d) => _onWakeWord(d.score),
       );
+      // Calibration (build #131): subscribe to the detector's score and
+      // mic-level streams. Both are broadcast, so this adds no load on
+      // detection — it only observes. Scores crossing 0.10 close an
+      // utterance whose peak is logged to the Activity log.
+      calibration.reset();
+      _rawScoreSub = _detector!.rawScores.listen((score) {
+        final event = calibration.onScore(score, DateTime.now());
+        if (event != null) {
+          Log.i(
+            'wake peak score ${event.peakScore.toStringAsFixed(2)} '
+            '(threshold ${detectionThreshold.toStringAsFixed(2)}), '
+            'mic peak ${event.micPeak.toStringAsFixed(2)}',
+          );
+        }
+        _emitCalibration();
+      });
+      _levelSub = _detector!.audioLevel.listen((level) {
+        calibration.onLevel(level, DateTime.now());
+        _emitCalibration();
+      });
       if (!await _detector!.start()) {
         await _stopDetector();
         await _stopForegroundService();
@@ -144,6 +354,14 @@ class WakeService {
     } catch (_) {}
     _detectionSub = null;
     try {
+      await _rawScoreSub?.cancel();
+    } catch (_) {}
+    _rawScoreSub = null;
+    try {
+      await _levelSub?.cancel();
+    } catch (_) {}
+    _levelSub = null;
+    try {
       await _detector?.stop();
     } catch (_) {}
     try {
@@ -159,6 +377,28 @@ class WakeService {
     } else {
       wakePending = true;
       _updateNotification('Cypher heard you — tap to talk');
+    }
+  }
+
+  /// Build one calibration reading from the tracker and publish it to
+  /// the Diagnostics screen. Called on every score/level event while
+  /// wake is running; the screen holds the latest one.
+  void _emitCalibration() {
+    final snapshot = WakeCalibrationSnapshot(
+      running: _running,
+      score: calibration.lastScore,
+      micLevel: calibration.lastLevel,
+      classifierCalls: calibration.classifierCalls,
+      detections: _detector?.detectionCount ?? 0,
+      lastChunkAt: calibration.lastChunkAt,
+      recentScores: calibration.recentScores,
+      hasLastUtterance: calibration.hasLastUtterance,
+      lastUtterancePeakScore: calibration.lastUtterancePeakScore,
+      lastUtterancePeakMic: calibration.lastUtterancePeakMic,
+    );
+    _latestCalibration = snapshot;
+    if (!_calibrationController.isClosed) {
+      _calibrationController.add(snapshot);
     }
   }
 
