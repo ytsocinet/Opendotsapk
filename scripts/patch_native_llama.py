@@ -1160,6 +1160,21 @@ break;
 }''',
         "decode max tokens",
     ),
+    (
+        # Build #130 (Piece D): prefill in 1024-token chunks instead of
+        # the stock 512 — fewer, bigger llama_decode calls for the prompt.
+        # The on-phone trace is the measurement: its chunk lines read
+        # 0/1393, 1024/1393, ... and their timestamps show whether
+        # prefill got faster. 1024 sits safely inside n_ctx 4096, and
+        # the draft/vision path (n_batch 256) is untouched. The anchor
+        # is unique in the stock file; on re-runs the `new` text is
+        # already present so _replace_once skips.
+        r'''cparams.n_batch = 512;''',
+        r'''// Build #130 (Piece D): 1024-token prefill chunks — fewer, bigger
+// decodes than the stock 512. Measured on-phone via trace chunk lines.
+cparams.n_batch = 1024;''',
+        "prefill batch 1024",
+    ),
 ]
 
 GUARD_KOTLIN_REPLACEMENTS = [

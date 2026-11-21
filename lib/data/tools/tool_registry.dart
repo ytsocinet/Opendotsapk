@@ -514,6 +514,93 @@ class ToolRegistry {
 
   bool isImplemented(String toolName) => _tools[toolName]?.implemented ?? false;
 
+  /// Whether a message looks like a job for a tool (build #130, Piece D).
+  ///
+  /// Pure and testable: the local chat path sends the full tools section
+  /// only for these turns and a compact names-only section otherwise.
+  /// The full section is ~990 tokens the model prefills on every turn
+  /// and never uses on a plain chat turn; the compact section is ~200.
+  ///
+  /// The lists are deliberately generous — a false positive costs a
+  /// slow prefill (the status quo), but a false negative costs the turn
+  /// its tool. Code and plan modes are tool jobs by definition (code
+  /// saves with write_project_file; plans turn into tasks and files),
+  /// and an attached image is one too (analyze_image). A bare "yes"
+  /// counts when the recent user messages asked for a tool job — that
+  /// is the #124 generate_on_site retry ("yes" after a failure), where
+  /// the triggering message, not the "yes", carries the tool cue.
+  static bool looksLikeToolJob(
+    String message, {
+    List<String> priorUserMessages = const [],
+    String mode = 'chat',
+    bool hasImages = false,
+  }) {
+    if (mode == 'code' || mode == 'plan') return true;
+    if (hasImages) return true;
+    final text = [
+      message,
+      ...priorUserMessages.reversed.take(2),
+    ].join('\n').toLowerCase();
+    return _toolJobWords.any(
+          (w) => RegExp('\\b${RegExp.escape(w)}\\b').hasMatch(text),
+        ) ||
+        _toolJobPhrases.any(text.contains);
+  }
+
+  /// Single words that mark a tool job, matched on word boundaries so
+  /// 'art' does not fire on 'part' or 'start'. Plurals are listed
+  /// separately because `\bnote\b` does not match 'notes'.
+  static const _toolJobWords = <String>{
+    // Messaging, calendar, contacts, alarms (the silent four, #110).
+    'sms', 'text', 'message', 'send', 'calendar', 'event', 'events',
+    'meeting', 'appointment', 'schedule', 'contact', 'contacts', 'alarm',
+    'wake', 'remind', 'reminder', 'timer',
+    // Image generation (Artistly) and opening/sharing apps.
+    'image', 'images', 'picture', 'pictures', 'photo', 'photos', 'art',
+    'artistly', 'videoexpress', 'wallpaper', 'poster', 'video', 'draw',
+    'paint', 'generate', 'open', 'launch', 'youtube', 'share',
+    // Search, location, notes.
+    'search', 'google', 'lookup', 'find', 'price', 'cheapest', 'news',
+    'where', 'weather', 'temperature', 'location', 'note', 'notes',
+    // Tasks, goals, files.
+    'task', 'tasks', 'todo', 'checklist', 'goal', 'goals', 'file', 'files',
+    'code', 'project', 'projects', 'fix', 'create', 'add', 'delete',
+    'remove', 'complete', 'update', 'mark', 'list', 'edit',
+    // Image analysis.
+    'describe', 'analyze', 'analyse',
+  };
+
+  /// Multi-word cues, matched as substrings. 'tell me' is deliberately
+  /// NOT here — "tell me a joke" is plain chat; only telling someone
+  /// else is a message job.
+  static const _toolJobPhrases = <String>{
+    'look up',
+    'where am i',
+    'where is',
+    'what is in',
+    "what's in",
+    'add to contacts',
+    'save the number',
+    'save his number',
+    'save her number',
+    'save it',
+    'save this',
+    'save the',
+    'save my',
+    'write a note',
+    'write code',
+    'write it to',
+    'write this',
+    'tell them',
+    'tell him',
+    'tell her',
+    'to-do',
+    'to do list',
+    'best priced',
+    'read my notes',
+    'read the notes',
+  };
+
   /// The tools section for the chat system prompt, or '' when there is
   /// nothing to offer.
   ///
@@ -530,11 +617,40 @@ class ToolRegistry {
   /// Settings → Tools from the model. The registry has no permission
   /// store of its own, so the caller (the chat screen, which owns the
   /// store) passes the blocked names in.
-  Future<String> promptSection({Set<String> blockedTools = const {}}) async {
+  Future<String> promptSection({
+    Set<String> blockedTools = const {},
+    // Build #130 (Piece D): when true, the section lists tool NAMES only
+    // instead of names + descriptions. The full section is ~990 tokens;
+    // the compact one is ~200. Plain chat turns get the compact form —
+    // the names alone keep the affordance visible, and a turn that turns
+    // out to be a tool job gets the full section next turn. The file-save
+    // rule is kept in short form: code mode always gets the full
+    // section, so the compact form never serves a code turn, but a plain
+    // chat turn can still produce a code block worth saving.
+    bool compact = false,
+  }) async {
     final tools = toolsForModel
         .where((t) => !blockedTools.contains(t.name))
         .toList();
     if (tools.isEmpty) return '';
+    if (compact) {
+      final lines = <String>[
+        'You can use tools. Reply with ONLY a JSON block like this:',
+        '```json',
+        '{"tool": "open_app", "params": {"package_name": "com.google.android.youtube"}}',
+        '```',
+        'Tools: ${tools.map((t) => t.name).join(', ')}',
+      ];
+      lines.addAll(await _connectedAppsLines());
+      lines.add(
+        'If you write code in a turn, save it with write_project_file '
+        'in the Projects folder.',
+      );
+      lines.add(
+        'If no tool fits the request, answer directly in plain text — do not output a tool block.',
+      );
+      return lines.join('\n');
+    }
     final lines = <String>[
       'You can use tools. When the user asks for something a tool can do, '
           'reply with ONLY a JSON block like this and nothing else:',

@@ -1014,9 +1014,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         // enforcement for other tools is still the orchestrator's job;
         // the chat path enforces it for generate_on_site below, because
         // that tool spends Aaron's Artistly credits.)
+        // Build #130 (Piece D): the full tools section is ~990 tokens
+        // of prefill on every local turn, and most turns never call a
+        // tool. Plain chat gets the compact names-only section (~200
+        // tokens); a turn that looks like a tool job gets the full one.
+        // The saving shows in the "local turn started" log line (prompt
+        // token count). Detection runs on the user's own words, not the
+        // doc/IDE-augmented message, and looks back at the last two user
+        // messages so a bare "yes" after an image request still counts
+        // as the image job (#124). Safe mode drops the section entirely
+        // in buildSystemPrompt, so this choice changes nothing there.
+        final isToolJob = ToolRegistry.looksLikeToolJob(
+          userMessage.content,
+          priorUserMessages: [
+            for (final m in priorHistory)
+              if (m.role == 'user') m.content,
+          ],
+          mode: settings['chat_mode'] as String? ?? 'chat',
+          hasImages: hasImages,
+        );
+        Log.i(
+          '[ChatScreen] local turn: tools section '
+          '${isToolJob ? 'full' : 'compact'}',
+        );
         final toolsSection = await ref
             .read(toolRegistryProvider)
-            .promptSection(blockedTools: _blockedToolNames());
+            .promptSection(
+              blockedTools: _blockedToolNames(),
+              compact: !isToolJob,
+            );
         final request = await _buildRequest(
           message: '$display$docCtx$ideCtx',
           priorHistory: priorHistory,
