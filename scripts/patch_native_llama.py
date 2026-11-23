@@ -1377,6 +1377,233 @@ def patch_generation_guards(package_root: Path) -> int:
     return changed + kchanged + dchanged
 
 
+# ------------------------------------------------------- keep model loaded (build #132)
+#
+# Nov 23, 2026: the 12:21 turn worked, every later turn logged
+# "generate: no model/context loaded" and waited out the 300s prefill
+# timeout. Root cause, proven from the plugin source: native_llama's
+# NativeLlamaPlugin.onDetachedFromEngine calls disposeLlama(), and the
+# model/context are process-wide statics in the .so. Any FlutterEngine
+# that attaches this plugin and later detaches frees the main session's
+# model. The foreground service (background mode starts one on any turn
+# over 2s; wake mode toggles one) creates a background engine whose Dart
+# callback calls DartPluginRegistrant.ensureInitialized() — so the plugin
+# IS attached there — and stopping the service destroys that engine.
+# The first turn after any service stop therefore generates against
+# nothing, while both Dart-side flags (_isLoaded, _isInitialized) still
+# say loaded. Two changes, in the same patch run as the trace and the
+# guards:
+#  (1) onDetachedFromEngine stops disposing: the explicit "dispose"
+#      method call (LlmService.release) remains the only dispose path.
+#      A model left loaded on main-engine detach is harmless — the
+#      process is going away, and a later initLlama frees the old
+#      model first.
+#  (2) a native isModelLoaded probe (C++ JNI + Kotlin + plugin Dart),
+#      so LlmService can ask the native side directly before each turn
+#      instead of trusting Dart flags that cannot see a native unload.
+# Must run after patch_generation_guards in main() — the Kotlin
+# declaration anchor is the post-guard form.
+
+MODEL_LOADED_CPP_REPLACEMENTS = [
+    (
+        # The anchor is disposeLlama, NOT abortGeneration: the trace
+        # patch's "setTracePath JNI" replacement ends with the
+        # abortGeneration signature, so anything inserted between
+        # setTracePath and abortGeneration breaks that replacement's
+        # idempotency check — its `new` text is no longer contiguous,
+        # its `old` still matches, and every re-run duplicates both
+        # functions (proven in scratch: a probe anchored on
+        # abortGeneration duplicated setTracePath + isModelLoaded on
+        # the second run, and duplicate JNI definitions do not
+        # compile). Nothing else inserts before disposeLlama, so this
+        # anchor stays contiguous across runs.
+        r'''JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_disposeLlama(JNIEnv *env, jobject thiz) {''',
+        r'''// Clawzilla build #132: isModelLoaded probe. The Dart-side flags
+// (LlmService._isLoaded, NativeLlama._isInitialized) cannot see a
+// native-side unload, so generateStream asks the native side directly
+// before each turn. Pure pointer check — no inference, no state change.
+JNIEXPORT jboolean JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_isModelLoaded(JNIEnv *env, jobject thiz) {
+    return (model != nullptr && ctx != nullptr) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_timebox_native_1llama_NativeLlamaPlugin_disposeLlama(JNIEnv *env, jobject thiz) {''',
+        "isModelLoaded JNI",
+    ),
+]
+
+MODEL_LOADED_KOTLIN_REPLACEMENTS = [
+    (
+        # Post-guard form: the trace patch added setTracePath after
+        # abortGeneration, the guards added setLatestGenerationId after
+        # that. This patch runs after both in main(), so the anchor is
+        # the post-guard form on a pristine tree too.
+        r'''    private external fun abortGeneration()
+    private external fun setTracePath(path: String)
+    private external fun setLatestGenerationId(id: Int)''',
+        r'''    private external fun abortGeneration()
+    private external fun setTracePath(path: String)
+    private external fun setLatestGenerationId(id: Int)
+    private external fun isModelLoaded(): Boolean''',
+        "isModelLoaded declaration",
+    ),
+    (
+        r'''            "abortGeneration" -> {
+                abortGeneration()
+                result.success(true)
+            }''',
+        r'''            "abortGeneration" -> {
+                abortGeneration()
+                result.success(true)
+            }
+            "isModelLoaded" -> {
+                // Build #132: ask the native side whether a model and
+                // context are actually loaded. Runs on the executor like
+                // getCpuCores: the read itself is a pointer check, but
+                // the writes it races (init/dispose) run there.
+                executor.execute {
+                    val loaded = isModelLoaded()
+                    handler.post { result.success(loaded) }
+                }
+            }''',
+        "isModelLoaded handler",
+    ),
+    (
+        r'''    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        methodChannel.setMethodCallHandler(null)
+        eventChannel.setStreamHandler(null)
+        disposeLlama()
+    }''',
+        r'''    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        methodChannel.setMethodCallHandler(null)
+        eventChannel.setStreamHandler(null)
+        // Build #132: do NOT disposeLlama() here. The native model and
+        // context are process-wide statics in the .so, but every engine
+        // that attaches this plugin detaches it on destroy — including
+        // the foreground service's background engine (its Dart callback
+        // registers all plugins) and WorkManager's. Disposing here freed
+        // the main session's model from under a live chat: the first
+        // turn after any foreground-service stop hit "generate: no
+        // model/context loaded" and waited out the 300s prefill timeout
+        // (Nov 23). The explicit "dispose" method call
+        // (LlmService.release) remains the only dispose path. A model
+        // left loaded on main-engine detach is harmless: the process is
+        // going away, and a later initLlama frees the old model first.
+    }''',
+        "detach keeps model loaded",
+    ),
+]
+
+MODEL_LOADED_DART_REPLACEMENTS = [
+    (
+        r'''  /// Force stops the current generation loop
+  Future<void> abortGeneration() async {
+    await _methodChannel.invokeMethod('abortGeneration');
+  }''',
+        r'''  /// Force stops the current generation loop
+  Future<void> abortGeneration() async {
+    await _methodChannel.invokeMethod('abortGeneration');
+  }
+
+  /// True when the native side still holds a loaded model and context.
+  ///
+  /// Build #132: the Dart-side [_isInitialized] flag cannot see a
+  /// native-side unload (a background engine's detach used to dispose
+  /// the model from under a live session), so LlmService asks native
+  /// directly before each turn instead of trusting the flag. A failed
+  /// probe reads as not loaded — the caller reloads, which is safe
+  /// even if the probe itself was the problem.
+  Future<bool> isModelLoaded() async {
+    try {
+      return await _methodChannel.invokeMethod('isModelLoaded') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }''',
+        "isModelLoaded Dart method",
+    ),
+]
+
+
+def patch_model_loaded(package_root: Path) -> int:
+    """Apply the build #132 keep-model-loaded fix.
+
+    Patches the JNI glue (native-lib.cpp) with an isModelLoaded probe,
+    the Kotlin plugin with the probe declaration + handler and with a
+    detach that no longer disposes the model, and the plugin's Dart
+    file with the probe method. Must run after patch_generation_guards
+    in main() — the Kotlin declaration anchor is the post-guard form.
+    Returns the number of replacements made. Raises SystemExit if a
+    site is in an unrecognised state, so CI fails loudly.
+    """
+    native_lib = (
+        package_root / "android" / "src" / "main" / "cpp" / "native-lib.cpp"
+    )
+    if not native_lib.is_file():
+        raise SystemExit(
+            "::error::native-lib.cpp not found under %s" % package_root
+        )
+    kotlin = (
+        package_root
+        / "android"
+        / "src"
+        / "main"
+        / "kotlin"
+        / "com"
+        / "timebox"
+        / "native_llama"
+        / "NativeLlamaPlugin.kt"
+    )
+    if not kotlin.is_file():
+        raise SystemExit(
+            "::error::NativeLlamaPlugin.kt not found under %s" % package_root
+        )
+    dart = package_root / "lib" / "native_llama.dart"
+    if not dart.is_file():
+        raise SystemExit(
+            "::error::native_llama.dart not found under %s" % package_root
+        )
+
+    text = native_lib.read_text()
+    changed = 0
+    for old, new, label in MODEL_LOADED_CPP_REPLACEMENTS:
+        text, n = _replace_once(text, old, new, label, native_lib)
+        changed += n
+    if changed:
+        native_lib.write_text(text)
+        print(
+            "patched native-lib.cpp (model-loaded probe, %d site(s))"
+            % changed
+        )
+
+    ktext = kotlin.read_text()
+    kchanged = 0
+    for old, new, label in MODEL_LOADED_KOTLIN_REPLACEMENTS:
+        ktext, n = _replace_once(ktext, old, new, label, kotlin)
+        kchanged += n
+    if kchanged:
+        kotlin.write_text(ktext)
+        print(
+            "patched NativeLlamaPlugin.kt (model-loaded probe + detach, "
+            "%d site(s))" % kchanged
+        )
+
+    dtext = dart.read_text()
+    dchanged = 0
+    for old, new, label in MODEL_LOADED_DART_REPLACEMENTS:
+        dtext, n = _replace_once(dtext, old, new, label, dart)
+        dchanged += n
+    if dchanged:
+        dart.write_text(dtext)
+        print(
+            "patched native_llama.dart (model-loaded probe, %d site(s))"
+            % dchanged
+        )
+    return changed + kchanged + dchanged
+
+
 def drop_stale_onnxruntime_so(roots: list[Path]) -> int:
     """Delete the onnxruntime package's bundled libonnxruntime.so files.
 
@@ -1514,6 +1741,12 @@ def main() -> int:
         # native max-token bound. Runs after the trace patch — its C++
         # anchors are the post-trace-patch forms.
         patched += patch_generation_guards(base.parent)
+
+        # Keep the model loaded (build #132): the detach no longer
+        # disposes the model, and a native isModelLoaded probe lets
+        # LlmService verify the model before each turn. Runs after the
+        # guards — its Kotlin declaration anchor is the post-guard form.
+        patched += patch_model_loaded(base.parent)
 
         # MiniCPM5 tokenizer support (independent of the Vulkan mode).
         # No-op on the updated engine, which already knows "minicpm5"; kept

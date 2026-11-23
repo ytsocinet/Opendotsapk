@@ -432,6 +432,35 @@ class LlmService {
     );
   }
 
+  /// True when [traceText] holds the native generate-entry line for a
+  /// turn that found no model/context loaded, e.g.
+  /// `[12:25:46.602] generate: no model/context loaded`. Pure, so the
+  /// timer tests can pin it without a file or a plugin.
+  ///
+  /// Build #132: the prefill poller watches for this line and fails the
+  /// turn at once instead of waiting out the 300s prefill timeout for a
+  /// token that can never come.
+  @visibleForTesting
+  static bool traceReportsNoModel(String traceText) =>
+      traceText.contains('generate: no model/context loaded');
+
+  /// Whether [generateStream] must reload before generating: Dart
+  /// believes a model is loaded (and remembers which file) but the
+  /// native side reports nothing loaded. Pure, so tests can pin the
+  /// three paths without a plugin.
+  ///
+  /// Build #132: a background engine's detach used to dispose the
+  /// native model from under a live session while both Dart flags still
+  /// said loaded, so the flags alone cannot be trusted — the native
+  /// probe in [_ensureNativeLoaded] supplies [nativeLoaded].
+  @visibleForTesting
+  static bool needsReload({
+    required bool dartLoaded,
+    required String? modelPath,
+    required bool nativeLoaded,
+  }) =>
+      dartLoaded && modelPath != null && !nativeLoaded;
+
   /// Bytes appended to [file] after [offset], as text. The trace is
   /// append-mode (truncated only past 200 KB), so a turn that remembers
   /// its starting offset reads only its own lines — chunk lines from
@@ -478,6 +507,49 @@ class LlmService {
     }
   }
 
+  /// True when a model is ready for [generateStream]: the Dart flags say
+  /// so and the native side agrees. When they disagree, reload the
+  /// remembered model once (same path, context size and layers) before
+  /// the turn proceeds, so a turn never starts against a native engine
+  /// holding nothing. Returns false when there is nothing to reload or
+  /// the reload failed — the caller then fails fast instead of waiting
+  /// out the 300s prefill timeout for a model that is not there.
+  ///
+  /// Build #132: a background engine's detach used to dispose the native
+  /// model from under a live session (Nov 23: the 12:21 turn worked,
+  /// every later turn logged "no model/context loaded") while both Dart
+  /// flags still said loaded. The probe below is the only check that
+  /// can see it.
+  Future<bool> _ensureNativeLoaded() async {
+    // Probe first: a failed probe reads as "not loaded" and triggers a
+    // reload, which is safe even if the probe itself was the problem.
+    final nativeLoaded = await _probeNativeLoaded();
+    if (!needsReload(
+      dartLoaded: _isLoaded,
+      modelPath: _modelPath,
+      nativeLoaded: nativeLoaded,
+    )) {
+      return _isLoaded;
+    }
+    Log.w(
+      '[LlmService] native model gone while Dart thought it loaded '
+      '($_modelPath) — reloading before the turn',
+    );
+    return loadModel(_modelPath!, nCtx: _nCtx, gpuLayers: _gpuLayers);
+  }
+
+  /// Ask the native side whether a model and context are actually
+  /// loaded. A probe failure is treated as "not loaded" — the caller
+  /// reloads, which is safe even if the probe itself was the problem.
+  Future<bool> _probeNativeLoaded() async {
+    try {
+      return await _llm.isModelLoaded();
+    } catch (e) {
+      Log.w('[LlmService] native loaded-state probe failed: $e');
+      return false;
+    }
+  }
+
   /// Stream generated tokens one at a time.
   ///
   /// Pass [imagePath] to feed a picture to a vision model. This **requires**
@@ -511,6 +583,22 @@ class LlmService {
     if (!_llm.isInitialized) {
       throw StateError(
         'The native model is not initialised. Reload the model and try again.',
+      );
+    }
+
+    // Build #132: the native model can be gone while both Dart flags
+    // still say loaded (see [_ensureNativeLoaded]). Ask native, and
+    // reload the remembered model when it disagrees. The already-loaded
+    // path costs one cheap method call per turn; the reload path costs
+    // one load and only ever runs when the model is actually gone. A
+    // failed reload throws here, at once, instead of starting a turn
+    // that would wait out the 300s prefill timeout for a token that
+    // can never come.
+    if (!await _ensureNativeLoaded()) {
+      throw StateError(
+        'The local model unloaded itself and could not be reloaded'
+        '${lastLoadError == null ? '' : ': $lastLoadError'}. '
+        'Reload the model and try again.',
       );
     }
 
@@ -581,22 +669,6 @@ class LlmService {
       prefillPollTimer = null;
     }
 
-    Future<void> pollPrefillProgress() async {
-      // Decoding has started (or the turn ended): prefill is over, and
-      // the tokens themselves are the progress now.
-      if (finished || emitted > 0 || traceFile == null) return;
-      final progress = parsePrefillProgress(
-        await _readTraceTail(traceFile, traceOffset),
-      );
-      if (progress == null || progress.done <= lastPrefillDone) return;
-      lastPrefillDone = progress.done;
-      Log.i(
-        '[LlmService] prefill progress: ${progress.done}/${progress.total} '
-        'tokens',
-      );
-      onPrefillProgress?.call(progress.done, progress.total);
-    }
-
     void finish() {
       if (finished) return;
       finished = true;
@@ -631,6 +703,38 @@ class LlmService {
       unawaited(_logTraceHealth());
       if (!bridge.isClosed) bridge.addError(error);
       if (!bridge.isClosed) bridge.close();
+    }
+
+    // Defined after [fail]: the poller calls it, and a local function
+    // cannot be referenced before its declaration.
+    Future<void> pollPrefillProgress() async {
+      // Decoding has started (or the turn ended): prefill is over, and
+      // the tokens themselves are the progress now.
+      if (finished || emitted > 0 || traceFile == null) return;
+      final tail = await _readTraceTail(traceFile, traceOffset);
+      // Build #132: the native generate entry found no model/context
+      // loaded — this turn can never produce a token. Fail now (within
+      // ~2s of the entry) instead of waiting out the 300s prefill
+      // timeout. This is the race window between the probe in
+      // [_ensureNativeLoaded] and the generate call, or a reload that
+      // silently failed.
+      if (traceReportsNoModel(tail)) {
+        fail(
+          StateError(
+            'The local model is not loaded — the native engine reports '
+            'no model/context. Reload the model and try again.',
+          ),
+        );
+        return;
+      }
+      final progress = parsePrefillProgress(tail);
+      if (progress == null || progress.done <= lastPrefillDone) return;
+      lastPrefillDone = progress.done;
+      Log.i(
+        '[LlmService] prefill progress: ${progress.done}/${progress.total} '
+        'tokens',
+      );
+      onPrefillProgress?.call(progress.done, progress.total);
     }
 
     void resetSilenceTimer() {
