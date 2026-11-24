@@ -255,6 +255,194 @@ class ModelCatalog {
     isMultimodal: true, // can also serve as the chat model
   );
 
+  // --------------------------------------------- build #133 additions (Nov 23, 2026)
+  //
+  // Both sets Aaron picked: tonight's new ones from the Models chat (Set A)
+  // plus the Nov 18 device-models plan picks (Set B). Qwen3.5-2B is in both
+  // sets — one entry. Every file + size below was read from the Hugging Face
+  // tree API, every `llmArch` was read from the file's own GGUF header and
+  // checked against the vendored llama.cpp snapshot (a4d4f2f, Nov 9) — all
+  // twelve archs are registered there. Nothing was left out.
+  static const LocalModel lfm3_17b = LocalModel(
+    id: 'lfm3-1.7b-q4_k_m',
+    displayName: 'LFM3-1.7B',
+    description: 'Built for on-device agents and tool calling.',
+    kind: ModelKind.llm,
+    fileName: 'LFM3-1.7B-Q4_K_M.gguf',
+    url: 'https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/resolve/main/LFM3-1.7B-Q4_K_M.gguf',
+    approxBytes: 1099627808,
+    contextSize: 4096,
+    ramHint: '~1.5 GB',
+    llmArch: 'lfm3',
+  );
+
+  static const LocalModel qwen35_2b = LocalModel(
+    id: 'qwen3.5-2b-q4_k_m',
+    displayName: 'Qwen3.5 2B (vision)',
+    description: 'Bigger Qwen3.5 — sees images natively and chats.',
+    kind: ModelKind.vision, // also appears in llms list via isMultimodal
+    fileName: 'Qwen3.5-2B-Q4_K_M.gguf',
+    url: 'https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf',
+    // 1,280,835,840 B weights + 668,227,264 B mmproj = 1,949,063,104 B.
+    approxBytes: 1949063104,
+    projectorFileName: 'mmproj-F16.gguf',
+    projectorUrl: 'https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/mmproj-F16.gguf',
+    contextSize: 4096,
+    ramHint: '~2.4 GB',
+    llmArch: 'qwen35',
+    isMultimodal: true, // also appears in the LLM list
+  );
+
+  // The repo's GGUF file is literally named `Q4_K_M.gguf`, so the catalog
+  // fileName is a distinct local name — the downloader saves by fileName,
+  // not by the URL's basename.
+  static const LocalModel coderLfm3_17b = LocalModel(
+    id: 'coder-lfm3-1.7b-q4_k_m',
+    displayName: 'Coder LFM3 1.7B',
+    description: 'LFM3 tuned for coding and reasoning.',
+    kind: ModelKind.llm,
+    fileName: 'coder-lfm3-1.7b-qwen4-max-Q4_K_M.gguf',
+    url: 'https://huggingface.co/AJ-Gonzalez/coder-lfm3-1.7b-qwen4-max/resolve/main/Q4_K_M.gguf',
+    approxBytes: 1099627136,
+    contextSize: 4096,
+    ramHint: '~1.5 GB',
+    llmArch: 'lfm3',
+  );
+
+  // GGUF header arch verified as exactly `gemma4` (not `gemma4_assistant`,
+  // which fails to load); the mmproj declares `clip.vision.projector_type`
+  // `gemma4v`, which the vendored mtmd knows.
+  static const LocalModel gemma4E2b = LocalModel(
+    id: 'gemma-4-e2b-it-q4_k_m',
+    displayName: 'Gemma 4 E2B',
+    description: 'Thinking and vision in one model. 128K context.',
+    kind: ModelKind.vision, // also appears in llms list via isMultimodal
+    fileName: 'gemma-4-E2B-it.Q4_K_M.gguf',
+    url: 'https://huggingface.co/prithivMLmods/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it.Q4_K_M.gguf',
+    // 3,427,879,136 B weights + 557,368,064 B mmproj = 3,985,247,200 B.
+    approxBytes: 3985247200,
+    projectorFileName: 'gemma-4-E2B-it.mmproj-q8_0.gguf',
+    projectorUrl: 'https://huggingface.co/prithivMLmods/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it.mmproj-q8_0.gguf',
+    contextSize: 4096,
+    ramHint: '~4.8 GB',
+    llmArch: 'gemma4',
+    isMultimodal: true, // also appears in the LLM list
+  );
+
+  static const LocalModel gemma3_1b = LocalModel(
+    id: 'gemma-3-1b-it-q4_k_m',
+    displayName: 'Gemma 3 1B',
+    description: 'Lightest Gemma. Quick text-only chat.',
+    kind: ModelKind.llm,
+    fileName: 'gemma-3-1b-it-Q4_K_M.gguf',
+    url: 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf',
+    approxBytes: 806058272,
+    contextSize: 4096,
+    ramHint: '~1.1 GB',
+    llmArch: 'gemma3',
+  );
+
+  // llmArch is `smollm3`, NOT `llama` — the GGUF header says so, and the
+  // vendored snapshot registers it as its own arch.
+  static const LocalModel smolLm3_3b = LocalModel(
+    id: 'smollm3-3b-q4_k_m',
+    displayName: 'SmolLM3 3B',
+    description: 'Fully open 3B with a thinking mode.',
+    kind: ModelKind.llm,
+    fileName: 'SmolLM3-3B-Q4_K_M.gguf',
+    url: 'https://huggingface.co/jc-builds/SmolLM3-3B-Instruct-GGUF/resolve/main/SmolLM3-3B-Q4_K_M.gguf',
+    approxBytes: 1915305888,
+    contextSize: 4096,
+    ramHint: '~2.4 GB',
+    llmArch: 'smollm3',
+  );
+
+  static const LocalModel lfm25_12b = LocalModel(
+    id: 'lfm2.5-1.2b-instruct-q4_k_m',
+    displayName: 'LFM2.5 1.2B',
+    description: 'Fastest and lightest LiquidAI model. Text-only.',
+    kind: ModelKind.llm,
+    fileName: 'LFM2.5-1.2B-Instruct-Q4_K_M.gguf',
+    url: 'https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q4_K_M.gguf',
+    approxBytes: 730895168,
+    contextSize: 4096,
+    ramHint: '~1.1 GB',
+    llmArch: 'lfm2',
+  );
+
+  static const LocalModel granite31_2b = LocalModel(
+    id: 'granite-3.1-2b-instruct-q4_k_m',
+    displayName: 'Granite 3.1 2B',
+    description: 'IBM model for long docs, RAG, and function calling.',
+    kind: ModelKind.llm,
+    fileName: 'granite-3.1-2b-instruct-Q4_K_M.gguf',
+    url: 'https://huggingface.co/bartowski/granite-3.1-2b-instruct-GGUF/resolve/main/granite-3.1-2b-instruct-Q4_K_M.gguf',
+    approxBytes: 1545295424,
+    contextSize: 4096,
+    ramHint: '~2.0 GB',
+    llmArch: 'granite',
+  );
+
+  static const LocalModel deepseekR1_15b = LocalModel(
+    id: 'deepseek-r1-distill-qwen-1.5b-q4_k_m',
+    displayName: 'DeepSeek R1 Distill 1.5B',
+    description: 'True reasoning model. Its thinking stays hidden from the answer.',
+    kind: ModelKind.llm,
+    fileName: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf',
+    url: 'https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf',
+    approxBytes: 1117320800,
+    contextSize: 4096,
+    ramHint: '~1.4 GB',
+    llmArch: 'qwen2',
+  );
+
+  // ggml-org repo: bartowski's file is named `Qwen_Qwen3-1.7B-Q4_K_M.gguf`
+  // (with a `Qwen_` prefix), so the exact plan filename only exists here.
+  static const LocalModel qwen3_17b = LocalModel(
+    id: 'qwen3-1.7b-q4_k_m',
+    displayName: 'Qwen3 1.7B',
+    description: 'Hybrid thinking model. Good all-round chat brain.',
+    kind: ModelKind.llm,
+    fileName: 'Qwen3-1.7B-Q4_K_M.gguf',
+    url: 'https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf',
+    approxBytes: 1282439264,
+    contextSize: 4096,
+    ramHint: '~1.7 GB',
+    llmArch: 'qwen3',
+  );
+
+  static const LocalModel qwen3_06b = LocalModel(
+    id: 'qwen3-0.6b-q4_k_m',
+    displayName: 'Qwen3 0.6B',
+    description: 'Smallest thinking option. Very low RAM.',
+    kind: ModelKind.llm,
+    fileName: 'Qwen3-0.6B-Q4_K_M.gguf',
+    url: 'https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf',
+    approxBytes: 396705472,
+    contextSize: 4096,
+    ramHint: '~600 MB',
+    llmArch: 'qwen3',
+  );
+
+  // No Q4_K_M exists in this repo — Q8_0 is the quant shipped (weights +
+  // mmproj), and the pinned mtmd knows its `idefics3` projector type.
+  static const LocalModel smolVlm2_500m = LocalModel(
+    id: 'smolvlm2-500m-q8_0',
+    displayName: 'SmolVLM2 500M',
+    description: 'Small vision model, video-trained. Quick image Q&A.',
+    kind: ModelKind.vision, // also appears in llms list via isMultimodal
+    fileName: 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
+    url: 'https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
+    // 436,808,704 B weights + 108,785,184 B mmproj = 545,593,888 B.
+    approxBytes: 545593888,
+    projectorFileName: 'mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
+    projectorUrl: 'https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
+    contextSize: 2048,
+    ramHint: '~800 MB',
+    llmArch: 'llama',
+    isMultimodal: true, // also appears in the LLM list
+  );
+
   /// --------------------------------------------------------- embedding model
   ///
   /// Verified against the published ONNX graph: inputs are `input_ids`,
@@ -294,6 +482,19 @@ class ModelCatalog {
     qwen35_08b,
     smolVlm500m,
     internVl2_5_1b,
+    // Build #133 additions.
+    lfm3_17b,
+    qwen35_2b,
+    coderLfm3_17b,
+    gemma4E2b,
+    gemma3_1b,
+    smolLm3_3b,
+    lfm25_12b,
+    granite31_2b,
+    deepseekR1_15b,
+    qwen3_17b,
+    qwen3_06b,
+    smolVlm2_500m,
   ];
 
   /// Models the user can pick for image understanding.
@@ -301,6 +502,10 @@ class ModelCatalog {
     qwen35_08b,
     smolVlm500m,
     internVl2_5_1b,
+    // Build #133 additions.
+    qwen35_2b,
+    gemma4E2b,
+    smolVlm2_500m,
   ];
 
   /// Models the user can pick for memory/retrieval.
@@ -315,6 +520,19 @@ class ModelCatalog {
     smolVlm500m,
     internVl2_5_1b,
     miniLm6,
+    // Build #133 additions.
+    lfm3_17b,
+    qwen35_2b,
+    coderLfm3_17b,
+    gemma4E2b,
+    gemma3_1b,
+    smolLm3_3b,
+    lfm25_12b,
+    granite31_2b,
+    deepseekR1_15b,
+    qwen3_17b,
+    qwen3_06b,
+    smolVlm2_500m,
   ];
 
   static LocalModel? byId(String? id) {

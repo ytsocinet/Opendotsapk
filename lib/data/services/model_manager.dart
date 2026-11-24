@@ -186,6 +186,144 @@ const Map<String, ModelIntegrity> modelIntegrityManifest = {
       ),
     },
   ),
+  // Build #133 additions (Nov 23, 2026) — both sets. Pins read from
+  // the Hugging Face tree API at each exact commit; the LFS `oid`
+  // is the SHA-256. Without these entries the downloader refuses
+  // to fetch the model (fail-closed by design).
+  // LFM3-1.7B (LiquidAI) — pin read from the Hugging Face
+  // tree API at this exact commit; the LFS `oid` is the SHA-256.
+  'lfm3-1.7b-q4_k_m': ModelIntegrity(
+    commitSha: 'cd0c74c575b5c416f3011b5b4c298077f26ca8c2',
+    files: {
+      'LFM3-1.7B-Q4_K_M.gguf': FileIntegrity(
+        1099627808,
+        '3793e1e6e2266919d6e015287221b41100175a98eddaba92e111aed3b05c93c4',
+      ),
+    },
+  ),
+  // Qwen3.5-2B (unsloth) — weights + mmproj.
+  'qwen3.5-2b-q4_k_m': ModelIntegrity(
+    commitSha: 'f6d5376be1edb4d416d56da11e5397a961aca8ae',
+    files: {
+      'Qwen3.5-2B-Q4_K_M.gguf': FileIntegrity(
+        1280835840,
+        'aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223',
+      ),
+      'mmproj-F16.gguf': FileIntegrity(
+        668227264,
+        '7035e9cb8d7c6a9681d07eef9a364783e86ea4cd73faab2eabb4f43a101830c7',
+      ),
+    },
+  ),
+  // Coder LFM3-1.7B — the repo file is literally named `Q4_K_M.gguf`;
+  // the manifest key is the catalog (local) file name.
+  'coder-lfm3-1.7b-q4_k_m': ModelIntegrity(
+    commitSha: 'a4986406efe6fdeb6b8ded9c51f65bd361dea014',
+    files: {
+      'coder-lfm3-1.7b-qwen4-max-Q4_K_M.gguf': FileIntegrity(
+        1099627136,
+        'b4675e1003ad035e19f70b36c18bf3d4d0e6ff3bbd8e603279a9ab67aa2eea1a',
+      ),
+    },
+  ),
+  // Gemma 4 E2B-it — weights + mmproj.
+  'gemma-4-e2b-it-q4_k_m': ModelIntegrity(
+    commitSha: 'a30db4f936a86a5147ba1e1cf84af8a80fc56aae',
+    files: {
+      'gemma-4-E2B-it.Q4_K_M.gguf': FileIntegrity(
+        3427879136,
+        '8cc0b5fa4b71f0b93b691da2516253c630a6c09527b04b53a7620d28bd002a42',
+      ),
+      'gemma-4-E2B-it.mmproj-q8_0.gguf': FileIntegrity(
+        557368064,
+        'd9cb5df8e63099fff9b50502f4419d81e739985e03f852950253adcf56ec9d6a',
+      ),
+    },
+  ),
+  // Gemma 3 1B-it (unsloth).
+  'gemma-3-1b-it-q4_k_m': ModelIntegrity(
+    commitSha: 'f0b45be0aac41bd6a100a4b5734cad5f67255bfb',
+    files: {
+      'gemma-3-1b-it-Q4_K_M.gguf': FileIntegrity(
+        806058272,
+        '8270790f3ab69fdfe860b7b64008d9a19986d8df7e407bb018184caa08798ebd',
+      ),
+    },
+  ),
+  // SmolLM3-3B.
+  'smollm3-3b-q4_k_m': ModelIntegrity(
+    commitSha: '371e88cf7653e3152c250335e7cf4d42482d2781',
+    files: {
+      'SmolLM3-3B-Q4_K_M.gguf': FileIntegrity(
+        1915305888,
+        '233063e030ac4159d5bca4e1a8b8f587bd625efd2a46dbc72eceb0628acdbe3f',
+      ),
+    },
+  ),
+  // LFM2.5-1.2B (LiquidAI).
+  'lfm2.5-1.2b-instruct-q4_k_m': ModelIntegrity(
+    commitSha: '8ed288026e23958ad9dfa92d53ed773a8eee7125',
+    files: {
+      'LFM2.5-1.2B-Instruct-Q4_K_M.gguf': FileIntegrity(
+        730895168,
+        'b1b3de114215d9507409a662a501a631095a479a419584e8a2ded6304b19b4f5',
+      ),
+    },
+  ),
+  // Granite 3.1 2B (bartowski).
+  'granite-3.1-2b-instruct-q4_k_m': ModelIntegrity(
+    commitSha: 'e47b8b46c04cede00f9e19d5a846551b14b2efce',
+    files: {
+      'granite-3.1-2b-instruct-Q4_K_M.gguf': FileIntegrity(
+        1545295424,
+        '774269c82fde2720ea18dcf457fb5bd028fe096139a0735f4ad59c0a270cfc9c',
+      ),
+    },
+  ),
+  // DeepSeek-R1-Distill-Qwen-1.5B (bartowski).
+  'deepseek-r1-distill-qwen-1.5b-q4_k_m': ModelIntegrity(
+    commitSha: '9cc28b17e86fa2415fcb070f8ee5ec27c965aa61',
+    files: {
+      'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf': FileIntegrity(
+        1117320800,
+        '1741e5b2d062b07acf048bf0d2c514dadf2a48f94e2b4aa0cfe069af3838ee2f',
+      ),
+    },
+  ),
+  // Qwen3-1.7B (ggml-org — bartowski's file carries a `Qwen_` prefix).
+  'qwen3-1.7b-q4_k_m': ModelIntegrity(
+    commitSha: 'daeb8e2d528a760970442092f6bf1e55c3b659eb',
+    files: {
+      'Qwen3-1.7B-Q4_K_M.gguf': FileIntegrity(
+        1282439264,
+        'd2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5',
+      ),
+    },
+  ),
+  // Qwen3-0.6B (unsloth).
+  'qwen3-0.6b-q4_k_m': ModelIntegrity(
+    commitSha: '50968a4468ef4233ed78cd7c3de230dd1d61a56b',
+    files: {
+      'Qwen3-0.6B-Q4_K_M.gguf': FileIntegrity(
+        396705472,
+        'ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a',
+      ),
+    },
+  ),
+  // SmolVLM2-500M — Q8_0 (no Q4_K_M exists in the repo).
+  'smolvlm2-500m-q8_0': ModelIntegrity(
+    commitSha: 'ccd7aae53bcb1997355c2f094959e72b3642ce17',
+    files: {
+      'SmolVLM2-500M-Video-Instruct-Q8_0.gguf': FileIntegrity(
+        436808704,
+        '6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc',
+      ),
+      'mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf': FileIntegrity(
+        108785184,
+        '921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b',
+      ),
+    },
+  ),
 };
 
 /// Integrity entry for [m], or null when the model is not pinned.

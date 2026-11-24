@@ -442,6 +442,21 @@ void main() {
       expect(integrity.commitSha, '6ab461498e2023f6e3c1baea90a8f0fe38ab64d0');
     });
 
+    test('build #133 multimodal entries: approxBytes equals manifest total', () {
+      // Same discipline as the qwen3.5 test: the catalog total must cover
+      // weights AND projector, or the download stops half done.
+      for (final m in [
+        ModelCatalog.qwen35_2b,
+        ModelCatalog.gemma4E2b,
+        ModelCatalog.smolVlm2_500m,
+      ]) {
+        final integrity = integrityFor(m)!;
+        final total =
+            integrity.files.values.fold<int>(0, (a, f) => a + f.size);
+        expect(m.approxBytes, total, reason: m.id);
+      }
+    });
+
     test('every manifest entry keys back to a real catalog file', () {
       // Guards against a rename leaving an orphan manifest entry behind.
       for (final m in ModelCatalog.all) {
