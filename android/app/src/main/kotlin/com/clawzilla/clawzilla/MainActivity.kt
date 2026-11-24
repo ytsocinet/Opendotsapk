@@ -29,6 +29,7 @@ import io.flutter.plugin.common.MethodChannel
 import com.baseflow.geolocator.GeolocatorPlugin
 import com.baseflow.permissionhandler.PermissionHandlerPlugin
 import com.csdcorp.speech_to_text.SpeechToTextPlugin
+import com.dexterous.flutterlocalnotifications.FlutterLocalNotificationsPlugin
 import com.eyedeadevelopment.fluttertts.FlutterTtsPlugin
 import com.github.dart_lang.jni.JniPlugin
 import com.github.dart_lang.jni_flutter.JniFlutterPlugin
@@ -276,6 +277,11 @@ class MainActivity : FlutterFragmentActivity() {
             FilePickerPlugin(),
             DeviceInfoPlusPlugin(),
             FlutterForegroundTaskPlugin(),
+            // Build #134: was missing from this list — without it every
+            // local turn logged MissingPluginException on
+            // dexterous.com/flutter/local_notifications and the "Cypher is
+            // done" notification could never fire.
+            FlutterLocalNotificationsPlugin(),
             FlutterOnnxruntimePlugin(),
             FlutterAndroidLifecyclePlugin(),
             FlutterSecureStoragePlugin(),
